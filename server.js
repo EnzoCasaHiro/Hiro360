@@ -18,7 +18,9 @@ const SESSAO_OCIOSA = 12 * 3600 * 1000, SESSAO_MAX = 7 * 24 * 3600 * 1000;
 async function criaApp(opts = {}) {
   const env = opts.env || carregaEnv();
   const raiz = opts.raiz || __dirname;
-  const dataDir = env.DATA_DIR || path.join(raiz, 'data');
+  // "~/pasta" = dentro da pasta da conta (na Hostinger, fora do app, então as atualizações não apagam)
+  const dataDir = env.DATA_DIR ? path.resolve(String(env.DATA_DIR).replace(/^~(?=$|[\/\\])/, require('os').homedir())) : path.join(raiz, 'data');
+  if (!opts.env) console.log('[casa-hiro] pasta de dados:', dataDir);
   const filesDir = path.join(dataDir, 'arquivos');
   fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
   // banco e arquivos legíveis só pelo usuário do app (servidor compartilhado)
