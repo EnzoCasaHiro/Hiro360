@@ -20,7 +20,9 @@ async function criaApp(opts = {}) {
   const raiz = opts.raiz || __dirname;
   const dataDir = env.DATA_DIR || path.join(raiz, 'data');
   const filesDir = path.join(dataDir, 'arquivos');
-  fs.mkdirSync(filesDir, { recursive: true });
+  fs.mkdirSync(filesDir, { recursive: true, mode: 0o700 });
+  // banco e arquivos legíveis só pelo usuário do app (servidor compartilhado)
+  for (const d of [dataDir, filesDir]) { try { fs.chmodSync(d, 0o700); } catch (e) {} }
   const db = opts.db || await dbmod.abre({ ...env, DATA_DIR: dataDir });
   const MAX_ARQ = (+env.MAX_UPLOAD_MB || 25) * 1048576;
   const MAX_JSON = 8 * 1048576;
@@ -39,11 +41,17 @@ async function criaApp(opts = {}) {
     if (/troque-por/i.test(env.ADMIN_PASSWORD)) console.error('[casa-hiro] ADMIN_PASSWORD ainda é o texto de exemplo: troque no .env. Nenhuma conta foi criada.');
     else if (!seg.usuarioOk(u) || fraca) console.error('[casa-hiro] ADMIN_USER/ADMIN_PASSWORD inválidos:', fraca || 'usuário (3-40, letras minúsculas, números . _ -)');
     else { await db.userCria({ id: seg.novoId('u'), username: u, name: env.ADMIN_NAME || 'Direção', hash: seg.hashSenha(env.ADMIN_PASSWORD), admin: true }); console.log('[casa-hiro] administrador inicial criado:', u); }
+  } else if (env.ADMIN_PASSWORD && !opts.env) console.warn('[casa-hiro] aviso: ADMIN_PASSWORD continua configurada, mas o administrador já existe. Apague-a no painel.');
+  if (!opts.env) {
+    if (!env.DATA_DIR) console.warn('[casa-hiro] aviso: DATA_DIR não definido; o banco está dentro da pasta do app e pode ser apagado numa atualização.');
+    if (env.BACKUP_TOKEN && String(env.BACKUP_TOKEN).length < 20) console.warn('[casa-hiro] aviso: BACKUP_TOKEN curto demais (mínimo 20, ideal 24+); o backup externo está desligado.');
   }
 
-  const ipDe = req => String((req.headers['x-forwarded-for'] || req.socket.remoteAddress || '')).split(',')[0].trim();
+  // o proxy da Hostinger acrescenta o IP real no fim do X-Forwarded-For; o começo pode ser forjado pelo visitante
+  const ipDe = req => { const x = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean); return x.length ? x[x.length - 1] : String(req.socket.remoteAddress || ''); };
   const https_ = req => req.socket.encrypted || String(req.headers['x-forwarded-proto'] || '').split(',')[0] === 'https';
   const cookieDe = req => { const m = String(req.headers.cookie || '').match(/(?:^|;\s*)hiro_sid=([^;]+)/); return m ? m[1] : null; };
+  const cookieSessao = (req, tk) => `hiro_sid=${tk}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSAO_MAX / 1000}${https_(req) ? '; Secure' : ''}`;
   const resp = (res, code, obj, extra = {}) => {
     const b = Buffer.from(JSON.stringify(obj));
     res.writeHead(code, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'content-length': b.length, ...extra }); res.end(b);
@@ -86,10 +94,20 @@ async function criaApp(opts = {}) {
     const url = new URL(req.url, 'http://x'); const p = url.pathname; const m = req.method;
     // cabeçalhos de segurança
     res.setHeader('x-content-type-options', 'nosniff'); res.setHeader('x-frame-options', 'DENY'); res.setHeader('referrer-policy', 'same-origin');
-    res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader('permissions-policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+    res.setHeader('cross-origin-opener-policy', 'same-origin'); res.setHeader('cross-origin-resource-policy', 'same-origin');
+    res.setHeader('x-permitted-cross-domain-policies', 'none'); res.setHeader('x-robots-tag', 'noindex, nofollow');
     if (https_(req)) res.setHeader('strict-transport-security', 'max-age=31536000');
 
     if (p === '/healthz') return resp(res, 200, { ok: true });
+    if (p === '/robots.txt') { res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' }); return res.end('User-agent: *\nDisallow: /\n'); }
+    // atrás do proxy, quem chegou por http:// é mandado para https:// (senha nunca trafega aberta)
+    if (env.FORCAR_HTTPS !== '0' && String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'http') {
+      const host = String(req.headers.host || '');
+      if (!/^[a-z0-9.-]+(:\d+)?$/i.test(host) || /^(localhost|127\.)/.test(host)) return erro(res, 400, 'Use https.');
+      if (m !== 'GET' && m !== 'HEAD') return erro(res, 403, 'Use https.');
+      res.writeHead(301, { location: 'https://' + host + req.url }); return res.end();
+    }
     if (m === 'POST' || m === 'PUT' || m === 'DELETE' || m === 'PATCH') {
       if (req.headers['x-hiro'] !== '1') return erro(res, 403, 'Requisição não autorizada.');
     }
@@ -105,13 +123,14 @@ async function criaApp(opts = {}) {
       const okSenha = seg.confereSenha(pw, u ? u.hash : 'scrypt$16384$00$00');
       if (!u || !okSenha || !u.active) {
         limUser.falha('u:' + un); limIp.falha('i:' + ip);
+        console.warn('[casa-hiro] login recusado:', JSON.stringify(un.slice(0, 40)), 'ip', ip);
         return erro(res, u && okSenha && !u.active ? 403 : 401, u && okSenha && !u.active ? 'Seu acesso está suspenso. Fale com a direção.' : 'Usuário ou senha incorretos.', 'credencial');
       }
       limUser.ok('u:' + un);
       const tk = seg.novoToken(); await db.sessCria(seg.hashToken(tk), u.id, Date.now());
       await db.userAtualiza(u.id, { last_login: new Date().toISOString() });
-      const ck = `hiro_sid=${tk}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSAO_MAX / 1000}${https_(req) ? '; Secure' : ''}`;
-      return resp(res, 200, { user: pub(u) }, { 'set-cookie': ck });
+      console.log('[casa-hiro] login:', u.username, 'ip', ip);
+      return resp(res, 200, { user: pub(u) }, { 'set-cookie': cookieSessao(req, tk) });
     }
     if (p === '/api/logout' && m === 'POST') {
       const s = await sessao(req); if (s) await db.sessApaga(s.th);
@@ -239,9 +258,12 @@ async function criaApp(opts = {}) {
       return resp(res, 200, out);
     }
     if (p === '/api/me/senha' && m === 'POST') {
-      const b = await lerJson(req, 5000); if (!seg.confereSenha(String(b.atual || ''), U.hash)) return erro(res, 400, 'A senha atual não confere.');
+      const b = (await lerJson(req, 5000)) || {}; if (!seg.confereSenha(String(b.atual || ''), U.hash)) return erro(res, 400, 'A senha atual não confere.');
       const f = seg.senhaFraca(b.nova, U.username); if (f) return erro(res, 400, f);
-      await db.userAtualiza(U.id, { hash: seg.hashSenha(b.nova) }); return resp(res, 200, { ok: true });
+      await db.userAtualiza(U.id, { hash: seg.hashSenha(b.nova) });
+      // derruba as outras sessões (ex.: um aparelho esquecido logado) e mantém só esta, com token novo
+      await db.sessApagaUser(U.id); const tk = seg.novoToken(); await db.sessCria(seg.hashToken(tk), U.id, Date.now());
+      return resp(res, 200, { ok: true }, { 'set-cookie': cookieSessao(req, tk) });
     }
     if (p.startsWith('/api/users')) {
       if (!adm) return erro(res, 403, 'Só a administração gerencia contas.', 'negado');
@@ -329,6 +351,8 @@ async function criaApp(opts = {}) {
     });
   });
   server.requestTimeout = 300000;
+  server.headersTimeout = 30000; // conexões que enrolam para mandar o cabeçalho (slowloris) caem logo
+  server.maxHeadersCount = 100;
 
   /* limpeza e backup local diário */
   const timers = [];
