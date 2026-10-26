@@ -347,10 +347,18 @@ async function criaApp(opts = {}) {
   return { server, db, env, manutencao, fecha: async () => { timers.forEach(clearInterval); await new Promise(r => server.close(r)); await db.fecha(); } };
 }
 
-if (require.main === module) {
+/* Inicia sozinho, a não ser quando importado pelos testes. A Hostinger (lsnode/Passenger) carrega este arquivo com
+   require() a partir do próprio carregador, então "require.main === module" é falso lá e não pode ser a condição. */
+const porTeste = !!(require.main && require.main !== module && /[\\/]test[\\/]/.test(require.main.filename || ''));
+if (!porTeste && !process.env.CASA_HIRO_NAO_INICIAR) {
   criaApp().then(({ server }) => {
     const pe = process.env.PORT; const porta = pe && isNaN(+pe) ? pe : (+pe || 3000); // alguns painéis passam um socket em vez de número
     server.listen(porta, () => console.log('[casa-hiro] no ar na porta', porta));
-  }).catch(e => { console.error('[casa-hiro] não iniciou:', e.message); process.exit(1); });
+  }).catch(e => {
+    console.error('[casa-hiro] não iniciou:', e.message);
+    // o log do painel nem sempre aparece: deixa o motivo num arquivo visível no Gerenciador de Arquivos
+    try { fs.appendFileSync(path.join(__dirname, 'casa-hiro-erro.log'), `${new Date().toISOString()} não iniciou: ${e.stack || e.message}\n`); } catch (e2) {}
+    process.exit(1);
+  });
 }
 module.exports = { criaApp };

@@ -1,0 +1,6 @@
+# segredos e dados: nunca vão para o GitHub
+.env
+data/*
+!data/.gitkeep
+casa-hiro-erro.log
+node_modules/
