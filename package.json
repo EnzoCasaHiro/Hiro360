@@ -1,0 +1,17 @@
+{
+  "name": "casa-hiro-sistema",
+  "version": "1.0.0",
+  "description": "Sistema Casa Hiro - versão hospedada (Hostinger)",
+  "private": true,
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/api.test.js",
+    "test:e2e": "node test/e2e.js",
+    "build:app": "cd app-src && python3 build.py x_core.js x_gp.js x_cuid.js x_admres.js x_infra.js x_fin2.js x_ind.js x_nf.js x_fin3.js",
+    "build:host": "python3 app-src/build-host.py",
+    "empacotar": "python3 tools/empacotar.py"
+  },
+  "engines": { "node": ">=22.5" },
+  "optionalDependencies": { "mysql2": "^3.11.0" }
+}
