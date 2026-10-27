@@ -157,7 +157,7 @@ async function criaApp(opts = {}) {
     }
 
 
-    /* ---- envio de documentos pelo colaborador (link com validade, sem login) ---- */
+    /* ---- envio de documentos pelo integrante (link com validade, sem login) ---- */
     if (m === 'GET' && /^\/envio\/[A-Za-z0-9_-]{20,80}$/.test(p)) {
       try {
         const f = path.join(publico, 'envio.html'); const buf = await fs.promises.readFile(f);
