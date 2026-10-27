@@ -43,6 +43,16 @@ async function criaApp(opts = {}) {
     if (/troque-por/i.test(env.ADMIN_PASSWORD)) console.error('[casa-hiro] ADMIN_PASSWORD ainda é o texto de exemplo: troque no .env. Nenhuma conta foi criada.');
     else if (!seg.usuarioOk(u) || fraca) console.error('[casa-hiro] ADMIN_USER/ADMIN_PASSWORD inválidos:', fraca || 'usuário (3-40, letras minúsculas, números . _ -)');
     else { await db.userCria({ id: seg.novoId('u'), username: u, name: env.ADMIN_NAME || 'Direção', hash: seg.hashSenha(env.ADMIN_PASSWORD), admin: true }); console.log('[casa-hiro] administrador inicial criado:', u); }
+  } else if (env.ADMIN_RESET === '1' && env.ADMIN_USER && env.ADMIN_PASSWORD) {
+    /* esqueceu a senha sem ter SSH: ADMIN_RESET=1 no painel troca a senha (ou cria a conta) e reativa como administrador */
+    const u = String(env.ADMIN_USER).toLowerCase().trim(), fraca = seg.senhaFraca(env.ADMIN_PASSWORD, u);
+    if (!seg.usuarioOk(u) || fraca) console.error('[casa-hiro] ADMIN_RESET: ADMIN_USER/ADMIN_PASSWORD inválidos:', fraca || 'usuário (3-40, letras minúsculas, números . _ -)');
+    else {
+      const ex = await db.userPorNome(u);
+      if (ex) { await db.userAtualiza(ex.id, { hash: seg.hashSenha(env.ADMIN_PASSWORD), active: 1, admin: 1 }); await db.sessApagaUser(ex.id); }
+      else await db.userCria({ id: seg.novoId('u'), username: u, name: env.ADMIN_NAME || 'Direção', hash: seg.hashSenha(env.ADMIN_PASSWORD), admin: true });
+      console.warn('[casa-hiro] ADMIN_RESET: senha de', u, 'redefinida. Entre, depois APAGUE ADMIN_RESET e ADMIN_PASSWORD do painel e reimplante.');
+    }
   } else if (env.ADMIN_PASSWORD && !opts.env) console.warn('[casa-hiro] aviso: ADMIN_PASSWORD continua configurada, mas o administrador já existe. Apague-a no painel.');
   if (!opts.env) {
     if (!env.DATA_DIR) console.warn('[casa-hiro] aviso: DATA_DIR não definido; o banco está dentro da pasta do app e pode ser apagado numa atualização.');
