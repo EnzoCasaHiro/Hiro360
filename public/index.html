@@ -1025,7 +1025,7 @@ function shiftSummary(texto){
 }
 const integList=()=>Object.values(S.integrantes).sort((a,b)=>String(a.nomeCompleto||a.nome).localeCompare(String(b.nomeCompleto||b.nome),"pt"));
 const semPonto=i=>!!i&&i.ponto==="nao";
-const integByUid=u=>Object.values(S.integrantes).find(i=>i.uid!=null&&+i.uid===+u);
+const integByUid=u=>{const l=Object.values(S.integrantes).filter(i=>i.uid!=null&&+i.uid===+u);return l.find(i=>(i.situacao||"Ativo")!=="Desligado")||l[0]};
 const nomeInteg=i=>i.nomeCompleto||i.nome||"(sem nome)";
 const marcasOf=(uid,fromIso,toIso)=>Object.values(S.marcacoes).filter(m=>+m.uid===+uid&&!m.removida&&m.ts.slice(0,10)>=fromIso&&m.ts.slice(0,10)<=toIso).map(m=>({ts:parseLocalIso(m.ts),rawId:m.id}));
 function importMarcas(punches){
@@ -1105,10 +1105,13 @@ function calcular(show){
     const span=[];for(let d=P.start;d<=P.end;d=addDaysIso(d,1))span.push(d);
     const uids=new Set([...P.punches.map(p=>p.userId),...Object.values(S.marcacoes).map(m=>+m.uid)]);
     Object.values(S.integrantes).forEach(i=>{if(i.uid!=null&&i.turno)uids.add(+i.uid)});
-    const users=[];
+    const users=[],semCadastro=[];
     for(const uid of[...uids].sort((a,b)=>a-b)){
       const ig=integByUid(uid)||{};
       if(semPonto(ig))continue;
+      // desligado antes do período não entra; número sem cadastro vira aviso, não cartão
+      if(ig.id&&((ig.desligamento&&ig.desligamento<P.start)||(ig.situacao==="Desligado"&&!ig.desligamento)))continue;
+      if(!ig.id){const n=marcasOf(uid,P.start,P.end).length;if(n)semCadastro.push({uid,n,nome:(P.punches.find(p=>p.userId===uid)||{}).uname||""});continue}
       if(ig.turno&&!shifts.get(+ig.turno))throw new Error(`${nomeInteg(ig)}: o turno ${ig.turno} não existe. Ajuste na aba Turnos.`);
       const schedule=new Map();
       for(const d of span){
@@ -1154,7 +1157,7 @@ function calcular(show){
            escalados:rows.filter(r=>r.expectedMin>0).length,trab:rows.filter(r=>r.workedMin>0).length,
            faltas:cnt("falta"),atestados:cnt("atestado"),justificadas:cnt("justificada"),esquecidos:cnt("esquecido")}});
     }
-    P.result={users,start:P.start,end:P.end};
+    P.result={users,start:P.start,end:P.end,semCadastro};
   }catch(e){P.err=e.message;P.result=null}
   if(show)go("ponto",true);
 }
@@ -1180,6 +1183,7 @@ function renderResult(R){
    <button class="stat blue" data-stat="atestados"><b>${tot("atestados")}</b><span>dias de atestado</span></button>
    <button class="stat" data-stat="extra"><b>${fmtHHMM(tot("extra"))}</b><span>horas extras</span></button>
    <button class="stat ${tot("late")?"warn":""}" data-stat="atraso"><b>${tot("late")}</b><span>min. de atraso</span></button></div>
+  ${(R.semCadastro||[]).length?`<div class="callout sand" style="margin:10px 0">Números do relógio <b>sem cadastro</b> (ficam fora do cálculo e do fechamento): ${R.semCadastro.map(x=>`nº ${x.uid}${x.nome?" ("+esc(x.nome)+")":""} — ${x.n} batida(s)`).join("; ")}. Se for alguém da casa, cadastre em Integrantes com esse número no relógio, ou ligue em Ponto → Cadastro e conferência → De-para.</div>`:""}
   <div class="legend">${["ok","falta","pendencia","atestado","justificada","esquecido","sem_escala"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
    <span style="margin-left:auto;font-style:italic">Clique num card, num dia ou no nome para ver detalhes e resolver.</span></div>`+
   heatmap(R)+
@@ -14890,6 +14894,7 @@ function xfpVerifica(){
     const fl=R.users.filter(u=>u.t.faltas),totF=R.users.reduce((s,u)=>s+u.t.faltas,0);
     out.push({k:"faltas",nivel:totF?2:0,t:"Faltas sem justificativa",d:totF?`${totF} falta(s): ${fl.slice(0,6).map(u=>`${u.nome} (${u.t.faltas})`).join(", ")}${fl.length>6?" e mais "+(fl.length-6):""}. Lance atestado, folga ou justificativa; o que sobrar vira desconto na folha.`:"Nenhuma falta sem justificativa.",acao:totF?{rot:"Ver o mapa de frequência",id:"mapa"}:null});
     const ex=R.users.reduce((s,u)=>s+u.t.extra,0),at=R.users.reduce((s,u)=>s+u.t.late+u.t.early,0);
+    {const sc=R.semCadastro||[];out.push({k:"semcad",nivel:sc.length?1:0,t:"Números do relógio sem cadastro",d:sc.length?`${sc.map(x=>"nº "+x.uid+" ("+x.n+" batida(s))").join(", ")}. Ficam fora do cálculo. Se for alguém da casa, cadastre ou ligue no De-para.`:"Todas as batidas do período são de integrantes cadastrados.",acao:sc.length?{rot:"Abrir o De-para",id:"vinculos"}:null})}
     out.push({k:"horas",nivel:0,t:"Horas extras e atrasos (só para conhecimento)",d:`Extras: ${xeHM(ex)} · atrasos e saídas antecipadas: ${xeHM(at)}. Confira se as extras foram autorizadas antes de pagar.`,acao:{rot:"Ver autorização de horas extras",id:"heaut"}});
   }
   // 6 pedidos aguardando
