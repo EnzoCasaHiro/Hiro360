@@ -399,12 +399,38 @@ function escalaDia(ig,iso){
   const aj=ig.id?ajusteDe(ig.id,iso):null;
   if(aj){
     if(aj.tipo==="folga")return{on:false,turno:null,ajuste:aj};
-    const t=+(aj.turno||ig.turno)||null;
+    const t=+(aj.turno||igNaData(ig,iso).turno)||null;
     return{on:!!t,turno:t,ajuste:aj};
   }
   if(ig.admissao&&iso<ig.admissao)return{on:false,turno:null,ajuste:null,antes:true};
   if(ig.desligamento&&iso>ig.desligamento)return{on:false,turno:null,ajuste:null,depois:true};
-  return{on:!!ig.turno&&scheduledOn(ig,iso),turno:ig.turno?+ig.turno:null,ajuste:null};
+  const g=igNaData(ig,iso);
+  return{on:!!g.turno&&scheduledOn(g,iso),turno:g.turno?+g.turno:null,ajuste:null};
+}
+// escala que valia antes de uma mudança (ex.: 44h semanais até 22/10, depois 12x36): ig.escalaHist=[{ate,turno,escalaModo,dias,cicloTrab,cicloFolga,cicloInicio}]
+const ESC_CAMPOS=["turno","escalaModo","dias","cicloTrab","cicloFolga","cicloInicio"];
+function igNaData(ig,iso){
+  const h=(ig&&ig.escalaHist)||[];if(!h.length)return ig;
+  const v=h.filter(x=>x.ate&&iso<=x.ate).sort((a,b)=>a.ate.localeCompare(b.ate))[0];
+  if(!v)return ig;const o={...ig};ESC_CAMPOS.forEach(k=>o[k]=v[k]);return o;
+}
+function escalaNome(g){
+  if(!g||!g.turno)return"Sem escala";
+  if(eh1236(g))return"12x36";
+  if(g.escalaModo==="ciclo")return`Ciclo ${g.cicloTrab||1}x${g.cicloFolga??1}`;
+  const t=turnosList().find(x=>String(x.no)===String(g.turno)),dias=(g.dias||[0,1,2,3,4]).slice().sort();
+  const min=t?dias.reduce((s,w)=>{const r=shiftSummary((t.dias&&t.dias[w])||t.texto);return s+(r?r.min:0)},0):0;
+  return(min?String(Math.round(min/6)/10).replace(".",",")+"h semanais":"Semanal")+" ("+dias.map(w=>WD_FULL[w].slice(0,3)).join(", ")+")";
+}
+// trechos do período com a mesma escala, para a folha de ponto mostrar as duas quando houve mudança
+function escalasPeriodo(ig,de,ate){
+  const out=[];if(!ig||!de||!ate)return out;
+  for(let d=de;d<=ate;d=addDaysIso(d,1)){const n=escalaNome(igNaData(ig,d)),u=out[out.length-1];if(u&&u.nome===n)u.ate=d;else out.push({nome:n,de:d,ate:d})}
+  return out;
+}
+function escalasTexto(ig,de,ate){
+  const l=escalasPeriodo(ig,de,ate);
+  return l.length<=1?(l[0]?l[0].nome:"—"):l.map(x=>`${x.nome} de ${brDate(x.de).slice(0,5)} a ${brDate(x.ate).slice(0,5)}`).join(" · ");
 }
 const ROW_RE=/^\s*(\d+)\s+(\d+)\s+(\d+)\s+(.*?)\s+(\d+)\s+(\d{4})[/-](\d{2})[/-](\d{2})\s+(\d{1,2}):(\d{2}):(\d{2})\s*$/;
 function parseRawlog(text){
@@ -1322,7 +1348,7 @@ function pgTurnos(){
     <td><select data-e="turno"><option value="">Folga / sem escala</option>${turnosList().map(t=>`<option value="${t.no}" ${String(i.turno)===String(t.no)?"selected":""}>${t.no} · ${esc(t.nome||t.texto)}</option>`).join("")}</select></td>
     <td><div class="escalabox">
      <select data-e="modo" style="max-width:220px;margin-bottom:8px"><option value="semana" ${(i.escalaModo||"semana")==="semana"?"selected":""}>Dias fixos da semana</option><option value="ciclo" ${i.escalaModo==="ciclo"?"selected":""}>Ciclo (ex.: 12x36, 6x1…)</option><option value="par" ${i.escalaModo==="par"?"selected":""}>Dias pares do mês</option><option value="impar" ${i.escalaModo==="impar"?"selected":""}>Dias ímpares do mês</option></select>
-     ${modoFields(i)}</div></td></tr>`).join("")}
+     ${modoFields(i)}${escHistResumo(i)}</div></td></tr>`).join("")}
    </tbody></table></div>`:`<div class="empty">Nenhum integrante cadastrado. Carregue o arquivo do relógio na aba Ponto ou cadastre no Prontuário.</div>`}</div>`;
 }
 function turnoRow(t,i){
@@ -1393,6 +1419,54 @@ function pgEscalaCalendario(){
     <span><i style="background:transparent;border:1px dashed var(--line)"></i>Antes da admissão / após desligamento</span></div>`}
    </div>`;
 }
+function escHistResumo(i){
+  const h=(i.escalaHist||[]).slice().sort((a,b)=>a.ate.localeCompare(b.ate));
+  return `<div class="sub" style="margin:8px 0 0">${h.length?"Antes: "+h.map(x=>`<b>${esc(escalaNome(x))}</b> até ${brDate(x.ate)}`).join(" · ")+". Acima, a escala atual. ":""}<button type="button" class="lnk" data-eschist="${i.id}">${h.length?"Ver ou mudar escalas anteriores":"Mudou de escala? Lançar a escala que valia antes"}</button></div>`;
+}
+// escala com data: a configuração de cima vale a partir do dia seguinte ao "até" de cada escala anterior
+function openEscalaHist(igId){
+  const ig=S.integrantes[igId];if(!ig)return toast("Integrante não encontrado.",true);
+  const turnos=turnosList(),F={turno:ig.turno||(turnos[0]&&turnos[0].no)||"",escalaModo:"semana",dias:[0,1,2,3,4,5],cicloTrab:1,cicloFolga:1,cicloInicio:"",ate:""};
+  const ov=openModal(`<h3>Escalas anteriores — ${esc(nomeInteg(ig))}</h3>
+   <div class="sub" style="margin-bottom:10px">Use quando a pessoa mudou de escala (ex.: era <b>44h semanais até 22/10</b> e passou para <b>12x36</b>). A escala configurada na aba Turnos vale <b>depois</b> da última data lançada aqui. O cálculo do ponto e a folha de ponto usam a escala certa de cada dia.</div>
+   <div id="ehlista"></div>
+   <h2 style="margin-top:14px">Lançar escala anterior</h2>
+   <div class="row"><div><label>Valeu até (último dia)</label><input type="date" id="ehate"></div>
+    <div><label>Turno</label><select id="ehturno">${turnos.map(t=>`<option value="${t.no}" ${String(t.no)===String(F.turno)?"selected":""}>${t.no} · ${esc(t.nome||t.texto)} (${esc(t.texto)})</option>`).join("")}</select></div></div>
+   <label>Como trabalhava</label><select id="ehmodo"><option value="semana">Dias fixos da semana (ex.: 44h semanais)</option><option value="ciclo">Ciclo (ex.: 12x36, 6x1…)</option><option value="par">Dias pares do mês</option><option value="impar">Dias ímpares do mês</option></select>
+   <div id="ehcampos" class="escalabox" style="margin-top:8px"></div>
+   <div class="err" id="eherr"></div>
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="ehcx">Fechar</button>${podeEd("turnos")||podeEd("ponto")?'<button class="b" id="ehsv">Lançar</button>':""}</div>`);
+  const $o=q=>ov.querySelector(q);
+  const campos=()=>{
+    F.escalaModo=$o("#ehmodo").value;
+    $o("#ehcampos").innerHTML=F.escalaModo==="semana"?`<div class="daypicker">${WD.map((d,k)=>`<button type="button" class="daypill ${F.dias.includes(k)?"on":""}" data-ehd="${k}" title="${WD_FULL[k]}">${d}</button>`).join("")}</div>`
+     :F.escalaModo==="ciclo"?`<div class="cicline">Trabalha <input type="number" min="1" id="ehtrab" value="${F.cicloTrab}" style="width:60px"> dia(s), folga <input type="number" min="0" id="ehfolga" value="${F.cicloFolga}" style="width:60px"> dia(s). Uma data em que trabalhou: <input type="date" id="ehini" value="${F.cicloInicio}"></div>`
+     :`<div class="sub">Trabalhava nos dias ${F.escalaModo==="par"?"pares":"ímpares"} do mês.</div>`;
+    ov.querySelectorAll("[data-ehd]").forEach(b=>b.onclick=()=>{const k=+b.dataset.ehd;F.dias=F.dias.includes(k)?F.dias.filter(x=>x!==k):[...F.dias,k].sort();b.classList.toggle("on")});
+  };
+  $o("#ehmodo").onchange=campos;campos();
+  const salva=h=>{put("integrantes",ig.id,{...strip(S.integrantes[ig.id]),escalaHist:h});BHCACHE.clear();if(POINT.result)calcular(false);afterOc()};
+  const paint=()=>{
+    const h=(S.integrantes[ig.id].escalaHist||[]).slice().sort((a,b)=>a.ate.localeCompare(b.ate));
+    let ini=ig.admissao||"";
+    $o("#ehlista").innerHTML=(h.length?h.map(x=>{const t=`<div class="doc"><div class="grow"><div class="nm">${esc(escalaNome(x))}</div><div class="sub">${ini?"de "+brDate(ini)+" ":""}até ${brDate(x.ate)} · turno ${esc(x.turno)}</div></div><button class="b sec sm" data-ehdel="${x.ate}" title="Remover">${ic("trash")}</button></div>`;ini=addDaysIso(x.ate,1);return t}).join(""):`<div class="empty">Nenhuma escala anterior lançada.</div>`)
+     +`<div class="doc"><div class="grow"><div class="nm">${esc(escalaNome(ig))} <span class="chip">atual</span></div><div class="sub">${ini?"a partir de "+brDate(ini):"sempre"} · muda na aba Turnos</div></div></div>`;
+    ov.querySelectorAll("[data-ehdel]").forEach(b=>b.onclick=async()=>{if(!await askConfirm("Remover esta escala anterior?","Remover"))return;salva((S.integrantes[ig.id].escalaHist||[]).filter(x=>x.ate!==b.dataset.ehdel));toast("Escala anterior removida.");paint()});
+  };
+  paint();
+  $o("#ehcx").onclick=()=>ov.remove();
+  const sv=$o("#ehsv");if(sv)sv.onclick=()=>{
+    const er=m=>$o("#eherr").textContent=m,ate=$o("#ehate").value,turno=$o("#ehturno").value;
+    if(!ate)return er("Informe o último dia em que essa escala valeu.");
+    if(!turno)return er("Escolha o turno. Se não existir, crie em Turnos.");
+    const x={ate,turno,escalaModo:F.escalaModo};
+    if(F.escalaModo==="semana"){if(!F.dias.length)return er("Marque os dias da semana em que trabalhava.");x.dias=F.dias.slice()}
+    if(F.escalaModo==="ciclo"){x.cicloTrab=+$o("#ehtrab").value||1;x.cicloFolga=+$o("#ehfolga").value||0;x.cicloInicio=$o("#ehini").value||"";if(!x.cicloInicio)return er("Informe uma data em que a pessoa trabalhou nesse ciclo.")}
+    salva([...(S.integrantes[ig.id].escalaHist||[]).filter(h=>h.ate!==ate),x]);
+    toast("Escala anterior lançada. O ponto foi recalculado.");$o("#ehate").value="";paint();
+  };
+}
 function openEscalaAjuste(igId,day,opts){
   const ig=S.integrantes[igId];if(!ig){toast("Integrante não encontrado.",true);return}
   opts=opts||{};
@@ -1416,7 +1490,7 @@ function openEscalaAjuste(igId,day,opts){
       <button class="b sec sm" data-ejdel="${a.id}" title="Remover ajuste">${ic("trash")}</button></div>`).join(""):"";
     ov.querySelectorAll("[data-ejdel]").forEach(b=>b.onclick=()=>{
       escMutate(l=>l.filter(x=>x.id!==b.dataset.ejdel));
-      toast("Ajuste removido.");afterOc();paintLista();
+      toast("Ajuste removido.");afterOc();paintLista();if(opts.onSave)opts.onSave();
     });
   };
   paintLista();
@@ -1428,7 +1502,7 @@ function openEscalaAjuste(igId,day,opts){
     let turno=null;
     if(tipo==="trabalho"){turno=+ov.querySelector("#ejturno").value||null;if(!turno)return er("Escolha o turno desse(s) dia(s). Se ainda não existe nenhum, crie em Turnos.")}
     escMutate(l=>[...l,{id:uid8(),uid:igId,tipo,de,ate,turno,obs,em:new Date().toISOString()}]);
-    toast(tipo==="folga"?"Folga lançada.":"Escala lançada.");afterOc();ov.remove();
+    toast(tipo==="folga"?"Folga lançada.":"Escala lançada.");afterOc();ov.remove();if(opts.onSave)opts.onSave();
   };
 }
 function pgFeriados(){
@@ -1489,6 +1563,7 @@ function bindTurnos(){
     saveCfg({feriadosExtra:arr});if(POINT.result)calcular(false);toast("Feriado removido.");setTimeout(()=>go("turnos",true),50);
   });
   document.querySelectorAll("[data-escd]").forEach(b=>b.onclick=()=>{const[id,d]=b.dataset.escd.split("|");openEscalaAjuste(id,d)});
+  document.querySelectorAll("[data-eschist]").forEach(b=>b.onclick=()=>openEscalaHist(b.dataset.eschist));
   bindSugestoes();bindAlertas();
   const es=$("escstart"),ee=$("escend");
   if(es)es.onchange=()=>{ESCUI.start=es.value;setTimeout(()=>go("turnos",true),0)};
@@ -1977,6 +2052,7 @@ function buildPersonSheet(wb,e,ig,u){
     labelCell(ws,"G"+r,row[2]);valueCell(ws,"H"+r,row[3]);
     ws.getRow(r).height=21;
   });
+  ws.mergeCells("B11:I11");labelCell(ws,"A11","Escala");valueCell(ws,"B11",ig.id?escalasTexto(ig,POINT.result.start,POINT.result.end):"—");ws.getRow(11).height=21;
   const headRowNo=12;
   const head=["Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Trabalhado","Previsto","Observação");
   head.forEach((h,i)=>headerCell(ws,colLetter(i+1)+headRowNo,h));ws.getRow(headRowNo).height=24;
@@ -5426,7 +5502,7 @@ function specFolhaIndividual(u,R){
   });
   const nC=cols.length,tot=new Array(nC).fill(null);[nC-5,nC-4,nC-3,nC-2].forEach(i=>tot[i]="sum");
   const tint={col:2,map:{[STL.ok]:[214,237,216],[STL.falta]:[232,223,204],[STL.pendencia]:[240,230,211],[STL.atestado]:[214,234,248],[STL.justificada]:[214,237,216],[STL.esquecido]:[197,168,130]}};
-  return{titulo:`Folha de ponto — ${u.nome}`,sub:`${(u.ig&&u.ig.cargo)||"—"} · ${brDate(R.start)} a ${brDate(R.end)}`,sensivel:true,cols,rows,tot,tint,assinatura:{esq:`Integrante: ${u.nome}`,dir:"Casa Hiro — responsável"}};
+  return{titulo:`Folha de ponto — ${u.nome}`,sub:`${(u.ig&&u.ig.cargo)||"—"} · ${brDate(R.start)} a ${brDate(R.end)}${u.ig&&u.ig.id?" · Escala: "+escalasTexto(u.ig,R.start,R.end):""}`,sensivel:true,cols,rows,tot,tint,assinatura:{esq:`Integrante: ${u.nome}`,dir:"Casa Hiro — responsável"}};
 }
 
 function pgContador(){return pgContadorBase()+pgFolhasFiltro()}
@@ -15796,7 +15872,7 @@ function plnPinta(focar){
   PLN.pintando=true;try{const a=document.activeElement;if(a&&g.contains(a))a.blur()}finally{PLN.pintando=false}
   g.innerHTML=`<table class="pltab"><thead><tr><th class="dia">Dia</th><th>Situação</th>${Array.from({length:n},(_,c)=>`<th>${plnColNome(c)}</th>`).join("")}<th>Trabalhado</th><th>Previsto</th><th>Saldo</th></tr></thead><tbody>${PLN.dias.map((d,r)=>{
     const cr=PLN.calc&&PLN.calc.get(d),wd=pyWeekday(d),lock=!!mesFechado(d),ro=plnTrava(r);
-    return `<tr class="${wd>=5?"fds":""}${lock?" lock":""}"><td class="dia">${brDate(d).slice(0,5)} ${WD[wd]}${lock?' <span class="sub">fechado</span>':""}</td><td class="num" style="text-align:left">${cr?`<span class="pill s-${cr.status}">${esc(STL[cr.status]||cr.status)}</span>`:""}</td>${PLN.grid[r].map((_,c)=>inp(r,c,d,ro)).join("")}<td class="num" data-trab="${r}"></td>${inp(r,n,d,ro)}<td class="num" data-saldo="${r}"></td></tr>`;
+    return `<tr class="${wd>=5?"fds":""}${lock?" lock":""}"><td class="dia">${brDate(d).slice(0,5)} ${WD[wd]}${lock?' <span class="sub">fechado</span>':""}</td><td class="num" style="text-align:left">${(()=>{const pl=cr?`<span class="pill s-${cr.status}">${esc(STL[cr.status]||cr.status)}</span>`:"—";return PLN.igId&&plnPode()&&!lock?`<button type="button" class="lnk" data-plesc="${d}" title="Estava escalado(a) ou de folga? Clique para ajustar a escala deste dia">${pl}</button>`:pl})()}</td>${PLN.grid[r].map((_,c)=>inp(r,c,d,ro)).join("")}<td class="num" data-trab="${r}"></td>${inp(r,n,d,ro)}<td class="num" data-saldo="${r}"></td></tr>`;
   }).join("")}</tbody><tfoot><tr><td class="dia">Total</td><td colspan="${n+1}"></td><td class="num" id="pltt"></td><td class="num" id="plpt"></td><td class="num" id="plst"></td></tr></tfoot></table>`;
   PLN.dias.forEach((_,r)=>plnLinhaCalc(r));
   plnConta();
@@ -15958,6 +16034,11 @@ function openPlanilha(uid,de,ate){
     $o("#plsv").onclick=plnSalva;$o("#plrep").onclick=plnRepete;$o("#pllim").onclick=plnLimpa;$o("#pldes").onclick=plnDesfaz;
     $o("#plimp").onclick=()=>$o("#plfile").click();$o("#plfile").onchange=e=>{const f=e.target.files[0];e.target.value="";if(f)plnImporta(f)};
   }
+  // Situação: lança folga/escala do dia sem perder o que já foi digitado na planilha
+  const recalcula=()=>{const k={g:PLN.grid,p:PLN.prev,b:PLN.prevBase,u:PLN.undo,s:PLN.sel,n:PLN.ncol};plnCarrega();
+    if(k.g.length===PLN.grid.length){PLN.grid=k.g;PLN.ncol=k.n;PLN.prev=k.p.map((v,r)=>v===k.b[r]?PLN.prev[r]:v);PLN.undo=k.u;PLN.sel=k.s}plnPinta(false)};
+  g.addEventListener("click",e=>{const b=e.target.closest&&e.target.closest("[data-plesc]");if(!b)return;const d=b.dataset.plesc,cr=PLN.calc&&PLN.calc.get(d);
+    openEscalaAjuste(PLN.igId,d,{tipo:cr&&cr.status!=="sem_escala"?"folga":"trabalho",onSave:recalcula})});
   const cel=e=>e.target.closest&&e.target.closest("input.plc");
   g.addEventListener("mousedown",e=>{const t=cel(e);if(!t)return;const r=+t.dataset.r,c=+t.dataset.c;
     if(e.shiftKey){e.preventDefault();PLN.sel={...PLN.sel,r1:r,c1:c};plnMarcaSel();return}
