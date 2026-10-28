@@ -3641,14 +3641,21 @@ function nfEntradaCard(){
    <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px">
     <button class="b" id="nfxmlbtn" style="flex:none">${ic("file")} Escolher arquivo da nota</button>
     <button class="b sec" id="nfcambtn" style="flex:none">${ic("camera")} Tirar foto da nota</button>
+    <button class="b sec" id="nfnovabtn" style="flex:none">${ic("plus")} Nova nota (digitar)</button>
     <button class="b sec" id="nfestbtn" style="flex:none">${ic("box")} Dar entrada no estoque</button></div>
    <input type="file" id="nfxmlfile" accept="${NF_ACCEPT}" multiple hidden><input type="file" id="nfcamfile" accept="image/*" capture="environment" hidden></div>`;
+}
+// nota sem arquivo: abre a mesma conferência das notas lidas, em branco, para digitar
+function nfNovaManual(){
+  const vazio=()=>({item:"",qtd:1,valor:"",total:""});
+  nfImportar([],{interno:true,prontas:[{nota:"",date:hojeIso(),forn:"",cnpj:"",chave:"",rows:[vazio(),vazio(),vazio()],dups:[],vNF:"",fonte:"manual",tipo:"produto",av:[],_ord:0}]});
 }
 function bindNFXml(){
   const eb=$("nfestbtn");if(eb)eb.onclick=openEstDeNF;
   const b=$("nfxmlbtn"),f=$("nfxmlfile");if(!b||!f)return;
   const vai=fl=>{const l=[...fl];if(l.length)nfImportar(l)};
   b.onclick=()=>f.click();f.onchange=()=>{const l=[...f.files];f.value="";vai(l)};
+  const nb=$("nfnovabtn");if(nb)nb.onclick=nfNovaManual;
   const cb=$("nfcambtn"),cf=$("nfcamfile");if(cb&&cf){cb.onclick=()=>cf.click();cf.onchange=()=>{const l=[...cf.files];cf.value="";vai(l)}}
   const d=$("nfxmldrop");if(d){d.onclick=()=>f.click();d.ondragover=e=>{e.preventDefault();d.classList.add("on")};d.ondragleave=()=>d.classList.remove("on");
     d.ondrop=e=>{e.preventDefault();d.classList.remove("on");vai(e.dataTransfer.files)}}
@@ -3865,19 +3872,21 @@ async function nfImportar(files,opts){
   {let ult=null;novas.forEach(n=>{n.seq=nfProximoNumero(ult);ult=n.seq})}
   novas.forEach(n=>n.rows.forEach(r=>{const k=nfClassifica(r);r._cat=k?k.cat:"A classificar";r._sub=k?k.sub:"A classificar";r._cc=k?k.cc:""}));
   const comDup=novas.some(n=>n.dups.length);
+  const itemRow=(r,j)=>`<tr data-item="${j}"><td><input data-r="item" value="${esc(r.item)}" style="min-width:180px"></td><td><input data-r="qtd" inputmode="decimal" value="${r.qtd}" style="width:64px"></td><td><input data-r="un" value="${esc(r.un||"")}" style="width:52px"></td>
+    <td><input data-r="valor" inputmode="decimal" value="${r.valor}" style="width:84px"></td><td><input data-r="total" inputmode="decimal" value="${r.total}" style="width:90px"></td>
+    <td><input data-r="cat" list="nfcats" value="${esc(r._cat)}" style="min-width:150px"></td><td><input data-r="sub" list="nfsubs" value="${esc(r._sub)}" style="min-width:150px"></td><td><button type="button" class="b sec sm" data-rdel title="Remover item">${ic("trash")}</button></td></tr>`;
   const secao=(n,i)=>`<details class="card" data-nota="${i}" style="margin:0 0 10px" ${(novas.length<=20&&(n.av.length||n.fonte==="leitura"))||novas.length===1||(novas.length>20&&i<3)?"open":""}>
-   <summary style="cursor:pointer"><b>NF ${esc(n.nota||"s/n")} — ${esc(n.forn)}</b> <span class="chip">${n.fonte==="xml"?"XML (leitura exata)":"lida por IA — confira"}</span> <span class="sub">${fmtBRL(n.vNF)}</span></summary>
+   <summary style="cursor:pointer"><b>NF ${esc(n.nota||"s/n")} — ${esc(n.forn)}</b> <span class="chip">${n.fonte==="xml"?"XML (leitura exata)":n.fonte==="manual"?"digitada":"lida por IA — confira"}</span> <span class="sub">${fmtBRL(n.vNF)}</span></summary>
    ${n.av.length?`<div class="callout sand" style="margin:10px 0">${n.av.map(a=>`<div>• ${esc(a)}</div>`).join("")}</div>`:`<div class="callout" style="margin:10px 0">Nenhuma divergência encontrada nas conferências.</div>`}
    <div class="grid g2"><div><label>Fornecedor</label><input data-h="forn" value="${esc(n.forn)}"></div><div><label>CNPJ/CPF</label><input data-h="cnpj" value="${esc(fmtCnpj(n.cnpj))}"></div>
     <div><label>Nº no sistema (sequência da planilha)</label><input data-h="seq" value="${esc(n.seq)}"></div><div><label>Nº na nota do fornecedor</label><input data-h="nota" value="${esc(n.nota)}"></div><div><label>Emissão</label><input type="date" data-h="date" value="${esc(n.date)}"></div>
     <div><label>Valor total (R$)</label><input data-h="vNF" inputmode="decimal" value="${n.vNF}"></div><div><label>Chave de acesso</label><input data-h="chave" value="${esc(n.chave)}"></div></div>
    <div class="wrap" style="margin-top:10px"><table><thead><tr><th>Item</th><th class="n">Qtd</th><th>Un</th><th class="n">Valor un.</th><th class="n">Total</th><th>Categoria</th><th>Subcategoria</th><th></th></tr></thead><tbody>
-   ${n.rows.map((r,j)=>`<tr data-item="${j}"><td><input data-r="item" value="${esc(r.item)}" style="min-width:180px"></td><td><input data-r="qtd" inputmode="decimal" value="${r.qtd}" style="width:64px"></td><td><input data-r="un" value="${esc(r.un||"")}" style="width:52px"></td>
-    <td><input data-r="valor" inputmode="decimal" value="${r.valor}" style="width:84px"></td><td><input data-r="total" inputmode="decimal" value="${r.total}" style="width:90px"></td>
-    <td><input data-r="cat" list="nfcats" value="${esc(r._cat)}" style="min-width:150px"></td><td><input data-r="sub" list="nfsubs" value="${esc(r._sub)}" style="min-width:150px"></td><td><button type="button" class="b sec sm" data-rdel title="Remover item">${ic("trash")}</button></td></tr>`).join("")}</tbody></table></div>
+   ${n.rows.map((r,j)=>itemRow(r,j)).join("")}</tbody></table></div>
+   <button type="button" class="b sec sm" data-radd="${i}" style="margin-top:6px">${ic("plus")} Item</button>
    <label style="margin-top:10px">Vencimentos (duplicatas)</label><div data-dups>${n.dups.map((d,j)=>dupRow(d)).join("")}</div>
    <button type="button" class="b sec sm" data-dupadd style="margin-top:6px">${ic("plus")} Vencimento</button>
-   <div class="sub" style="margin-top:8px">${ic("clip")} Arquivo guardado: ${esc(n.arq.name)}</div></details>`;
+   ${n.arq?`<div class="sub" style="margin-top:8px">${ic("clip")} Arquivo guardado: ${esc(n.arq.name)}</div>`:""}</details>`;
   const dupRow=d=>`<div class="row" data-dup style="margin-bottom:4px"><input type="date" data-d="venc" value="${esc(d.venc||"")}"><input data-d="valor" inputmode="decimal" value="${d.valor||""}" placeholder="Valor"><button type="button" class="b sec sm" data-dupdel style="flex:none">${ic("trash")}</button></div>`;
   const ov=openModal(`<h3>Conferir e lançar notas fiscais</h3>
    <div class="sub" style="margin-bottom:10px">${novas.length} nota(s) lida(s)${notas.length>novas.length?` · ${notas.length-novas.length} já estava(m) no sistema`:""}${erros.length?` · ${erros.length} arquivo(s) com erro: ${esc(erros.join(" | "))}`:""}. Corrija o que precisar: o que você ajustar aqui é o que vai para o sistema.</div>
@@ -3890,6 +3899,8 @@ async function nfImportar(files,opts){
    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="xcx">Cancelar</button><button class="b" id="xsv">Lançar</button></div>`);
   const pn=v=>{const x=+String(v).trim().replace(",",".");return isFinite(x)?x:0};
   ov.querySelectorAll("[data-rdel]").forEach(b=>b.onclick=()=>b.closest("tr").remove());
+  ov.querySelectorAll("[data-radd]").forEach(b=>b.onclick=()=>{const n=novas[+b.dataset.radd],r={item:"",qtd:1,valor:"",total:"",_cat:"A classificar",_sub:"A classificar",_cc:""};n.rows.push(r);
+    const tb=b.previousElementSibling.querySelector("tbody");tb.insertAdjacentHTML("beforeend",itemRow(r,n.rows.length-1));const tr=tb.lastElementChild;tr.querySelector("[data-rdel]").onclick=()=>tr.remove();tr.querySelector('[data-r="item"]').focus()});
   nfIAPreenche(ov,novas);
   ov.querySelectorAll("[data-dupdel]").forEach(b=>b.onclick=()=>b.closest("[data-dup]").remove());
   ov.querySelectorAll("[data-dupadd]").forEach(b=>b.onclick=()=>{b.previousElementSibling.insertAdjacentHTML("beforeend",dupRow({}));const r=b.previousElementSibling.lastElementChild;r.querySelector("[data-dupdel]").onclick=()=>r.remove()});
@@ -3903,16 +3914,17 @@ async function nfImportar(files,opts){
       const cnpj=so(h("cnpj")),chave=so(h("chave")),forn=h("forn"),nota=h("nota"),seq=h("seq")||n.seq,date=nfData(h("date"))||n.date;
       const rows=[...box.querySelectorAll("tr[data-item]")].map(tr=>{
         const g=k=>tr.querySelector(`[data-r="${k}"]`).value.trim(),base=n.rows[+tr.dataset.item],qtd=pn(g("qtd"))||1,valor=pn(g("valor")),total=pn(g("total"))||+(qtd*valor).toFixed(2);
-        const cat=g("cat")||"A classificar",k=nfClassifica({item:g("item"),ncm:base.ncm});
+        const k=nfClassifica({item:g("item"),ncm:base.ncm}),cat=(g("cat")&&g("cat")!=="A classificar")?g("cat"):(k?k.cat:"A classificar");
         const o={...base,date,nota:seq,notaForn:nota,item:g("item"),local:forn,qtd,valor,total,chave,categoria:cat,subcategoria:g("sub")||(k&&k.cat===cat?k.sub:(cat===base._cat?base._sub:"A classificar")),...(g("un")?{un:g("un")}:{}),viaFin:false};
         delete o._cat;delete o._sub;delete o._cc;
         if(k&&k.cat===cat&&k.cc)o.cc=k.cc;else if(cat===base._cat&&base._cc)o.cc=base._cc;
-        o[n.fonte==="xml"?"xml":"lida"]=true;return o;
+        o[n.fonte==="xml"?"xml":n.fonte==="manual"?"manual":"lida"]=true;return o;
       }).filter(r=>r.item);
       const dups=[...box.querySelectorAll("[data-dup]")].map((d,i)=>({n:String(i+1),venc:nfData(d.querySelector('[data-d="venc"]').value),valor:pn(d.querySelector('[data-d="valor"]').value)})).filter(d=>d.valor>0);
       final.push({...n,forn,cnpj,chave,nota,seq,date,vNF:pn(h("vNF"))||rows.reduce((s,r)=>s+r.total,0),rows,dups});
     });
     {const usados=new Set((store.rows||[]).map(r=>String(r.nota))),vistos=new Set();for(const n of final){if(usados.has(String(n.seq))||vistos.has(String(n.seq))){btn.disabled=false;btn.textContent="Lançar";return toast("O número "+n.seq+" já está em uso por outra nota. Ajuste o Nº no sistema.",true)}vistos.add(String(n.seq))}}
+    if(final.some(n=>!n.forn)){btn.disabled=false;btn.textContent="Lançar";return toast("Informe o fornecedor de todas as notas.",true)}
     if(final.some(n=>!n.rows.length)){btn.disabled=false;btn.textContent="Lançar";return toast("Uma das notas ficou sem itens.",true)}
     if(lanca&&final.some(n=>n.dups.some(d=>!d.venc))){btn.disabled=false;btn.textContent="Lançar";return toast("Preencha a data de todos os vencimentos.",true)}
     // guarda o arquivo original
@@ -3920,6 +3932,7 @@ async function nfImportar(files,opts){
     for(const n of final){
       btn.textContent=`Guardando arquivos ${++kk}/${final.length}…`;await new Promise(r=>setTimeout(r,0));
       try{
+        if(!n.arq){n.arqId=null;continue}
         let previa=null;if(n.arqTipo==="pdf"&&!RT.assets)try{previa=(await nfPdfLer(n.arq)).imgs[0]}catch(e){}
         n.arqId=await nfArquivar(n.arq,n.arqTipo,n,previa);
       }catch(e){avisos.push(e.message);n.arqId=null}
