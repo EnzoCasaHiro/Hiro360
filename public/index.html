@@ -294,7 +294,7 @@ body.gated #xfab{display:none}
 <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></symbol>
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
 <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 8H5V4"/><path d="M5 8a8 8 0 1 1-1 4"/></symbol>
-<symbol id="i-box" viewBox="0 0 24 24"><path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/></symbol>
+<symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7.5h3.5L9 5h6l1.5 2.5H20V19H4z"/><circle cx="12" cy="13" r="3.5"/></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/></symbol>
 <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8m-3 3 2.5 2.5M14 9l2 2"/></symbol>
 </defs></svg>
 
@@ -2232,12 +2232,9 @@ function nfFiltered(rows){
 }
 function pgNF(){
   const store=S.config.nf;
-  if(!store||!store.rows||!store.rows.length)return banner("","Notas Fiscais","Envie a planilha de notas fiscais para ver os gastos da casa.","receipt")+noStore()+`
-   <div class="card"><div class="drop" id="nfdrop">${ic("up")}<div>Clique ou solte aqui a planilha de notas fiscais (.xlsx)</div></div>
-   <input type="file" id="nffile" accept=".xlsx,.xls" hidden><div class="sub" id="nfinfo" style="margin-top:8px"></div>
-   <div class="row" style="margin-top:12px"><button class="b" id="nfxmlbtn" style="flex:none">${ic("file")} Ler nota fiscal (XML, PDF ou foto)</button></div>
-   <p class="sub" style="margin:8px 0 0">O sistema lê a nota, corrige o que não bate, guarda o arquivo e lança itens, estoque e contas a pagar.</p>
-   <input type="file" id="nfxmlfile" accept="${NF_ACCEPT}" multiple hidden></div>${nfArqCard()}`;
+  if(!store||!store.rows||!store.rows.length)return banner("","Notas Fiscais","Envie a planilha de notas fiscais para ver os gastos da casa.","receipt")+noStore()+nfEntradaCard()+`
+   <div class="card"><h2>Planilha de notas antigas</h2><div class="drop" id="nfdrop">${ic("up")}<div>Clique ou solte aqui a planilha de notas fiscais (.xlsx)</div></div>
+   <input type="file" id="nffile" accept=".xlsx,.xls" hidden><div class="sub" id="nfinfo" style="margin-top:8px"></div></div>${nfArqCard()}`;
   ensureNFUI(store.rows);
   const rows=nfFiltered(store.rows);
   const total=rows.reduce((s,r)=>s+r.total,0),notas=nfCountNotas(rows);
@@ -2245,7 +2242,7 @@ function pgNF(){
   const catList=Object.keys(byCat).sort((a,b)=>byCat[b]-byCat[a]),topCat=catList[0];
   const maxCat=Math.max(1,...catList.map(c=>byCat[c]));
   const meses=[...NFUI.allMonths].sort((a,b)=>a-b);
-  return banner("","Notas Fiscais",`${esc(store.fileName||"Planilha carregada")} · ${fmtBRL(total)} no filtro atual`,"receipt")+noStore()+`
+  return banner("","Notas Fiscais",`${esc(store.fileName||"Planilha carregada")} · ${fmtBRL(total)} no filtro atual`,"receipt")+noStore()+nfEntradaCard()+`
   <div class="stats">
    <div class="stat"><b>${fmtBRL(total)}</b><span>total no filtro</span></div>
    <div class="stat"><b>${notas}</b><span>notas</span></div>
@@ -2262,8 +2259,8 @@ function pgNF(){
    ${catList.map(c=>`<tr data-nfcat2="${esc(c)}" style="cursor:pointer"><td>${esc(c)}<div class="bar" style="width:160px;margin-top:4px"><i style="width:${byCat[c]/maxCat*100}%"></i></div></td>
      <td class="n">${fmtBRL(byCat[c])}</td><td class="n">${total?(byCat[c]/total*100).toFixed(1):"0.0"}%</td></tr>`).join("")}
    </tbody></table></div>`:`<div class="empty">Nenhum lançamento com os filtros atuais.</div>`}</div>
-  <div class="row"><button class="b" id="nfestbtn" style="flex:none">${ic("box")} Dar entrada no estoque</button><button class="b" id="nfxmlbtn" style="flex:none">${ic("file")} Ler nota fiscal (XML, PDF ou foto)</button><button class="b sec" id="nfswap" style="flex:none">${ic("up")} Trocar planilha</button></div>
-  <input type="file" id="nfxmlfile" accept="${NF_ACCEPT}" multiple hidden>${nfNotasCard()}${nfArqCard()}`;
+  <div class="row"><button class="b sec" id="nfswap" style="flex:none">${ic("up")} Trocar planilha</button></div>
+  ${nfNotasCard()}${nfArqCard()}`;
 }
 function bindNF(){
   const store=S.config.nf;
@@ -3636,10 +3633,25 @@ function nfParseXml(txt){
   if(!rows.length)throw new Error("NF-e sem itens");
   return{nota,date,forn,cnpj,chave,rows,dups,vNF};
 }
+// primeira coisa da página: dar entrada numa nota (arquivo, foto ou arrastar)
+function nfEntradaCard(){
+  return `<div class="card"><h2>Dar entrada em nota fiscal</h2>
+   <p class="sub" style="margin:0 0 10px">1. Envie a nota: o <b>XML</b> é o mais preciso; também serve <b>PDF</b> ou <b>foto</b>. 2. Confira os itens que o sistema leu. 3. Confirme: ele guarda o arquivo e lança itens, estoque e contas a pagar.</p>
+   <div class="drop" id="nfxmldrop">${ic("up")}<div><b>Clique aqui ou arraste a nota</b> (XML, PDF ou foto). Pode mandar várias de uma vez.</div></div>
+   <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px">
+    <button class="b" id="nfxmlbtn" style="flex:none">${ic("file")} Escolher arquivo da nota</button>
+    <button class="b sec" id="nfcambtn" style="flex:none">${ic("camera")} Tirar foto da nota</button>
+    <button class="b sec" id="nfestbtn" style="flex:none">${ic("box")} Dar entrada no estoque</button></div>
+   <input type="file" id="nfxmlfile" accept="${NF_ACCEPT}" multiple hidden><input type="file" id="nfcamfile" accept="image/*" capture="environment" hidden></div>`;
+}
 function bindNFXml(){
   const eb=$("nfestbtn");if(eb)eb.onclick=openEstDeNF;
   const b=$("nfxmlbtn"),f=$("nfxmlfile");if(!b||!f)return;
-  b.onclick=()=>f.click();f.onchange=()=>{if(f.files.length){const l=[...f.files];f.value="";nfImportar(l)}};
+  const vai=fl=>{const l=[...fl];if(l.length)nfImportar(l)};
+  b.onclick=()=>f.click();f.onchange=()=>{const l=[...f.files];f.value="";vai(l)};
+  const cb=$("nfcambtn"),cf=$("nfcamfile");if(cb&&cf){cb.onclick=()=>cf.click();cf.onchange=()=>{const l=[...cf.files];cf.value="";vai(l)}}
+  const d=$("nfxmldrop");if(d){d.onclick=()=>f.click();d.ondragover=e=>{e.preventDefault();d.classList.add("on")};d.ondragleave=()=>d.classList.remove("on");
+    d.ondrop=e=>{e.preventDefault();d.classList.remove("on");vai(e.dataTransfer.files)}}
 }
 // categoria contábil e centro de custo pela NCM e pela descrição; o que não for reconhecido fica "A classificar"
 const NF_REGRAS=[
