@@ -3653,7 +3653,7 @@ function nfNovaManual(){
 function bindNFXml(){
   const eb=$("nfestbtn");if(eb)eb.onclick=openEstDeNF;
   const b=$("nfxmlbtn"),f=$("nfxmlfile");if(!b||!f)return;
-  const vai=fl=>{const l=[...fl];if(l.length)nfImportar(l)};
+  const vai=fl=>{const l=[...fl],js=l.filter(f=>/\.json$/i.test(f.name));if(js.length)return nfImportarJson(js,l.filter(f=>!js.includes(f)));if(l.length)nfImportar(l)};
   b.onclick=()=>f.click();f.onchange=()=>{const l=[...f.files];f.value="";vai(l)};
   const nb=$("nfnovabtn");if(nb)nb.onclick=nfNovaManual;
   const cb=$("nfcambtn"),cf=$("nfcamfile");if(cb&&cf){cb.onclick=()=>cf.click();cf.onchange=()=>{const l=[...cf.files];cf.value="";vai(l)}}
@@ -3678,7 +3678,7 @@ const nfUnEst=u=>{const x=String(u||"").trim().toLowerCase();return!x||/^(un|und
    PDF (DANFE) e foto: o Claude lê o documento (capacidade "sample"); o resultado passa por conferências
    (dígito verificador da chave, CNPJ, número, mês, somas) e por uma tela de conferência antes de lançar.
    O arquivo original fica guardado (armazenamento de arquivos do painel ou, se não houver, no banco). */
-const NF_ACCEPT=".xml,.pdf,.png,.jpg,.jpeg,.webp,image/*";
+const NF_ACCEPT=".xml,.pdf,.png,.jpg,.jpeg,.webp,.json,image/*";
 const PDFJS_URL="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",PDFJS_WORKER="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 let _pdfjs=null;
 function pdfjsCarrega(){
@@ -3712,6 +3712,41 @@ const NF_PROMPT=`Você lê notas fiscais brasileiras (DANFE de NF-e, NFC-e, cupo
 Regras: copie exatamente o que está impresso; NÃO invente nada. Campo ilegível ou ausente = null. Datas em AAAA-MM-DD. Valores como número com ponto decimal (1234.56). CNPJ, CPF e chave de acesso só com dígitos. "valor" é o valor unitário. Se for nota de serviço sem itens, use um único item com a descrição do serviço.
 Responda APENAS com um objeto JSON neste formato:
 {"tipo":"produto ou servico","nota":"número da nota","date":"AAAA-MM-DD","forn":"razão social do emitente","cnpj":"dígitos","chave":"44 dígitos ou null","vNF":0,"itens":[{"item":"descrição","qtd":0,"un":"UN","valor":0,"desconto":0,"total":0,"ncm":"8 dígitos ou null","lote":null,"validade":null}],"dups":[{"n":"001","venc":"AAAA-MM-DD","valor":0}],"obs":"ressalvas de legibilidade, se houver"}`;
+function nfDeJson(j){
+  if(!j||typeof j!=="object"||!Array.isArray(j.itens)||!j.itens.length)throw new Error("nota sem itens");
+  const num=v=>{const x=+String(v??"").replace(",",".");return isFinite(x)?x:0};
+  const forn=String(j.forn||"").trim(),nota=String(j.nota??"").trim(),date=nfData(j.date);
+  const comp=!!(j.comprovante||j.semNfe),info=j.info?String(j.info):"";
+  const rows=j.itens.map(it=>({date,nota,item:String(it.item||"").trim(),local:forn,valor:num(it.valor),qtd:num(it.qtd)||1,desconto:num(it.desconto),total:num(it.total),chave:"",
+    ...(it.categoria?{_sug:{cat:String(it.categoria),sub:String(it.subcategoria||"")}}:{}),...(info?{obs:info}:{}),
+    ...(it.ncm?{ncm:so(it.ncm)}:{}),...(it.un?{un:String(it.un)}:{}),...(it.lote?{lote:String(it.lote)}:{}),...(nfData(it.validade)?{validade:nfData(it.validade)}:{})}));
+  const res={nota,date,forn,cnpj:so(j.cnpj),chave:so(j.chave),tipo:j.tipo==="servico"?"servico":"produto",rows,vNF:num(j.vNF),
+    dups:(j.dups||[]).map((d,i)=>({n:String(d.n||i+1),venc:nfData(d.venc)||"",valor:num(d.valor)})),obsIA:j.obs?String(j.obs):"",fonte:comp?"comprovante":"leitura"};
+  return res;
+}
+// notas lidas fora do sistema (ex.: pelo Claude Code) num arquivo .json; os PDFs/fotos escolhidos junto são anexados pelo nome
+async function nfImportarJson(js,outros){
+  if(!podeEd("nf"))return toast("Seu perfil não permite lançar notas fiscais.",true);
+  const porNome=new Map(outros.map(f=>[f.name.toLowerCase(),f])),prontas=[],erros=[];let o=0;
+  for(const f of js){
+    let L;try{L=JSON.parse(await f.text())}catch(e){erros.push(f.name+": arquivo inválido");continue}
+    for(const j of(Array.isArray(L)?L:(L&&L.notas)||[L])){
+      try{const n=nfDeJson(j),a=j.arquivo&&porNome.get(String(j.arquivo).toLowerCase());
+        if(a){n.arq=a;n.arqTipo=nfTipoArq(a);porNome.delete(a.name.toLowerCase())}
+        n._ord=o++;n.av=nfCorrige(n).concat(typeof nfAvisosExtra==="function"?nfAvisosExtra(n):[]);prontas.push(n)}
+      catch(e){erros.push((j&&j.arquivo||"nota "+(o+1))+": "+e.message)}
+    }
+  }
+  if(erros.length)toast(erros.length+" nota(s) com erro: "+erros.slice(0,3).join(" | "),true);
+  if(!prontas.length)return;
+  if(prontas.length<30)return nfImportar([],{interno:true,prontas});
+  // muitas notas: lança direto as sem divergência e junta o resto para conferir no fim
+  const res={lancadas:0,erros:[],parou:false},rev=[];
+  for(let i=0;i<prontas.length&&!res.parou;i+=100)await nfImportar([],{interno:true,auto:true,rev,res,prontas:prontas.slice(i,i+100)});
+  toast(`${res.lancadas} nota(s) lançada(s) direto${rev.length?`; ${rev.length} para você conferir`:""}.`);
+  go("nf",true);
+  if(rev.length)await nfImportar([],{interno:true,prontas:rev});
+}
 async function nfLerIA(file,tipo,forca){
   if(!RT.sample)throw new Error("A leitura de PDF e foto por IA não está ativada neste servidor. Use o XML da nota.");
   let texto="",imgs=[];
@@ -3728,12 +3763,7 @@ async function nfLerIA(file,tipo,forca){
     throw new Error(m||"O Claude não conseguiu ler esta nota ("+((e&&e.message)||(e&&e.code)||"erro")+").");
   }
   if(!j||typeof j!=="object"||!Array.isArray(j.itens)||!j.itens.length)throw new Error("Não encontrei itens nessa nota. Tente uma foto mais nítida ou o XML.");
-  const num=v=>{const x=+String(v??"").replace(",",".");return isFinite(x)?x:0};
-  const forn=String(j.forn||"").trim(),nota=String(j.nota??"").trim(),date=nfData(j.date);
-  const rows=j.itens.map(it=>({date,nota,item:String(it.item||"").trim(),local:forn,valor:num(it.valor),qtd:num(it.qtd)||1,desconto:num(it.desconto),total:num(it.total),chave:"",
-    ...(it.ncm?{ncm:so(it.ncm)}:{}),...(it.un?{un:String(it.un)}:{}),...(it.lote?{lote:String(it.lote)}:{}),...(nfData(it.validade)?{validade:nfData(it.validade)}:{})}));
-  const res={nota,date,forn,cnpj:so(j.cnpj),chave:so(j.chave),tipo:j.tipo==="servico"?"servico":"produto",rows,vNF:num(j.vNF),
-    dups:(j.dups||[]).map((d,i)=>({n:String(d.n||i+1),venc:nfData(d.venc)||"",valor:num(d.valor)})),obsIA:j.obs?String(j.obs):"",fonte:"leitura"};
+  const res=nfDeJson(j);
   if(soTexto){let av=[1];try{av=nfCorrige(JSON.parse(JSON.stringify(res)))}catch(e){}if(av.length)return nfLerIA(file,tipo,true)}
   return res;
 }
@@ -3763,7 +3793,7 @@ function nfCorrige(n){
       n.nota=num;
       if(n.date&&(n.date.slice(2,4)+n.date.slice(5,7))!==aamm)av.push(`A data de emissão (${brDate(n.date)}) não é do mês da chave (${aamm.slice(2)}/20${aamm.slice(0,2)}). Confira.`);
     }
-  }else if(n.tipo!=="servico")av.push("Sem chave de acesso legível: não deu para conferir o CNPJ e o número da nota.");
+  }else if(n.tipo!=="servico"&&n.fonte!=="comprovante")av.push("Sem chave de acesso legível: não deu para conferir o CNPJ e o número da nota.");
   if(n.cnpj&&!docOk(n.cnpj))av.push("CNPJ/CPF do fornecedor com dígito verificador inválido. Confira.");
   if(!n.date){n.date=hojeIso();av.push("Não achei a data de emissão; coloquei a de hoje.")}
   const conhecido=n.cnpj&&finAll().find(e=>e.fornId===n.cnpj&&e.contra);
@@ -3870,13 +3900,13 @@ async function nfImportar(files,opts){
   if(opts.auto){const limpa=n=>!n.av.length&&n.rows.length&&n.date&&n.forn&&!n.obsIA&&n.rows.every(r=>r.item&&r.total>0);opts.rev.push(...novas.filter(n=>!limpa(n)));novas=novas.filter(limpa);if(!novas.length)return;opts.autoClick=true}
   const cats=[...new Set((store.rows||[]).map(r=>r.categoria).filter(Boolean).concat(NF_REGRAS.map(x=>x[1])))];
   {let ult=null;novas.forEach(n=>{n.seq=nfProximoNumero(ult);ult=n.seq})}
-  novas.forEach(n=>n.rows.forEach(r=>{const k=nfClassifica(r);r._cat=k?k.cat:"A classificar";r._sub=k?k.sub:"A classificar";r._cc=k?k.cc:""}));
+  novas.forEach(n=>n.rows.forEach(r=>{const k=(r._sug&&{cat:r._sug.cat,sub:r._sug.sub||"A classificar",cc:NFX_CC[r._sug.cat]||""})||nfClassifica(r);r._cat=k?k.cat:"A classificar";r._sub=k?k.sub:"A classificar";r._cc=k?k.cc:""}));
   const comDup=novas.some(n=>n.dups.length);
   const itemRow=(r,j)=>`<tr data-item="${j}"><td><input data-r="item" value="${esc(r.item)}" style="min-width:180px"></td><td><input data-r="qtd" inputmode="decimal" value="${r.qtd}" style="width:64px"></td><td><input data-r="un" value="${esc(r.un||"")}" style="width:52px"></td>
     <td><input data-r="valor" inputmode="decimal" value="${r.valor}" style="width:84px"></td><td><input data-r="total" inputmode="decimal" value="${r.total}" style="width:90px"></td>
     <td><input data-r="cat" list="nfcats" value="${esc(r._cat)}" style="min-width:150px"></td><td><input data-r="sub" list="nfsubs" value="${esc(r._sub)}" style="min-width:150px"></td><td><button type="button" class="b sec sm" data-rdel title="Remover item">${ic("trash")}</button></td></tr>`;
   const secao=(n,i)=>`<details class="card" data-nota="${i}" style="margin:0 0 10px" ${(novas.length<=20&&(n.av.length||n.fonte==="leitura"))||novas.length===1||(novas.length>20&&i<3)?"open":""}>
-   <summary style="cursor:pointer"><b>NF ${esc(n.nota||"s/n")} — ${esc(n.forn)}</b> <span class="chip">${n.fonte==="xml"?"XML (leitura exata)":n.fonte==="manual"?"digitada":"lida por IA — confira"}</span> <span class="sub">${fmtBRL(n.vNF)}</span></summary>
+   <summary style="cursor:pointer"><b>NF ${esc(n.nota||"s/n")} — ${esc(n.forn)}</b> <span class="chip">${n.fonte==="xml"?"XML (leitura exata)":n.fonte==="manual"?"digitada":n.fonte==="comprovante"?"comprovante sem NF-e":"lida por IA — confira"}</span> <span class="sub">${fmtBRL(n.vNF)}</span></summary>
    ${n.av.length?`<div class="callout sand" style="margin:10px 0">${n.av.map(a=>`<div>• ${esc(a)}</div>`).join("")}</div>`:`<div class="callout" style="margin:10px 0">Nenhuma divergência encontrada nas conferências.</div>`}
    <div class="grid g2"><div><label>Fornecedor</label><input data-h="forn" value="${esc(n.forn)}"></div><div><label>CNPJ/CPF</label><input data-h="cnpj" value="${esc(fmtCnpj(n.cnpj))}"></div>
     <div><label>Nº no sistema (sequência da planilha)</label><input data-h="seq" value="${esc(n.seq)}"></div><div><label>Nº na nota do fornecedor</label><input data-h="nota" value="${esc(n.nota)}"></div><div><label>Emissão</label><input type="date" data-h="date" value="${esc(n.date)}"></div>
@@ -3916,9 +3946,9 @@ async function nfImportar(files,opts){
         const g=k=>tr.querySelector(`[data-r="${k}"]`).value.trim(),base=n.rows[+tr.dataset.item],qtd=pn(g("qtd"))||1,valor=pn(g("valor")),total=pn(g("total"))||+(qtd*valor).toFixed(2);
         const k=nfClassifica({item:g("item"),ncm:base.ncm}),cat=(g("cat")&&g("cat")!=="A classificar")?g("cat"):(k?k.cat:"A classificar");
         const o={...base,date,nota:seq,notaForn:nota,item:g("item"),local:forn,qtd,valor,total,chave,categoria:cat,subcategoria:g("sub")||(k&&k.cat===cat?k.sub:(cat===base._cat?base._sub:"A classificar")),...(g("un")?{un:g("un")}:{}),viaFin:false};
-        delete o._cat;delete o._sub;delete o._cc;
+        delete o._cat;delete o._sub;delete o._cc;delete o._sug;
         if(k&&k.cat===cat&&k.cc)o.cc=k.cc;else if(cat===base._cat&&base._cc)o.cc=base._cc;
-        o[n.fonte==="xml"?"xml":n.fonte==="manual"?"manual":"lida"]=true;return o;
+        o[n.fonte==="xml"?"xml":n.fonte==="manual"?"manual":n.fonte==="comprovante"?"semNfe":"lida"]=true;return o;
       }).filter(r=>r.item);
       const dups=[...box.querySelectorAll("[data-dup]")].map((d,i)=>({n:String(i+1),venc:nfData(d.querySelector('[data-d="venc"]').value),valor:pn(d.querySelector('[data-d="valor"]').value)})).filter(d=>d.valor>0);
       final.push({...n,forn,cnpj,chave,nota,seq,date,vNF:pn(h("vNF"))||rows.reduce((s,r)=>s+r.total,0),rows,dups});
@@ -3948,7 +3978,7 @@ async function nfImportar(files,opts){
         const grupo=n.dups.length>1?uid8():null,pesos={};
         rows.filter(r=>(r.chave||r.notaForn||r.nota)===ref||(r.notaForn||r.nota)===n.nota&&r.local===n.forn).forEach(r=>{const k=r.categoria+"|"+(r.cc||"");pesos[k]=(pesos[k]||0)+r.total});
         const topo=Object.keys(pesos).sort((a,b)=>pesos[b]-pesos[a])[0]||"A classificar|",[catN,ccN]=topo.split("|");
-        n.dups.forEach((d,i)=>novosFin.push({id:uid8(),tipo:"pagar",desc:`NF ${n.nota} — ${n.forn}`,contra:n.forn,cat:catN,area:ccN||"",forma:"Boleto",obs:n.fonte==="xml"?"Importada do XML da NF-e":"Lida do documento da nota",valor:d.valor||n.vNF,venc:d.venc||n.date||hojeIso(),pago:null,valorPago:null,grupo,parcela:n.dups.length>1?`${i+1}/${n.dups.length}`:null,nf:ref,fornId:nfFornId(n),...(n.arqId?{nfarq:n.arqId}:{})}));
+        n.dups.forEach((d,i)=>novosFin.push({id:uid8(),tipo:"pagar",desc:`NF ${n.nota} — ${n.forn}`,contra:n.forn,cat:catN,area:ccN||"",forma:"Boleto",obs:n.fonte==="xml"?"Importada do XML da NF-e":n.fonte==="comprovante"?"Comprovante de compra sem NF-e":"Lida do documento da nota",valor:d.valor||n.vNF,venc:d.venc||n.date||hojeIso(),pago:null,valorPago:null,grupo,parcela:n.dups.length>1?`${i+1}/${n.dups.length}`:null,nf:ref,fornId:nfFornId(n),...(n.arqId?{nfarq:n.arqId}:{})}));
       });
       if(novosFin.length){finMutate(all=>[...all,...novosFin]);nFin=novosFin.length}
     }
