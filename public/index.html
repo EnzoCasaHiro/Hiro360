@@ -3636,12 +3636,13 @@ function nfParseXml(txt){
 // primeira coisa da página: dar entrada numa nota (arquivo, foto ou arrastar)
 function nfEntradaCard(){
   return `<div class="card"><h2>Dar entrada em nota fiscal</h2>
-   <p class="sub" style="margin:0 0 10px">1. Envie a nota: o <b>XML</b> é o mais preciso; também serve <b>PDF</b> ou <b>foto</b>. 2. Confira os itens que o sistema leu. 3. Confirme: ele guarda o arquivo e lança itens, estoque e contas a pagar.</p>
-   <div class="drop" id="nfxmldrop">${ic("up")}<div><b>Clique aqui ou arraste a nota</b> (XML, PDF ou foto). Pode mandar várias de uma vez.</div></div>
+   <p class="sub" style="margin:0 0 10px">1. Envie a nota: o <b>XML</b> é o mais preciso; também serve <b>PDF</b> ou <b>foto</b>. Ou baixe a <b>planilha</b>, preencha as linhas em branco e envie o arquivo. 2. Confira os itens que o sistema leu. 3. Confirme: ele lança itens, estoque e contas a pagar.</p>
+   <div class="drop" id="nfxmldrop">${ic("up")}<div><b>Clique aqui ou arraste a nota</b> (XML, PDF, foto ou planilha). Pode mandar várias notas de uma vez.</div></div>
    <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:8px">
     <button class="b" id="nfxmlbtn" style="flex:none">${ic("file")} Escolher arquivo da nota</button>
     <button class="b sec" id="nfcambtn" style="flex:none">${ic("camera")} Tirar foto da nota</button>
     <button class="b sec" id="nfnovabtn" style="flex:none">${ic("plus")} Nova nota (digitar)</button>
+    <button class="b sec" id="nfplanbtn" style="flex:none">${ic("sheet")} Baixar planilha para preencher</button>
     <button class="b sec" id="nfestbtn" style="flex:none">${ic("box")} Dar entrada no estoque</button></div>
    <input type="file" id="nfxmlfile" accept="${NF_ACCEPT}" multiple hidden><input type="file" id="nfcamfile" accept="image/*" capture="environment" hidden></div>`;
 }
@@ -3653,9 +3654,10 @@ function nfNovaManual(){
 function bindNFXml(){
   const eb=$("nfestbtn");if(eb)eb.onclick=openEstDeNF;
   const b=$("nfxmlbtn"),f=$("nfxmlfile");if(!b||!f)return;
-  const vai=fl=>{const l=[...fl],js=l.filter(f=>/\.json$/i.test(f.name));if(js.length)return nfImportarJson(js,l.filter(f=>!js.includes(f)));if(l.length)nfImportar(l)};
+  const vai=fl=>{const l=[...fl],xl=l.filter(f=>/\.xlsx?$/i.test(f.name));if(xl.length){if(l.length>1)return toast("Envie a planilha sozinha, um arquivo de cada vez.",true);return nfImportarPlanilha(xl[0])}const js=l.filter(f=>/\.json$/i.test(f.name));if(js.length)return nfImportarJson(js,l.filter(f=>!js.includes(f)));if(l.length)nfImportar(l)};
   b.onclick=()=>f.click();f.onchange=()=>{const l=[...f.files];f.value="";vai(l)};
   const nb=$("nfnovabtn");if(nb)nb.onclick=nfNovaManual;
+  const pb=$("nfplanbtn");if(pb)pb.onclick=nfExportaPlanilha;
   const cb=$("nfcambtn"),cf=$("nfcamfile");if(cb&&cf){cb.onclick=()=>cf.click();cf.onchange=()=>{const l=[...cf.files];cf.value="";vai(l)}}
   const d=$("nfxmldrop");if(d){d.onclick=()=>f.click();d.ondragover=e=>{e.preventDefault();d.classList.add("on")};d.ondragleave=()=>d.classList.remove("on");
     d.ondrop=e=>{e.preventDefault();d.classList.remove("on");vai(e.dataTransfer.files)}}
@@ -3678,7 +3680,7 @@ const nfUnEst=u=>{const x=String(u||"").trim().toLowerCase();return!x||/^(un|und
    PDF (DANFE) e foto: o Claude lê o documento (capacidade "sample"); o resultado passa por conferências
    (dígito verificador da chave, CNPJ, número, mês, somas) e por uma tela de conferência antes de lançar.
    O arquivo original fica guardado (armazenamento de arquivos do painel ou, se não houver, no banco). */
-const NF_ACCEPT=".xml,.pdf,.png,.jpg,.jpeg,.webp,.json,image/*";
+const NF_ACCEPT=".xml,.pdf,.png,.jpg,.jpeg,.webp,.json,.xlsx,.xls,image/*";
 const PDFJS_URL="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js",PDFJS_WORKER="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
 let _pdfjs=null;
 function pdfjsCarrega(){
@@ -3738,7 +3740,9 @@ async function nfImportarJson(js,outros){
     }
   }
   if(erros.length)toast(erros.length+" nota(s) com erro: "+erros.slice(0,3).join(" | "),true);
-  if(!prontas.length)return;
+  if(prontas.length)await nfLancaProntas(prontas);
+}
+async function nfLancaProntas(prontas){
   if(prontas.length<30)return nfImportar([],{interno:true,prontas});
   // muitas notas: lança direto as sem divergência e junta o resto para conferir no fim
   const res={lancadas:0,erros:[],parou:false},rev=[];
@@ -3746,6 +3750,57 @@ async function nfImportarJson(js,outros){
   toast(`${res.lancadas} nota(s) lançada(s) direto${rev.length?`; ${rev.length} para você conferir`:""}.`);
   go("nf",true);
   if(rev.length)await nfImportar([],{interno:true,prontas:rev});
+}
+// planilha gerada pelo sistema: só as linhas de notas novas viram lançamento; as notas que já existem nunca são alteradas
+async function nfImportarPlanilha(file){
+  if(!podeEd("nf"))return toast("Seu perfil não permite lançar notas fiscais.",true);
+  if(typeof XLSX==="undefined")return toast("Biblioteca de planilha não carregou. Recarregue a página.",true);
+  let linhas;
+  try{linhas=nfParseWorkbook(XLSX.read(new Uint8Array(await file.arrayBuffer()),{type:"array",cellDates:true}))}
+  catch(e){console.error(e);return toast("Não foi possível ler essa planilha: "+e.message,true)}
+  if(!linhas.length)return toast("Não encontrei linhas de item. Use a planilha baixada aqui do sistema.",true);
+  const limpaCat=v=>/^(sem categoria|sem subcategoria)$/i.test(String(v||"").trim())?"":String(v||"").trim();
+  const din=v=>(+v||0).toFixed(2),base=r=>[r.date||"",NFN(r.item),NFN(r.local),din(r.total)].join("|");
+  const igual=(f,e)=>NFN(f.item)===NFN(e.item)&&din(f.total)===din(e.total)&&(!f.local||NFN(f.local)===NFN(e.local))&&(!f.date||f.date===e.date)
+    &&(!f.qtd||din(f.qtd)===din(e.qtd))&&(!f.valor||din(f.valor)===din(e.valor))&&(!f.desconto||din(f.desconto)===din(e.desconto))
+    &&(!limpaCat(f.categoria)||limpaCat(f.categoria)===limpaCat(e.categoria))&&(!limpaCat(f.subcategoria)||limpaCat(f.subcategoria)===limpaCat(e.subcategoria));
+  const mesmaNota=(arq,atuais)=>{if(arq.length!==atuais.length)return false;const resto=[...atuais];return arq.every(f=>{const i=resto.findIndex(e=>igual(f,e));if(i<0)return false;resto.splice(i,1);return true})};
+  const existentes=(S.config.nf&&S.config.nf.rows)||[],porNum=new Map(),semNum=new Map();
+  existentes.forEach(r=>{
+    const k=r.nota==null?"":String(r.nota).trim();
+    if(k){if(!porNum.has(k))porNum.set(k,[]);porNum.get(k).push(r)}
+    semNum.set(base(r),(semNum.get(base(r))||0)+1);
+  });
+  const grupos=new Map();let semData=0;
+  linhas.forEach(r=>{const k=r.nota?"#"+r.nota:"s|"+NFN(r.local)+"|"+(r.date||"");if(!grupos.has(k))grupos.set(k,[]);grupos.get(k).push(r)});
+  const prontas=[],alteradas=[];let iguais=0,o=0;
+  for(const[k,g0]of grupos){
+    let g=g0;
+    if(k[0]==="#"){
+      const atuais=porNum.get(k.slice(1));
+      if(atuais){
+        if(mesmaNota(g,atuais))iguais++;else alteradas.push(k.slice(1));
+        continue;
+      }
+    }else{
+      g=g.filter(r=>{const b=base(r),c=semNum.get(b)||0;if(c){semNum.set(b,c-1);return false}return true});
+      if(!g.length){iguais++;continue}
+    }
+    const forn=(g.find(r=>r.local)||{}).local||"",date=(g.find(r=>r.date)||{}).date||"",aviso=[];
+    if(new Set(g.map(r=>NFN(r.local)).filter(Boolean)).size>1)aviso.push("Esta nota tem fornecedores diferentes nas linhas. Confira se o Nº está certo.");
+    if(new Set(g.map(r=>r.date).filter(Boolean)).size>1)aviso.push("Esta nota tem datas diferentes nas linhas. Confira a emissão.");
+    const n={nota:"",_seq:k[0]==="#"?k.slice(1):"",_k:k,date,forn,cnpj:"",chave:"",tipo:"produto",vNF:0,dups:[],obsIA:"",fonte:"planilha",_ord:o++,
+      rows:g.map(r=>{
+        const cat=limpaCat(r.categoria),sub=limpaCat(r.subcategoria),qtd=r.qtd||1,sugSub=cat&&!sub?(()=>{const c=nfClassifica({item:r.item});return c&&c.cat===cat?c.sub:""})():sub;
+        return{date,nota:"",item:r.item,local:forn,valor:r.valor||0,qtd,desconto:r.desconto||0,total:r.total||0,chave:"",...(cat?{_sug:{cat,sub:sugSub}}:{}),...(r.ex?{ex:r.ex}:{})};
+      })};
+    n.av=aviso.concat(nfCorrige(n),typeof nfAvisosExtra==="function"?nfAvisosExtra(n):[]);
+    prontas.push(n);
+  }
+  if(alteradas.length)toast(`${alteradas.length} nota(s) já lançada(s) estão diferentes na planilha (Nº ${alteradas.slice(0,5).join(", ")}${alteradas.length>5?"…":""}) e não foram alteradas. Para corrigir, use Editar em Notas lançadas.`,true);
+  if(!prontas.length)return alteradas.length?undefined:toast(`Nenhuma nota nova na planilha. ${iguais} nota(s) já estão no sistema.`);
+  if(iguais)toast(`${iguais} nota(s) da planilha já estão no sistema e foram ignoradas.`);
+  await nfLancaProntas(prontas);
 }
 async function nfLerIA(file,tipo,forca){
   if(!RT.sample)throw new Error("A leitura de PDF e foto por IA não está ativada neste servidor. Use o XML da nota.");
@@ -3793,7 +3848,7 @@ function nfCorrige(n){
       n.nota=num;
       if(n.date&&(n.date.slice(2,4)+n.date.slice(5,7))!==aamm)av.push(`A data de emissão (${brDate(n.date)}) não é do mês da chave (${aamm.slice(2)}/20${aamm.slice(0,2)}). Confira.`);
     }
-  }else if(n.tipo!=="servico"&&n.fonte!=="comprovante")av.push("Sem chave de acesso legível: não deu para conferir o CNPJ e o número da nota.");
+  }else if(n.tipo!=="servico"&&n.fonte!=="comprovante"&&n.fonte!=="planilha")av.push("Sem chave de acesso legível: não deu para conferir o CNPJ e o número da nota.");
   if(n.cnpj&&!docOk(n.cnpj))av.push("CNPJ/CPF do fornecedor com dígito verificador inválido. Confira.");
   if(!n.date){n.date=hojeIso();av.push("Não achei a data de emissão; coloquei a de hoje.")}
   const conhecido=n.cnpj&&finAll().find(e=>e.fornId===n.cnpj&&e.contra);
@@ -3890,7 +3945,7 @@ async function nfImportar(files,opts){
     if(opts.prontas)notas.push(...opts.prontas);
     notas.sort((a,b)=>a._ord-b._ord);
     if(opts.res)opts.res.erros.push(...erros);
-    {const vistos=new Set();let rep=0;for(let i=0;i<notas.length;i++){const k=notas[i].chave||("n"+notas[i].nota+"|"+notas[i].forn);if(vistos.has(k)){notas.splice(i--,1);rep++}else vistos.add(k)}if(rep)erros.push(`${rep} arquivo(s) repetido(s) no lote foram ignorados.`)}
+    {const vistos=new Set();let rep=0;for(let i=0;i<notas.length;i++){const k=notas[i].chave||notas[i]._k||("n"+notas[i].nota+"|"+notas[i].forn);if(vistos.has(k)){notas.splice(i--,1);rep++}else vistos.add(k)}if(rep)erros.push(`${rep} arquivo(s) repetido(s) no lote foram ignorados.`)}
   }finally{st.remove()}
   if(!notas.length)return toast("Nenhuma nota lida. "+erros.join(" | "),true);
   const store=S.config.nf||{rows:[]},chaveDe=n=>n.chave||("n"+n.nota+"|"+n.forn);
@@ -3899,14 +3954,14 @@ async function nfImportar(files,opts){
   if(!novas.length)return;
   if(opts.auto){const limpa=n=>!n.av.length&&n.rows.length&&n.date&&n.forn&&!n.obsIA&&n.rows.every(r=>r.item&&r.total>0);opts.rev.push(...novas.filter(n=>!limpa(n)));novas=novas.filter(limpa);if(!novas.length)return;opts.autoClick=true}
   const cats=[...new Set((store.rows||[]).map(r=>r.categoria).filter(Boolean).concat(NF_REGRAS.map(x=>x[1])))];
-  {let ult=null;novas.forEach(n=>{n.seq=nfProximoNumero(ult);ult=n.seq})}
+  {let ult=null;novas.forEach(n=>{n.seq=n._seq||nfProximoNumero(ult);ult=n.seq})}
   novas.forEach(n=>n.rows.forEach(r=>{const k=(r._sug&&{cat:r._sug.cat,sub:r._sug.sub||"A classificar",cc:NFX_CC[r._sug.cat]||""})||nfClassifica(r);r._cat=k?k.cat:"A classificar";r._sub=k?k.sub:"A classificar";r._cc=k?k.cc:""}));
   const comDup=novas.some(n=>n.dups.length);
   const itemRow=(r,j)=>`<tr data-item="${j}"><td><input data-r="item" value="${esc(r.item)}" style="min-width:180px"></td><td><input data-r="qtd" inputmode="decimal" value="${r.qtd}" style="width:64px"></td><td><input data-r="un" value="${esc(r.un||"")}" style="width:52px"></td>
     <td><input data-r="valor" inputmode="decimal" value="${r.valor}" style="width:84px"></td><td><input data-r="total" inputmode="decimal" value="${r.total}" style="width:90px"></td>
     <td><input data-r="cat" list="nfcats" value="${esc(r._cat)}" style="min-width:150px"></td><td><input data-r="sub" list="nfsubs" value="${esc(r._sub)}" style="min-width:150px"></td><td><button type="button" class="b sec sm" data-rdel title="Remover item">${ic("trash")}</button></td></tr>`;
   const secao=(n,i)=>`<details class="card" data-nota="${i}" style="margin:0 0 10px" ${(novas.length<=20&&(n.av.length||n.fonte==="leitura"))||novas.length===1||(novas.length>20&&i<3)?"open":""}>
-   <summary style="cursor:pointer"><b>NF ${esc(n.nota||"s/n")} — ${esc(n.forn)}</b> <span class="chip">${n.fonte==="xml"?"XML (leitura exata)":n.fonte==="manual"?"digitada":n.fonte==="comprovante"?"comprovante sem NF-e":"lida por IA — confira"}</span> <span class="sub">${fmtBRL(n.vNF)}</span></summary>
+   <summary style="cursor:pointer"><b>NF ${esc(n.nota||"s/n")} — ${esc(n.forn)}</b> <span class="chip">${n.fonte==="xml"?"XML (leitura exata)":n.fonte==="manual"?"digitada":n.fonte==="comprovante"?"comprovante sem NF-e":n.fonte==="planilha"?"da planilha":"lida por IA — confira"}</span> <span class="sub">${fmtBRL(n.vNF)}</span></summary>
    ${n.av.length?`<div class="callout sand" style="margin:10px 0">${n.av.map(a=>`<div>• ${esc(a)}</div>`).join("")}</div>`:`<div class="callout" style="margin:10px 0">Nenhuma divergência encontrada nas conferências.</div>`}
    <div class="grid g2"><div><label>Fornecedor</label><input data-h="forn" value="${esc(n.forn)}"></div><div><label>CNPJ/CPF</label><input data-h="cnpj" value="${esc(fmtCnpj(n.cnpj))}"></div>
     <div><label>Nº no sistema (sequência da planilha)</label><input data-h="seq" value="${esc(n.seq)}"></div><div><label>Nº na nota do fornecedor</label><input data-h="nota" value="${esc(n.nota)}"></div><div><label>Emissão</label><input type="date" data-h="date" value="${esc(n.date)}"></div>
@@ -3948,7 +4003,7 @@ async function nfImportar(files,opts){
         const o={...base,date,nota:seq,notaForn:nota,item:g("item"),local:forn,qtd,valor,total,chave,categoria:cat,subcategoria:g("sub")||(k&&k.cat===cat?k.sub:(cat===base._cat?base._sub:"A classificar")),...(g("un")?{un:g("un")}:{}),viaFin:false};
         delete o._cat;delete o._sub;delete o._cc;delete o._sug;
         if(k&&k.cat===cat&&k.cc)o.cc=k.cc;else if(cat===base._cat&&base._cc)o.cc=base._cc;
-        o[n.fonte==="xml"?"xml":n.fonte==="manual"?"manual":n.fonte==="comprovante"?"semNfe":"lida"]=true;return o;
+        o[n.fonte==="xml"?"xml":n.fonte==="manual"?"manual":n.fonte==="comprovante"?"semNfe":n.fonte==="planilha"?"planilha":"lida"]=true;return o;
       }).filter(r=>r.item);
       const dups=[...box.querySelectorAll("[data-dup]")].map((d,i)=>({n:String(i+1),venc:nfData(d.querySelector('[data-d="venc"]').value),valor:pn(d.querySelector('[data-d="valor"]').value)})).filter(d=>d.valor>0);
       final.push({...n,forn,cnpj,chave,nota,seq,date,vNF:pn(h("vNF"))||rows.reduce((s,r)=>s+r.total,0),rows,dups});
@@ -3978,7 +4033,7 @@ async function nfImportar(files,opts){
         const grupo=n.dups.length>1?uid8():null,pesos={};
         rows.filter(r=>(r.chave||r.notaForn||r.nota)===ref||(r.notaForn||r.nota)===n.nota&&r.local===n.forn).forEach(r=>{const k=r.categoria+"|"+(r.cc||"");pesos[k]=(pesos[k]||0)+r.total});
         const topo=Object.keys(pesos).sort((a,b)=>pesos[b]-pesos[a])[0]||"A classificar|",[catN,ccN]=topo.split("|");
-        n.dups.forEach((d,i)=>novosFin.push({id:uid8(),tipo:"pagar",desc:`NF ${n.nota} — ${n.forn}`,contra:n.forn,cat:catN,area:ccN||"",forma:"Boleto",obs:n.fonte==="xml"?"Importada do XML da NF-e":n.fonte==="comprovante"?"Comprovante de compra sem NF-e":"Lida do documento da nota",valor:d.valor||n.vNF,venc:d.venc||n.date||hojeIso(),pago:null,valorPago:null,grupo,parcela:n.dups.length>1?`${i+1}/${n.dups.length}`:null,nf:ref,fornId:nfFornId(n),...(n.arqId?{nfarq:n.arqId}:{})}));
+        n.dups.forEach((d,i)=>novosFin.push({id:uid8(),tipo:"pagar",desc:`NF ${n.nota} — ${n.forn}`,contra:n.forn,cat:catN,area:ccN||"",forma:"Boleto",obs:n.fonte==="xml"?"Importada do XML da NF-e":n.fonte==="comprovante"?"Comprovante de compra sem NF-e":n.fonte==="planilha"?"Lançada pela planilha de notas":"Lida do documento da nota",valor:d.valor||n.vNF,venc:d.venc||n.date||hojeIso(),pago:null,valorPago:null,grupo,parcela:n.dups.length>1?`${i+1}/${n.dups.length}`:null,nf:ref,fornId:nfFornId(n),...(n.arqId?{nfarq:n.arqId}:{})}));
       });
       if(novosFin.length){finMutate(all=>[...all,...novosFin]);nFin=novosFin.length}
     }
@@ -7853,36 +7908,62 @@ function nfCapturaFmt(wb){
 }
 const NF_FMT_PADRAO={sheet:"Página1",head:["Nº","Data","Item","Local","Valor","Quantidade","Desconto","Total","Categoria","Subcategoria"],roles:["num","data","item","local","valor","qtd","desconto","total","categoria","subcategoria"],pre:[],z:{data:"dd/mm/yyyy",valor:'#,##0.00',desconto:'#,##0.00',total:'#,##0.00'},wch:[8,12,38,24,12,12,12,12,22,26]};
 async function nfExportaPlanilha(){
-  const st=S.config.nf;if(!st||!st.rows||!st.rows.length)return toast("Não há notas lançadas para exportar.",true);
-  if(typeof XLSX==="undefined")return toast("Biblioteca de planilha não carregou. Recarregue a página.",true);
-  const fmt=st.fmt&&st.fmt.head&&st.fmt.roles?st.fmt:NF_FMT_PADRAO,z=fmt.z||{};
-  const num=v=>v!=null&&v!==""&&/^-?\d+$/.test(String(v).trim())&&String(v).trim().length<16&&!/^0\d/.test(String(v).trim())?+String(v).trim():v;
-  const aoa=[...(fmt.pre||[]).map(r=>r.slice()),fmt.head.slice()];
-  const hr=aoa.length-1,datas=[];
-  st.rows.forEach((r,i)=>{
-    const lin=fmt.roles.map((ro,c)=>{
-      switch(ro){
-        case"num":return r.nota==null?null:num(r.nota);
-        case"data":{if(!r.date)return null;const[y,m,d]=r.date.split("-").map(Number);return new Date(y,m-1,d,12)}
-        case"item":return r.item||"";case"local":return r.local||"";
-        case"valor":return +r.valor||0;case"qtd":return +r.qtd||0;case"desconto":return +r.desconto||0;case"total":return +r.total||0;
-        case"categoria":return r.categoria&&r.categoria!=="A classificar"?r.categoria:(r.categoria||"");
-        case"subcategoria":return r.subcategoria||"";
-        default:return(r.ex&&r.ex[c]!==undefined)?r.ex[c]:null;
-      }});
-    aoa.push(lin);
-  });
-  const ws=XLSX.utils.aoa_to_sheet(aoa,{cellDates:true});
-  fmt.roles.forEach((ro,c)=>{
-    const zz=z[ro]||(ro==="data"?"dd/mm/yyyy":ro==="valor"||ro==="total"||ro==="desconto"?"#,##0.00":null);if(!zz)return;
-    for(let r=hr+1;r<aoa.length;r++){const cell=ws[XLSX.utils.encode_cell({r,c})];if(cell&&(cell.t==="n"||cell.t==="d"))cell.z=zz}
-  });
-  ws["!cols"]=fmt.head.map((h,c)=>({wch:fmt.wch&&fmt.wch[c]||Math.max(10,Math.min(40,String(h).length+4))}));
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,fmt.sheet||"Página1");
-  const bytes=new Uint8Array(XLSX.write(wb,{bookType:"xlsx",type:"array",cellDates:true}));
-  const base=String(st.fileName||"Notas fiscais").replace(/\.(xlsx?|csv)$/i,"").replace(/ - atualizada.*$/i,"");
-  const ok=await saveFile(`${base} - atualizada ${hojeIso()}.xlsx`,bytes);
-  if(ok)toast("Planilha de notas baixada, no mesmo modelo da que você enviou.");
+  const st=S.config.nf||{},linhas=st.rows||[];
+  if(typeof ExcelJS==="undefined")return toast("Biblioteca de planilha não carregou. Recarregue a página.",true);
+  try{
+    const fmt=st.fmt&&st.fmt.head&&st.fmt.roles?st.fmt:NF_FMT_PADRAO,roles=fmt.roles,nC=roles.length,L=colLetter(nC),HR=7,R0=HR+1,EM_BRANCO=100;
+    const VERDE="FF1E5C2A",VMED="FF2E7D32",AREIA="FFF5EFE0",LINHA="FFE8DFCC",TXT="FF444444",BRANCO="FFFFFFFF",MUTE="FF8A8577",DIN='"R$" #,##0.00';
+    const F=a=>({type:"pattern",pattern:"solid",fgColor:{argb:a}});
+    const wb=new ExcelJS.Workbook();wb.creator="Casa Hiro";wb.created=new Date();
+    const ws=wb.addWorksheet("Notas fiscais");
+    pageBox(ws,"landscape");
+    ws.columns=fmt.head.map((h,c)=>({width:fmt.wch&&fmt.wch[c]||NF_FMT_PADRAO.wch[NF_FMT_PADRAO.roles.indexOf(roles[c])]||Math.max(10,Math.min(40,String(h).length+4))}));
+    for(let r=1;r<=4;r++)for(let c=1;c<=nC;c++)ws.getCell(r,c).fill=F(r===4?VMED:VERDE);
+    [20,20,17,21,30,20].forEach((h,i)=>ws.getRow(i+1).height=h);
+    ws.mergeCells(`A1:${L}2`);const a1=ws.getCell("A1");a1.value="CASA HIRO";a1.font={name:"Georgia",bold:true,size:22,color:{argb:BRANCO}};a1.alignment={vertical:"middle",horizontal:"left",indent:6};
+    ws.mergeCells(`A3:${L}3`);const a3=ws.getCell("A3");a3.value="A ciência do cuidado com o acolhimento de casa.";a3.font={name:"Georgia",italic:true,size:10,color:{argb:"FFD6EDD8"}};a3.alignment={vertical:"middle",horizontal:"left",indent:6};
+    ws.mergeCells(`A4:${L}4`);const a4=ws.getCell("A4");a4.value="Notas fiscais";a4.font={name:"Georgia",bold:true,size:13,color:{argb:BRANCO}};a4.alignment={vertical:"middle",horizontal:"center"};
+    ws.mergeCells(`A5:${L}5`);const a5=ws.getCell("A5");
+    a5.value="Para lançar: preencha as linhas em branco no fim da lista e envie este arquivo em Notas fiscais > Dar entrada em nota fiscal. Itens da mesma nota usam o mesmo Nº. As notas que já estão no sistema não são alteradas.";
+    a5.font={name:"Calibri",italic:true,size:9.5,color:{argb:MUTE}};a5.alignment={vertical:"middle",horizontal:"left",wrapText:true};
+    try{const lg=await logosMarca(),img=wb.addImage({base64:lg.branco,extension:"png"});ws.addImage(img,{tl:{col:.2,row:.15},ext:{width:32,height:44}})}catch(e){console.warn("logotipo fora da planilha",e)}
+    roles.forEach((ro,c)=>{const h=ws.getCell(HR,c+1);h.value=fmt.head[c];h.font={name:"Calibri",bold:true,size:10,color:{argb:BRANCO}};h.fill=F(VMED);h.alignment={horizontal:"center",vertical:"middle",wrapText:true};h.border=thinBorder(LINHA)});
+    ws.getRow(HR).height=28;
+    const num=v=>v!=null&&v!==""&&/^-?\d+$/.test(String(v).trim())&&String(v).trim().length<16&&!/^0\d/.test(String(v).trim())?+String(v).trim():v;
+    const valor=(r,ro,c)=>{switch(ro){
+      case"num":return r.nota==null?null:num(r.nota);case"data":return xlDateOnly(r.date);
+      case"item":return r.item||null;case"local":return r.local||null;
+      case"valor":return +r.valor||0;case"qtd":return +r.qtd||0;case"desconto":return +r.desconto||0;case"total":return +r.total||0;
+      case"categoria":return r.categoria||null;case"subcategoria":return r.subcategoria||null;
+      default:return r.ex&&r.ex[c]!==undefined?r.ex[c]:null}};
+    const direita=new Set(["valor","qtd","desconto","total"]),moeda=new Set(["valor","desconto","total"]);
+    const estilo=(cell,ro,i)=>{
+      cell.font={name:"Calibri",size:10,color:{argb:TXT}};cell.fill=F(i%2?AREIA:BRANCO);cell.border=thinBorder(LINHA);
+      cell.alignment={vertical:"middle",horizontal:direita.has(ro)?"right":(ro==="data"||ro==="num")?"center":"left"};
+      if(ro==="data")cell.numFmt="dd/mm/yyyy";else if(moeda.has(ro))cell.numFmt=DIN;
+    };
+    linhas.forEach((r,i)=>{ws.getRow(R0+i).height=17;roles.forEach((ro,c)=>{const cell=ws.getCell(R0+i,c+1),v=valor(r,ro,c);if(v!=null)cell.value=v;estilo(cell,ro,i)})});
+    const ultima=R0+linhas.length+EM_BRANCO-1;
+    for(let i=linhas.length;i<linhas.length+EM_BRANCO;i++){ws.getRow(R0+i).height=17;roles.forEach((ro,c)=>estilo(ws.getCell(R0+i,c+1),ro,i))}
+    // total no topo: as linhas novas entram no fim da lista
+    const iT=roles.indexOf("total");
+    if(iT>=0){
+      const col=colLetter(iT+1),tot=linhas.reduce((a,r)=>a+(+r.total||0),0),cT=ws.getCell(6,iT+1);
+      cT.value={formula:`SUBTOTAL(9,${col}${R0}:${col}${ultima})`,result:+tot.toFixed(2)};cT.numFmt=DIN;cT.font={name:"Calibri",bold:true,size:10,color:{argb:VERDE}};cT.alignment={horizontal:"right",vertical:"middle"};
+      if(iT>0){const l=ws.getCell(6,iT);l.value="Total";l.font={name:"Calibri",bold:true,size:10,color:{argb:VERDE}};l.alignment={horizontal:"right",vertical:"middle"}}
+    }
+    // listas de categorias para as linhas em branco (dá para digitar outra)
+    const lista=(a,col)=>[...new Set(a.filter(Boolean))].sort((x,y)=>x.localeCompare(y,"pt")).map((v,i)=>{wsL.getCell(i+1,col).value=v;return v}).length;
+    const wsL=wb.addWorksheet("Listas",{state:"hidden"});
+    const nCat=lista([...linhas.map(r=>r.categoria),...Object.keys(NFX_CC)].filter(c=>c!=="A classificar"),1),nSub=lista([...linhas.map(r=>r.subcategoria),...NFX_REGRAS.map(x=>x[2])].filter(c=>c!=="A classificar"),2);
+    const valida=(ro,colL,n)=>{const c=roles.indexOf(ro);if(c<0||!n)return;for(let r=R0+linhas.length;r<=ultima;r++)ws.getCell(r,c+1).dataValidation={type:"list",allowBlank:true,showErrorMessage:false,formulae:[`Listas!$${colL}$1:$${colL}$${n}`]}};
+    valida("categoria","A",nCat);valida("subcategoria","B",nSub);
+    ws.views=[{state:"frozen",ySplit:HR,showGridLines:false}];
+    ws.autoFilter={from:{row:HR,column:1},to:{row:ultima,column:nC}};
+    const blob=new Blob([await wb.xlsx.writeBuffer()],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"});
+    const nomeBase=String(st.fileName||"Notas fiscais").replace(/\.(xlsx?|csv)$/i,"").replace(/ - atualizada.*$/i,"");
+    if(await saveFile(`${nomeBase} - atualizada ${hojeIso()}.xlsx`,blob))toast("Planilha de notas baixada. Preencha as linhas em branco e envie o arquivo para lançar.");
+  }catch(e){console.error(e);toast("Não foi possível gerar a planilha: "+(e&&e.message?e.message:e),true)}
 }
 
 /* ---- nota que já está na planilha: só anexa o arquivo ---- */
@@ -7919,6 +8000,7 @@ async function nfSeparaExistentes(notas){
   const resto=[],msgs=[];
   for(const n of notas){
     const m=nfAcha(n);if(!m){resto.push(n);continue}
+    if(n.fonte==="planilha"){n.av.unshift(`Parece com a nota Nº ${m.g.nota==null?"s/n":m.g.nota} já lançada. Confira antes de lançar.`);resto.push(n);continue}
     const rot=`NF ${n.nota||"s/n"} — ${n.forn} (Nº ${m.g.nota==null?"s/n":m.g.nota} da planilha)`;
     if(m.rows.some(r=>r.arq&&S.nfarq[r.arq])){msgs.push(`${rot}: essa nota já está no sistema, com o arquivo anexado.`);continue}
     let id=null;try{id=await nfArquivar(n.arq,n.arqTipo,n,null)}catch(e){msgs.push(e.message);continue}
