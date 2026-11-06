@@ -76,7 +76,9 @@ Funciona igual ao Claude: **Notas fiscais → enviar PDF ou foto**. O navegador 
 Você (Casa Hiro) é a controladora dos dados dos residentes e colaboradores. Dados de saúde são dados pessoais sensíveis. A Hostinger declara no contrato que o serviço não é compatível com HIPAA (norma americana); no Brasil o que vale é a LGPD — vale conversar com um advogado/DPO sobre contrato de operador, base legal e política de privacidade. Boas práticas já no sistema: contas individuais, perfis, registro de acessos, backup, HTTPS. O que falta decidir com você: prazo de guarda, termo de uso e plano de resposta a incidentes.
 
 ## 9. Atualizar o sistema depois
-- **Com Claude Code no VS Code:** abra esta pasta, peça a mudança, rode `npm test` e `npm run test:e2e`, `npm run build:app && npm run build:host`, depois `npm run empacotar`.
+- **Onde fica o código da tela:** em `src/app/` (um arquivo por parte do sistema, em ordem pelo número), `src/index.html` (a casca da página) e `public/app.css` (o visual). **Não edite `public/app.js` nem `public/index.html` à mão:** depois de mudar algo em `src/`, rode `npm run montar`, que gera os dois. `npm test` avisa se esqueceram de montar.
+- **Permissões:** quem vê e grava o quê é conferido no servidor (`lib/permissoes.js`), não só na tela. Ao criar uma tela ou um tipo de dado novo, atualize as tabelas de lá junto com as da tela (`src/app/008-login-e-permissoes.js`); `npm test` testa as regras principais. Tudo o que é gravado ou apagado fica na trilha do servidor (`DATA_DIR/trilha/AAAA-MM.jsonl`), que a direção consulta em Usuários e permissões → Histórico.
+- **Com Claude Code no VS Code:** abra esta pasta, peça a mudança, rode `npm run montar` e `npm test`; o envio é pelo GitHub (a Hostinger atualiza sozinha).
 - **Subir:** (a) Git da Hostinger/GitHub, se o plano oferecer deploy por Git; ou (b) enviar o zip novamente. **Faça backup antes.** Se `DATA_DIR` não estiver fora da pasta do site, não substitua a pasta `data/`.
 - Nunca faça commit de `.env`, `data/`, backups ou arquivos enviados (já estão no `.gitignore`).
 

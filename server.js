@@ -8,6 +8,7 @@ const { carregaEnv } = require('./lib/env');
 const dbmod = require('./lib/db');
 const seg = require('./lib/seguranca');
 const ia = require('./lib/ia');
+const perm = require('./lib/permissoes');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
 const TIPOS_ARQ = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'text/plain', 'text/csv', 'application/json', 'application/zip', 'application/xml', 'text/xml']);
@@ -87,19 +88,20 @@ async function criaApp(opts = {}) {
   }
   const pub = u => ({ id: u.id, username: u.username, name: u.name, admin: !!u.admin, active: !!u.active, last_login: u.last_login || null });
 
-  /* regras de escrita/leitura por caminho */
-  function podeEscrever(u, p) {
-    const adm = !!u.admin, seg0 = p.split('/')[0];
-    if (!p || p.includes('..') || p.length > 250) return false;
-    if (seg0 === 'acessos' || seg0 === 'perfis') return adm;
-    if (seg0 === 'pedidos') return adm || p === 'pedidos/' + u.id;
-    if (seg0 === 'auditoria') return adm || p.startsWith('auditoria/' + u.id + '/');
-    return true;
-  }
-  function podeLer(u, p) {
-    if (p.split('/')[0] === 'auditoria') return !!u.admin || p.startsWith('auditoria/' + u.id + '/');
-    return true;
-  }
+  /* conteúdo real do arquivo confere com o tipo declarado (não basta o nome ou o Content-Type) */
+  const ASSINATURA = { 'application/pdf': b => b.slice(0, 1024).includes('%PDF-'), 'image/png': b => b.slice(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+    'image/jpeg': b => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff, 'image/gif': b => /^GIF8[79]a/.test(b.slice(0, 6).toString('latin1')),
+    'image/webp': b => b.slice(0, 4).toString('latin1') === 'RIFF' && b.slice(8, 12).toString('latin1') === 'WEBP',
+    'application/zip': b => b[0] === 0x50 && b[1] === 0x4b };
+  const conteudoOk = (tipo, buf) => !ASSINATURA[tipo] || ASSINATURA[tipo](buf);
+
+  /* trilha do servidor: quem gravou/apagou o quê, num arquivo por mês fora do alcance da tela (ninguém apaga pelo sistema) */
+  const dirTrilha = path.join(dataDir, 'trilha'); fs.mkdirSync(dirTrilha, { recursive: true, mode: 0o700 });
+  const trilha = (req, U, acao, alvo, extra) => {
+    const r = { t: new Date().toISOString(), u: U.id, n: U.username || '', ip: ipDe(req), acao, alvo: String(alvo).slice(0, 250), ...(extra || {}) };
+    fs.appendFile(path.join(dirTrilha, r.t.slice(0, 7) + '.jsonl'), JSON.stringify(r) + '\n', { mode: 0o600 }, () => {});
+  };
+
   const caminhoOk = p => typeof p === 'string' && /^[^\u0000-\u001f\\]{1,250}$/.test(p) && !p.startsWith('/') && !p.endsWith('/') && !p.includes('//') && !p.includes('..');
 
   async function rota(req, res) {
@@ -186,6 +188,7 @@ async function criaApp(opts = {}) {
         const limite = Math.min(MAX_ARQ, 15 * 1048576); const len = +req.headers['content-length'];
         if (len > limite) return erro(res, 413, `O arquivo passa de ${Math.floor(limite / 1048576)} MB.`);
         const buf = await lerCorpo(req, limite); if (!buf.length) return erro(res, 400, 'Arquivo vazio.');
+        if (!conteudoOk(tipo, buf)) return erro(res, 415, 'Este arquivo não parece ser um PDF ou uma foto válida.');
         limEnvio.falha('i:' + ip);
         let nome = '', rotulo = ''; try { nome = decodeURIComponent(String(req.headers['x-name'] || '')).slice(0, 200); rotulo = decodeURIComponent(String(req.headers['x-rotulo'] || '')).slice(0, 80); } catch (e) {}
         nome = nome.replace(/[\u0000-\u001f\\/]/g, '_') || 'documento'; rotulo = rotulo.replace(/[\u0000-\u001f]/g, ' ').trim();
@@ -214,35 +217,43 @@ async function criaApp(opts = {}) {
     /* ---- documentos ---- */
     if (p === '/api/doc') {
       const dp = url.searchParams.get('p'); if (!caminhoOk(dp)) return erro(res, 400, 'Caminho inválido.');
-      if (m === 'GET') { if (!podeLer(U, dp)) return erro(res, 403, 'Sem permissão.'); const d = await db.get(dp); return resp(res, 200, { exists: d !== null, data: d }); }
+      const C = await perm.contexto(db, U);
+      if (m === 'GET') { const d = await db.get(dp); if (!perm.podeLer(C, dp, d)) return erro(res, 403, 'Sem permissão.', 'negado'); return resp(res, 200, { exists: d !== null, data: perm.filtra(C, dp, d) }); }
       if (m === 'PUT') {
-        if (!podeEscrever(U, dp)) return erro(res, 403, 'Sem permissão para gravar aqui.', 'negado');
-        const d = await lerJson(req); if (!d || typeof d !== 'object' || Array.isArray(d)) return erro(res, 400, 'O documento precisa ser um objeto.');
-        const seq = await db.set(dp, d); return resp(res, 200, { seq });
+        if (!perm.podeGravar(C, dp)) return erro(res, 403, 'Sem permissão para gravar aqui.', 'negado');
+        let d = await lerJson(req); if (!d || typeof d !== 'object' || Array.isArray(d)) return erro(res, 400, 'O documento precisa ser um objeto.');
+        d = perm.preserva(C, dp, d, await db.get(dp));
+        const seq = await db.set(dp, d); trilha(req, U, 'gravou', dp); return resp(res, 200, { seq });
       }
-      if (m === 'DELETE') { if (!podeEscrever(U, dp)) return erro(res, 403, 'Sem permissão para excluir aqui.', 'negado'); const seq = await db.del(dp); return resp(res, 200, { seq }); }
+      if (m === 'DELETE') { if (!perm.podeGravar(C, dp, true)) return erro(res, 403, 'Sem permissão para excluir aqui.', 'negado'); const seq = await db.del(dp); trilha(req, U, 'apagou', dp); return resp(res, 200, { seq }); }
     }
     if (p === '/api/col' && m === 'GET') {
       const c = url.searchParams.get('c'); if (!caminhoOk(c)) return erro(res, 400, 'Coleção inválida.');
-      if (!podeLer(U, c + '/x')) return erro(res, 403, 'Sem permissão.');
-      const seq = await db.seq(); const docs = await db.list(c); return resp(res, 200, { seq, docs });
+      const C = await perm.contexto(db, U);
+      const seq = await db.seq(); const docs = (await db.list(c)).filter(d => perm.podeLer(C, c + '/' + d.id, d.data)).map(d => ({ id: d.id, data: perm.filtra(C, c + '/' + d.id, d.data) }));
+      return resp(res, 200, { seq, docs });
     }
     if (p === '/api/changes' && m === 'GET') {
       const since = +url.searchParams.get('since') || 0, cols = (url.searchParams.get('cols') || '').split(',').filter(Boolean);
-      const items = (await db.changes(since, cols.length ? cols : null)).filter(i => podeLer(U, i.path));
+      const C = await perm.contexto(db, U);
+      const items = (await db.changes(since, cols.length ? cols : null)).filter(i => perm.podeLer(C, i.path, i.data)).map(i => i.data ? { ...i, data: perm.filtra(C, i.path, i.data) } : i);
       const seq = await db.seq(); return resp(res, 200, { seq, items });
     }
 
     /* ---- arquivos ---- */
+    const precisaPerfil = p === '/api/blob' || p.startsWith('/api/blob/') || p.startsWith('/_blob/') || p === '/api/ia';
+    const CP = precisaPerfil ? await perm.contexto(db, U) : null;
+    if (CP && !perm.temPerfil(CP)) return erro(res, 403, 'Seu acesso ainda não foi liberado pela direção.', 'negado');
     if (p === '/api/blob' && m === 'POST') {
       const tipo = String(req.headers['x-type'] || req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
       if (!TIPOS_ARQ.has(tipo)) return erro(res, 415, 'Formato de arquivo não aceito.');
       const len = +req.headers['content-length']; if (len > MAX_ARQ) return erro(res, 413, `O arquivo passa de ${MAX_ARQ / 1048576} MB.`);
       const buf = await lerCorpo(req, MAX_ARQ); if (!buf.length) return erro(res, 400, 'Arquivo vazio.');
+      if (!conteudoOk(tipo, buf)) return erro(res, 415, 'O conteúdo do arquivo não corresponde ao formato informado.');
       const id = crypto.randomBytes(16).toString('hex');
       let nome = ''; try { nome = decodeURIComponent(String(req.headers['x-name'] || '')).slice(0, 250); } catch (e) {}
       await fs.promises.writeFile(path.join(filesDir, id), buf);
-      await db.blobPut({ id, name: nome, type: tipo, size: buf.length, uid: U.id });
+      await db.blobPut({ id, name: nome, type: tipo, size: buf.length, uid: U.id }); trilha(req, U, 'enviou arquivo', id, { tipo, bytes: buf.length });
       return resp(res, 200, { id, url: '/_blob/' + id, sizeBytes: buf.length, contentType: tipo });
     }
     if (p.startsWith('/_blob/') && m === 'GET') {
@@ -250,13 +261,15 @@ async function criaApp(opts = {}) {
       const meta = await db.blobGet(id); if (!meta) return erro(res, 404, 'Arquivo não encontrado.');
       let st; try { st = await fs.promises.stat(path.join(filesDir, id)); } catch (e) { return erro(res, 404, 'Arquivo não encontrado.'); }
       const inline = INLINE.has(meta.type);
-      res.writeHead(200, { 'content-type': meta.type, 'content-length': st.size, 'cache-control': 'private, max-age=3600',
+      res.writeHead(200, { 'content-type': meta.type, 'content-length': st.size, 'cache-control': 'private, no-store',
         'content-disposition': (inline ? 'inline' : 'attachment') + `; filename*=UTF-8''${encodeURIComponent(meta.name || id)}`, 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox" });
       return fs.createReadStream(path.join(filesDir, id)).pipe(res);
     }
     if (p.startsWith('/api/blob/') && m === 'DELETE') {
       const id = p.slice(10); if (!/^[A-Za-z0-9_-]{6,80}$/.test(id)) return erro(res, 404, 'Arquivo não encontrado.');
-      await db.blobDel(id); try { await fs.promises.unlink(path.join(filesDir, id)); } catch (e) {}
+      const meta = await db.blobGet(id);
+      if (meta && meta.uid !== U.id && !perm.podeEditarAlgo(CP)) return erro(res, 403, 'Sem permissão para excluir este arquivo.', 'negado');
+      await db.blobDel(id); trilha(req, U, 'apagou arquivo', id); try { await fs.promises.unlink(path.join(filesDir, id)); } catch (e) {}
       return resp(res, 200, { ok: true });
     }
     if (p === '/api/blobs' && m === 'GET') {
@@ -289,7 +302,7 @@ async function criaApp(opts = {}) {
         if (!nome) return erro(res, 400, 'Informe o nome da pessoa.');
         const f = seg.senhaFraca(b.password, un); if (f) return erro(res, 400, f);
         if (await db.userPorNome(un)) return erro(res, 409, 'Esse usuário já existe.');
-        const id = seg.novoId('u'); await db.userCria({ id, username: un, name: nome, hash: seg.hashSenha(b.password), admin: !!b.admin });
+        const id = seg.novoId('u'); await db.userCria({ id, username: un, name: nome, hash: seg.hashSenha(b.password), admin: !!b.admin }); trilha(req, U, 'criou conta', un, { admin: !!b.admin });
         return resp(res, 200, { user: pub(await db.userPorId(id)) });
       }
       const mm = p.match(/^\/api\/users\/([A-Za-z0-9_]+)$/);
@@ -301,7 +314,7 @@ async function criaApp(opts = {}) {
         if (b.active !== undefined) c.active = b.active ? 1 : 0;
         if (b.admin !== undefined) c.admin = b.admin ? 1 : 0;
         if ((c.active === 0 || c.admin === 0) && alvo.admin && alvo.active && (await db.adminsAtivos()) <= 1) return erro(res, 400, 'Precisa existir pelo menos um administrador ativo.');
-        await db.userAtualiza(alvo.id, c); if (c.hash || c.active === 0) await db.sessApagaUser(alvo.id);
+        await db.userAtualiza(alvo.id, c); trilha(req, U, 'alterou conta', alvo.username, { campos: Object.keys(c).map(k => k === 'hash' ? 'senha' : k) }); if (c.hash || c.active === 0) await db.sessApagaUser(alvo.id);
         return resp(res, 200, { user: pub(await db.userPorId(alvo.id)) });
       }
     }
@@ -323,6 +336,15 @@ async function criaApp(opts = {}) {
         const r = await ia.lerJson(env, { prompt: b.prompt, images: imgs, tier: ['quick', 'default', 'complex'].includes(b.tier) ? b.tier : 'default' }, { fetchImpl: fetchIa });
         return resp(res, 200, { json: r.json, modelo: r.modelo });
       } catch (e) { return erro(res, e.code === 'rate_limited' ? 429 : e.code === 'ia_off' ? 503 : 502, e.message, e.code || 'ia_erro'); }
+    }
+
+    /* ---- trilha do servidor (só administração, só leitura) ---- */
+    if (p === '/api/trilha' && m === 'GET') {
+      if (!S || !adm) return erro(res, 403, 'Só a administração.', 'negado');
+      const mes = url.searchParams.get('mes') || new Date().toISOString().slice(0, 7); if (!/^\d{4}-\d{2}$/.test(mes)) return erro(res, 400, 'Mês inválido.');
+      let txt = ''; try { txt = await fs.promises.readFile(path.join(dirTrilha, mes + '.jsonl'), 'utf8'); } catch (e) {}
+      const itens = txt.split('\n').filter(Boolean).map(l => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(Boolean).reverse().slice(0, 5000);
+      return resp(res, 200, { mes, itens });
     }
 
     /* ---- backup completo ---- */
@@ -349,8 +371,13 @@ async function criaApp(opts = {}) {
     try {
       const st = await fs.promises.stat(f); if (!st.isFile()) throw 0;
       const ext = path.extname(f).toLowerCase();
-      const csp = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdnjs.cloudflare.com; worker-src 'self' blob: https://cdnjs.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
-      res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream', 'content-length': st.size, 'cache-control': ext === '.html' ? 'no-cache' : rel.startsWith('vendor') ? 'public, max-age=2592000, immutable' : 'public, max-age=3600', 'content-security-policy': csp });
+      const csp = "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+      /* arquivos com ?v= mudam de endereço quando mudam de conteúdo: o navegador guarda por 1 ano.
+         A página (html) é sempre conferida, mas só é baixada de novo se mudou (etag). */
+      const etag = 'W/"' + st.size.toString(36) + '-' + Math.floor(st.mtimeMs).toString(36) + '"';
+      const cache = ext === '.html' ? 'no-cache' : (rel.startsWith('vendor') || url.searchParams.has('v')) ? 'public, max-age=31536000, immutable' : 'public, max-age=3600';
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, { etag, 'cache-control': cache }); return res.end(); }
+      res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream', 'content-length': st.size, 'cache-control': cache, etag, 'content-security-policy': csp });
       return m === 'HEAD' ? res.end() : fs.createReadStream(f).pipe(res);
     } catch (e) { return erro(res, 404, 'Página não encontrada.'); }
   }

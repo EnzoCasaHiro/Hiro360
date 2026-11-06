@@ -41,7 +41,10 @@
     });
     return loginP;
   };
-  H.sair = async function () { try { await api("/api/logout", { method: "POST", json: {}, semLogin: true }); } catch (e) {} location.reload(); };
+  H.sair = async function () {
+    // rascunhos de formulários podem ter dados pessoais: não ficam no computador depois de sair
+    try { Object.keys(localStorage).filter(function (k) { return k.indexOf("hiro_rasc|") === 0; }).forEach(function (k) { localStorage.removeItem(k); }); } catch (e) {}
+    try { await api("/api/logout", { method: "POST", json: {}, semLogin: true }); } catch (e) {} location.reload(); };
 
   /* ---------- banco: coleções com atualização ao vivo (consulta a cada poucos segundos) ---------- */
   function criaDb() {
