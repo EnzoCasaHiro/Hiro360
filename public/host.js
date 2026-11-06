@@ -152,6 +152,6 @@
     try { me = await api("/api/me", { semLogin: true }); } catch (e) { me = null; }
     if (me && me.user) { H.me = me.user; H.iaOn = !!me.ia; } else { await H.login(); try { const m2 = await api("/api/me"); H.iaOn = !!m2.ia; } catch (e) {} }
     RT.db = criaDb(); RT.assets = criaAssets(); RT.dl = criaDl(); RT.user = criaUser();
-    RT.sample = criaSample(); RT.envio = true;
+    RT.sample = H.iaOn ? criaSample() : null; RT.envio = true;
   };
 })();

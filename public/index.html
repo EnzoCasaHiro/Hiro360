@@ -295,6 +295,7 @@ body.gated #xfab{display:none}
 <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></symbol>
 <symbol id="i-undo" viewBox="0 0 24 24"><path d="M9 8H5V4"/><path d="M5 8a8 8 0 1 1-1 4"/></symbol>
 <symbol id="i-camera" viewBox="0 0 24 24"><path d="M4 7.5h3.5L9 5h6l1.5 2.5H20V19H4z"/><circle cx="12" cy="13" r="3.5"/></symbol><symbol id="i-box" viewBox="0 0 24 24"><path d="M3.5 7.5 12 3l8.5 4.5v9L12 21l-8.5-4.5z"/><path d="M3.5 7.5 12 12l8.5-4.5M12 12v9"/></symbol>
+<symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
 <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="M11 12l8-8m-3 3 2.5 2.5M14 9l2 2"/></symbol>
 </defs></svg>
 
@@ -1632,7 +1633,19 @@ function detPront(i){
   const tabs=[["dados","Dados"],["docs",`Documentos (${docsOf(i.id).length})`],["oc","Ocorrências"],["hist","Histórico"]];
   return `<div class="card" style="margin:0"><div class="uhead"><div class="avatar">${esc(initials(nomeInteg(i)))}</div><div class="grow"><h3>${esc(nomeInteg(i))}</h3>
    <div class="sub">${esc(i.cargo||"Cargo não informado")} · <span class="depto ${deptoClass(i.depto)}">${esc(i.depto||"Outro")}</span> · ${esc(i.situacao||"Ativo")}</div></div></div>
-   <div class="tabs">${tabs.map(([k,l])=>`<button data-t="${k}" class="${PR.tab===k?"on":""}">${l}</button>`).join("")}</div>${PR.tab==="dados"?fDados(i):PR.tab==="docs"?fDocs(i):PR.tab==="hist"?fHist(i):fOc(i)}</div>`;
+   <div class="tabs">${tabs.map(([k,l])=>`<button data-t="${k}" class="${PR.tab===k?"on":""}">${l}</button>`).join("")}</div>${prRascAviso(i)}${PR.tab==="dados"?fDados(prRascAplica(i)):PR.tab==="docs"?fDocs(i):PR.tab==="hist"?fHist(i):fOc(i)}</div>`;
+}
+// rascunho por integrante: guarda o valor digitado e o valor salvo na hora; se o salvo mudar por outro caminho, o rascunho daquele campo é descartado
+const prRasc=id=>{PR.rasc=PR.rasc||{};return PR.rasc[id]||(PR.rasc[id]={})};
+function prRascAplica(i){
+  const r=PR.rasc&&PR.rasc[i.id];if(!r)return i;
+  const o={...i};
+  for(const k of Object.keys(r)){if(String(i[k]??"")===r[k].base)o[k]=r[k].v;else delete r[k]}
+  return o;
+}
+function prRascAviso(i){
+  const r=PR.rasc&&PR.rasc[i.id];if(r)prRascAplica(i);
+  return r&&Object.keys(r).length?`<div class="callout sand" style="margin:10px 0">Há alterações não salvas na aba Dados. Volte nela e clique em <b>Salvar dados</b> para guardar.</div>`:"";
 }
 const F=(k,l,i,extra="")=>`<div><label>${l}</label><input data-k="${k}" value="${esc(i[k]||"")}" ${extra}></div>`;
 const Fp=(k,l,i,extra="")=>podePii()?F(k,l,i,extra):"";
@@ -1663,9 +1676,9 @@ function fDocs(i){
   for(const d of ds){
     if(d.cat!==cur){cur=d.cat;html+=`<div class="catt">${esc(cur)}</div>`}
     const img=/^image\//.test(d.type);
-    html+=`<div class="doc"><input type="checkbox" data-ds="${d.id}" ${PR.docSel.has(d.id)?"checked":""}><div class="th">${img?`<img src="/_blob/${d.assetId}" alt="">`:ic("file")}</div>
+    html+=`<div class="doc"><input type="checkbox" data-ds="${d.id}" ${PR.docSel.has(d.id)?"checked":""}><div class="th" data-dv="${d.id}" style="cursor:pointer" title="Ver">${img?`<img src="/_blob/${d.assetId}" alt="">`:ic("file")}</div>
      <div class="grow"><div class="nm" title="${esc(d.nome)}">${esc(d.nome)}</div><div class="sub">${fsize(d.size||0)} · ${brDate((d.em||"").slice(0,10))}</div></div>
-     <button class="b sec sm" data-dl="${d.id}" title="Baixar">${ic("down")}</button><button class="b sec sm" data-dx="${d.id}" title="Excluir">${ic("trash")}</button></div>`;
+     <button class="b sec sm" data-dv="${d.id}" title="Ver">${ic("eye")}</button><button class="b sec sm" data-dl="${d.id}" title="Baixar">${ic("down")}</button><button class="b sec sm" data-dx="${d.id}" title="Excluir">${ic("trash")}</button></div>`;
   }
   return html;
 }
@@ -1691,6 +1704,10 @@ function bindPront(){
   document.querySelectorAll("[data-t]").forEach(b=>b.onclick=()=>{PR.tab=b.dataset.t;go("pront",true)});
   const i=PR.sel&&S.integrantes[PR.sel];if(!i)return;
   if(PR.tab==="dados"){
+    document.querySelectorAll("#pdet [data-k]").forEach(el=>{const h=()=>{
+      const k=el.dataset.k,cur=S.integrantes[i.id]||i,base=String(cur[k]??""),r=prRasc(i.id);
+      if(el.value===base)delete r[k];else r[k]={v:el.value,base};
+    };el.addEventListener("input",h);el.addEventListener("change",h)});
     $("dsave").onclick=()=>{
       const o={...strip(i)};document.querySelectorAll("#pdet [data-k]").forEach(el=>{o[el.dataset.k]=el.value.trim()});
       o.uid=o.uid===""||o.uid==null?null:+o.uid;if(!o.uid&&o.uid!==0)o.uid=null;
@@ -1703,7 +1720,7 @@ function bindPront(){
       o.hist=[...(i.hist||[]),...difs.map(k=>({em:new Date().toISOString(),campo:HC[k],de:String(i[k]??"")||"—",para:String(o[k]??"")||"—"}))];
       const dup=Object.values(S.integrantes).find(x=>x.id!==i.id&&o.uid!=null&&x.uid!=null&&+x.uid===+o.uid);
       if(dup)return $("ferr").textContent=`O ID ${o.uid} já pertence a ${nomeInteg(dup)}.`;
-      o.cpf=fmtCPF(o.cpf);put("integrantes",i.id,o);toast("Dados salvos.");go("pront",true);
+      o.cpf=fmtCPF(o.cpf);put("integrantes",i.id,o);if(PR.rasc)delete PR.rasc[i.id];toast("Dados salvos.");go("pront",true);
     };
     if($("ddel"))$("ddel").onclick=async()=>{
       if(!await askConfirm(`Excluir ${nomeInteg(i)} e todos os documentos e ocorrências dele? Não dá para desfazer.`,"Excluir"))return;
@@ -1721,6 +1738,7 @@ function bindPront(){
     $("dzip").onclick=()=>zipDocs([...PR.docSel].map(id=>S.docs[id]).filter(Boolean));
     $("dpdf").onclick=()=>mergeDocs([...PR.docSel].map(id=>S.docs[id]).filter(Boolean));
     document.querySelectorAll("[data-dl]").forEach(b=>b.onclick=()=>downloadDoc(S.docs[b.dataset.dl]));
+    document.querySelectorAll("[data-dv]").forEach(b=>b.onclick=()=>verDoc(S.docs[b.dataset.dv]));
     document.querySelectorAll("[data-dx]").forEach(b=>b.onclick=async()=>{const d=S.docs[b.dataset.dx];if(d&&await askConfirm(`Excluir o arquivo "${d.nome}"?`,"Excluir")){await removeDoc(d);go("pront",true)}});
   }else{
     const a=$("oadd");if(a)a.onclick=()=>openOcorr(+i.uid);
@@ -1761,6 +1779,37 @@ async function saveFile(filename,data){
   if(!RT.dl){toast("O download não está disponível nesta visualização.",true);return false}
   try{await RT.dl.save({filename,data});return true}catch(e){if(e.code!=="declined")toast("Não foi possível baixar: "+(e.message||e.code),true);return false}
 }
+// mostra o arquivo numa janela do próprio sistema: PDF página por página, imagem e texto; nada é baixado para o computador
+async function verArquivo(nome,type,carrega,baixar){
+  const ov=openModal(`<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px"><h3 style="margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(nome)}">${esc(nome)}</h3>
+    ${baixar?`<button class="b sec sm" id="vdbx" style="flex:none">${ic("down")} Baixar</button>`:""}<button class="b sec sm" id="vdfx" style="flex:none">Fechar</button></div>
+   <div id="vdcorpo" style="background:var(--areia,#f5efe0);border-radius:10px;padding:10px;min-height:200px;text-align:center"><p class="sub">Abrindo…</p></div>`);
+  ov.querySelector(".modal").classList.add("largo");
+  ov.querySelector("#vdfx").onclick=()=>ov.remove();
+  if(baixar)ov.querySelector("#vdbx").onclick=baixar;
+  const corpo=ov.querySelector("#vdcorpo"),urls=[];
+  const fecha=new MutationObserver(()=>{if(!document.body.contains(ov)){urls.forEach(u=>URL.revokeObjectURL(u));fecha.disconnect()}});fecha.observe(document.body,{childList:true});
+  try{
+    const bytes=new Uint8Array(await carrega());
+    if(/pdf/i.test(type)||/\.pdf$/i.test(nome)){
+      const pdfjs=await pdfjsCarrega(),pdf=await pdfjs.getDocument({data:bytes}).promise;
+      corpo.innerHTML=`<p class="sub" style="margin:0 0 8px">${pdf.numPages} página(s)</p>`;
+      const larg=Math.min(900,corpo.clientWidth-20)||700;
+      for(let p=1;p<=pdf.numPages;p++){
+        if(!document.body.contains(ov))return;
+        const pg=await pdf.getPage(p),v0=pg.getViewport({scale:1}),esc_=larg/v0.width,v=pg.getViewport({scale:esc_*(window.devicePixelRatio||1)});
+        const cv=document.createElement("canvas");cv.width=v.width;cv.height=v.height;cv.style.cssText=`width:${Math.round(v0.width*esc_)}px;max-width:100%;height:auto;background:#fff;box-shadow:0 1px 4px rgba(0,0,0,.15);margin:0 auto 10px;display:block`;
+        corpo.appendChild(cv);await pg.render({canvasContext:cv.getContext("2d"),viewport:v}).promise;
+      }
+    }else if(/^image\//i.test(type)){
+      const u=URL.createObjectURL(new Blob([bytes],{type}));urls.push(u);
+      corpo.innerHTML=`<img src="${u}" alt="" style="max-width:100%;height:auto;background:#fff">`;
+    }else if(/^text\//i.test(type)||/\.(txt|csv)$/i.test(nome)){
+      corpo.innerHTML=`<pre style="text-align:left;white-space:pre-wrap;margin:0;font-size:12px">${esc(new TextDecoder().decode(bytes).slice(0,200000))}</pre>`;
+    }else corpo.innerHTML=`<p class="sub">Este tipo de arquivo não pode ser mostrado aqui. Use Baixar.</p>`;
+  }catch(e){console.error(e);corpo.innerHTML=`<p class="sub">Não consegui mostrar o arquivo: ${esc(e.message||String(e))}</p>`}
+}
+function verDoc(d){if(!d)return;verArquivo(d.nome,d.type||guessType({type:"",name:d.nome}),()=>bytesOf(d),()=>downloadDoc(d))}
 async function downloadDoc(d){if(!d)return;try{await saveFile(safe(d.nome),await bytesOf(d))}catch(e){toast(e.message,true)}}
 /* @@anexos-armazenamento-inicio */
 const ANEXO_ACCEPT=".pdf,.png,.jpg,.jpeg,.webp,.gif,.txt,.csv";
@@ -2270,11 +2319,12 @@ function bindNF(){
     drop.ondragover=e=>{e.preventDefault();drop.classList.add("on")};drop.ondragleave=()=>drop.classList.remove("on");
     drop.ondrop=e=>{e.preventDefault();drop.classList.remove("on");if(e.dataTransfer.files[0])nfLoad(e.dataTransfer.files[0])};
     fi.onchange=()=>fi.files[0]&&nfLoad(fi.files[0]);
-    bindNFXml();document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));
+    bindNFXml();document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));document.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));
     return;
   }
   bindNFXml();nfNotasBind();
   document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));
+  document.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));
   document.querySelectorAll("[data-nfyear]").forEach(b=>b.onclick=()=>{const y=+b.dataset.nfyear;NFUI.years.has(y)?NFUI.years.delete(y):NFUI.years.add(y);go("nf",true)});
   document.querySelectorAll("[data-nfmonth]").forEach(b=>b.onclick=()=>{const m=+b.dataset.nfmonth;NFUI.months.has(m)?NFUI.months.delete(m):NFUI.months.add(m);go("nf",true)});
   document.querySelectorAll("[data-nfcat]").forEach(b=>b.onclick=()=>{const c=b.dataset.nfcat;NFUI.cats.has(c)?NFUI.cats.delete(c):NFUI.cats.add(c);go("nf",true)});
@@ -3276,7 +3326,7 @@ function bindDocs(){
   const q=$("dvq");q.oninput=()=>{DV.q=q.value;re();const n=$("dvq");if(n){n.focus();n.setSelectionRange(n.value.length,n.value.length)}};
   document.querySelectorAll("[data-dvedit]").forEach(b=>b.onclick=()=>openDocVal(b.dataset.dvedit));
   document.querySelectorAll("[data-dvren]").forEach(b=>b.onclick=()=>openDocRenovar(b.dataset.dvren));
-  document.querySelectorAll("[data-dvfile]").forEach(b=>b.onclick=()=>{const d=dvAll().find(x=>x.id===b.dataset.dvfile);if(d&&S.docs[d.arquivo])downloadDoc(S.docs[d.arquivo])});
+  document.querySelectorAll("[data-dvfile]").forEach(b=>b.onclick=()=>{const d=dvAll().find(x=>x.id===b.dataset.dvfile);if(d&&S.docs[d.arquivo])verDoc(S.docs[d.arquivo])});
   document.querySelectorAll("[data-dvdel]").forEach(b=>b.onclick=async()=>{const d=dvAll().find(x=>x.id===b.dataset.dvdel);if(d&&await askConfirm(`Excluir "${d.nome}" da lista de documentos?`,"Excluir")){dvSave(dvAll().filter(x=>x.id!==d.id));toast("Documento excluído.");re()}});
 }
 function criaTarefaDoc(d){
@@ -3904,12 +3954,13 @@ async function nfArqBytes(d){
   if(d.asset){const r=await fetch("/_blob/"+d.asset);if(!r.ok)throw new Error(`"${d.nome}" não foi encontrado no armazenamento.`);return new Uint8Array(await r.arrayBuffer())}
   let u=u8De(d.b64);if(d.gz)u=await gz(u,"d");return u;
 }
+function nfArqVer(id){const d=S.nfarq[id];if(!d)return toast("Arquivo não encontrado.",true);verArquivo(d.nome||"Nota fiscal",d.type||guessType({type:"",name:d.nome||""}),()=>nfArqBytes(d),()=>nfArqBaixar(id))}
 async function nfArqBaixar(id){const d=S.nfarq[id];if(!d)return toast("Arquivo não encontrado.",true);try{await saveFile(safe(d.nome),await nfArqBytes(d))}catch(e){toast(e.message,true)}}
 function nfArqCard(){
   const l=Object.values(S.nfarq).sort((a,b)=>(b.em||"").localeCompare(a.em||"")).slice(0,12);
   if(!l.length)return"";
   return `<div class="card"><h2>Notas lidas e guardadas</h2><p class="sub" style="margin:0 0 8px">O arquivo original de cada nota lida fica guardado aqui e também na conta a pagar dela.</p>
-   ${l.map(d=>`<div class="doc"><div class="grow"><div class="nm">NF ${esc(d.nota||"s/n")} — ${esc(d.forn||"")}</div><div class="sub">${esc(d.nome)} · ${d.em?brDate(d.em.slice(0,10)):""}${d.parcial?" · só a 1ª página":""}</div></div><button class="b sec sm" data-nfarq="${esc(d.id)}">${ic("down")} Baixar</button></div>`).join("")}</div>`;
+   ${l.map(d=>`<div class="doc"><div class="grow"><div class="nm">NF ${esc(d.nota||"s/n")} — ${esc(d.forn||"")}</div><div class="sub">${esc(d.nome)} · ${d.em?brDate(d.em.slice(0,10)):""}${d.parcial?" · só a 1ª página":""}</div></div><button class="b sec sm" data-nfver="${esc(d.id)}">${ic("eye")} Ver</button> <button class="b sec sm" data-nfarq="${esc(d.id)}">${ic("down")} Baixar</button></div>`).join("")}</div>`;
 }
 
 /* ---------- importação com tela de conferência ---------- */
@@ -15342,10 +15393,80 @@ async function xdcParaPdf(files,base){
   }catch(e){return null}
 }
 const xdcEsperar=ms=>new Promise(r=>setTimeout(r,ms));
+/* ---------- leitura sem IA: texto lido no próprio navegador (Tesseract), os arquivos não saem do computador ---------- */
+const XOCR_DIR="/vendor/tesseract-7.0.0/";let _xocr=null;
+function xocrSimd(){try{return WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,96,0,1,123,3,2,1,0,10,10,1,8,0,65,0,253,15,253,98,11]))}catch(e){return false}}
+function xocrCarrega(){
+  return _xocr||(_xocr=(async()=>{
+    if(!window.Tesseract)await new Promise((ok,no)=>{const s=document.createElement("script");s.src=XOCR_DIR+"tesseract.min.js";s.onload=ok;s.onerror=()=>no(new Error("não consegui carregar o leitor"));document.head.appendChild(s)});
+    return Tesseract.createWorker("por",1,{workerPath:XOCR_DIR+"worker.min.js",corePath:XOCR_DIR+(xocrSimd()?"tesseract-core-simd-lstm.wasm.js":"tesseract-core-lstm.wasm.js"),langPath:XOCR_DIR+"lang",workerBlobURL:false,gzip:true});
+  })().catch(e=>{_xocr=null;throw e}));
+}
+async function xocrGira(blob,graus){
+  const bmp=await createImageBitmap(blob),cv=document.createElement("canvas"),v=graus%180!==0;
+  cv.width=v?bmp.height:bmp.width;cv.height=v?bmp.width:bmp.height;
+  const cx=cv.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,cv.width,cv.height);cx.translate(cv.width/2,cv.height/2);cx.rotate(graus*Math.PI/180);cx.drawImage(bmp,-bmp.width/2,-bmp.height/2);
+  return blobDe(cv,"image/jpeg",.9);
+}
+/* lê uma imagem; se o texto vier fraco, tenta a foto girada (documento de lado ou de cabeça para baixo) */
+async function xocrImagem(blob){
+  const w=await xocrCarrega(),nota=d=>(d.confidence||0)*Math.min(1,(String(d.text||"").replace(/[^A-Za-z0-9]/g,"").length)/120);
+  let melhor=(await w.recognize(blob)).data;
+  if(nota(melhor)<45)for(const g of[90,270,180]){const d=(await w.recognize(await xocrGira(blob,g))).data;if(nota(d)>nota(melhor))melhor=d;if(nota(melhor)>=60)break}
+  return String(melhor.text||"");
+}
+/* PDF digital já tem o texto; só PDF escaneado e foto passam pelo leitor */
+async function xocrTextoArquivo(file,imgs){
+  if((file.type||guessType(file))==="application/pdf"){
+    try{const lib=await pdfjsCarrega(),pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;let t="";
+      for(let p=1;p<=Math.min(pdf.numPages,4);p++){const tc=await(await pdf.getPage(p)).getTextContent();let y=null;for(const it of tc.items){const yy=it.transform&&Math.round(it.transform[5]);t+=(y!==null&&yy!==y?"\n":" ")+it.str;y=yy}t+="\n"}
+      if(t.replace(/\s/g,"").length>60)return t}catch(e){}
+  }
+  let t="";for(const b of imgs)t+=await xocrImagem(b)+"\n";return t;
+}
+const XOCR_TIPOS=[[/CARTEIRA NACIONAL DE HABILITA|PERMISSAO PARA DIRIGIR/,"CNH"],[/CARTEIRA DE TRABALHO/,"CTPS"],[/TITULO ELEITORAL|TITULO DE ELEITOR|JUSTICA ELEITORAL/,"Título de eleitor"],[/CARTAO DO CIDADAO/,"Cartão do Cidadão (NIS)"],
+  [/CERTIDAO DE NASCIMENTO/,"Certidão de nascimento"],[/CERTIDAO DE CASAMENTO/,"Certidão de casamento"],[/CARTEIRA DE IDENTIDADE|REGISTRO GERAL|CEDULA DE IDENTIDADE|IDENTIDADE NACIONAL/,"RG"],
+  [/CADASTRO DE PESSOAS? FISICAS?|COMPROVANTE DE INSCRICAO NO CPF|CARTAO CPF/,"CPF"],[/\b(NIT|PIS|PASEP|NIS)\b.{0,40}(INSCRICAO|CADASTRO|COMPROVANTE)|(INSCRICAO|CADASTRO|COMPROVANTE).{0,40}\b(NIT|PIS|PASEP|NIS)\b/,"PIS/NIS"],
+  [/RESERVISTA|CERTIFICADO DE DISPENSA/,"Reservista"],[/VACINA/,"Cartão de vacinação"],[/ATESTADO DE SAUDE OCUPACIONAL|\bA\.?S\.?O\b/,"ASO"],[/ATESTADO/,"Atestado médico"],
+  [/CONTA DE (LUZ|AGUA|ENERGIA)|SABESP|ELEKTRO|ENEL|CONSUMO.{0,30}(KWH|M3)|FATURA|2A VIA/,"Comprovante de residência"]];
+function xocrExtrai(texto,file){
+  const L=String(texto).split(/\n+/).map(s=>s.replace(/\s+/g," ").trim()).filter(Boolean);
+  const U=L.map(l=>l.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase()),TU=U.join("\n");
+  const tipo=(XOCR_TIPOS.find(([re])=>re.test(TU))||[])[1]||xdcHeur(file.name||"")||"Outro";
+  // números: corrige letras que o leitor confunde com algarismos (O→0, I/l→1, S→5, B→8) só em trechos quase todos numéricos
+  const limpaNum=s=>s.replace(/[0-9OoIlSB][0-9OoIlSB.\-\/ ]{6,20}[0-9OoIlSBX]/g,m=>((m.match(/\d/g)||[]).length>=m.replace(/[.\-\/ ]/g,"").length*.7)?m.replace(/[Oo]/g,"0").replace(/[Il]/g,"1").replace(/S/g,"5").replace(/B/g,"8"):m);
+  const UN=U.map(limpaNum);
+  const perto=(re,n=2)=>{const r=[];UN.forEach((l,k)=>{const m=l.search(re);if(m>=0){r.push(l.slice(m));for(let j=1;j<=n&&k+j<UN.length;j++)r.push(UN[k+j])}});return r};
+  const digs=s=>(s.match(/\d[\d.\-\/ ]{7,18}\d/g)||[]).map(x=>x.replace(/\D/g,""));
+  const todos=digs(UN.join("\n"));
+  const dados={};
+  const cpf=[...digs(perto(/CPF/).join(" ")),...todos].find(d=>d.length===11&&xdcCpfOk(d));if(cpf)dados.cpf=cpf;
+  if(/\b(PIS|NIT|NIS|PASEP)\b/.test(TU)){const pis=[...digs(perto(/\b(PIS|NIT|NIS|PASEP)\b/).join(" ")),...todos].find(d=>d.length===11&&d!==cpf&&xdcPisOk(d));if(pis)dados.pis=pis}
+  const data=(re,n=2)=>{for(const l of perto(re,n)){const m=l.match(/(\d{1,2})\s*[\/.\-]\s*(\d{1,2})\s*[\/.\-]\s*(\d{4})/);if(m){const v=xdcData(m[1]+"/"+m[2]+"/"+m[3]);if(v)return v}}return""};
+  const nasc=data(/NASCIMENTO|DATA DE NASC|\bNASC\b/);if(nasc)dados.nascimento=nasc;
+  if(tipo==="RG"){const e=data(/EXPEDI|EMISSAO/);if(e)dados.rgEmissao=e}
+  if(tipo==="RG"||/REGISTRO GERAL/.test(TU)){for(const l of perto(/REGISTRO GERAL|\bR\.?G\.?\b|IDENTIDADE/,1)){const m=l.match(/\b\d{1,3}[.\s]?\d{3}[.\s]?\d{3}[\-\s]?[\dX]\b/);if(m&&m[0].replace(/\D/g,"")!==cpf){dados.rg=m[0].replace(/\s/g,"");break}}}
+  const texto1=(re,n=1,ok=/^[A-Z ]{5,}$/,min=2)=>{for(const l of perto(re,n)){const t=l.replace(re,"").replace(/^[\s:.\-]+/,"").trim();if(ok.test(t)&&t.split(" ").filter(x=>x.length>1).length>=min)return t}return""};
+  const nome=texto1(/^NOME( CIVIL)?\b|\bNOME:/);
+  const nat=texto1(/NATURALIDADE/,1,/^[A-Z][A-Z .\-\/]{3,}$/,1);if(nat)dados.naturalidade=nat;
+  const mae=texto1(/\bMAE\b:?/);if(mae)dados.mae=mae;const pai=texto1(/\bPAI\b:?/);if(pai)dados.pai=pai;
+  const fil=[];UN.forEach((l,k)=>{if(/FILIACAO/.test(l))for(let j=1;j<=3&&k+j<UN.length;j++){const t=UN[k+j].trim();if(/^[A-Z ]{5,}$/.test(t)&&t.split(" ").length>=2)fil.push(t)}});
+  if(tipo==="Título de eleitor"){const t=digs(perto(/INSCRICAO/).join(" ")).find(d=>d.length===12);if(t)dados.titulo=t;
+    const z=(perto(/ZONA/,1).join(" ").match(/ZONA\D{0,6}(\d{1,4})/)||[])[1];if(z)dados.tituloZona=z;const s=(perto(/SECAO/,1).join(" ").match(/SECAO\D{0,6}(\d{1,4})/)||[])[1];if(s)dados.tituloSecao=s}
+  if(tipo==="CNH"){const r=digs(perto(/REGISTRO/).join(" ")).find(d=>d.length===11&&d!==cpf);if(r)dados.cnh=r}
+  if(tipo==="Comprovante de residência"){const c=(perto(/CEP/,1).join(" ").match(/\b\d{5}-?\d{3}\b/)||UN.join(" ").match(/\b\d{5}-\d{3}\b/)||[])[0];if(c)dados.cep=c}
+  const validade=data(/VALIDADE/,1);
+  return{tipo,nome,filiacao:fil.slice(0,2),lado:null,paginas:0,validade,legivel:L.join("").replace(/[^A-Za-z0-9]/g,"").length>=20,dados:xdcDados({nome,dados}),ocr:true};
+}
+async function xocrLe(file,imgs){
+  try{const t=await xocrTextoArquivo(file,imgs);const r=xocrExtrai(t,file);r.paginas=imgs.paginas||imgs.length||0;return r}
+  catch(e){console.error(e);return{erro:"não consegui ler no navegador ("+((e&&e.message)||e)+")"}}
+}
 async function xdcLe(i,file){
   let imgs=[];
   try{imgs=await xdcImagem(file)}catch(e){}
-  if(!RT.sample||!imgs.length)return{erro:RT.sample?"não consegui abrir a imagem":"leitura automática indisponível"};
+  if(!imgs.length)return{erro:"não consegui abrir a imagem"};
+  if(!RT.sample)return xocrLe(file,imgs);
   for(let t=0;t<4;t++){
     try{
       const j=await RT.sample.json(XDC_PROMPT(i,imgs.paginas,imgs.length),{images:imgs,modelTier:"default"});
@@ -15406,7 +15527,7 @@ function xdcAbre(i,itens){
     xdcRecompoe(i,r);return r;
   });
   const ov=openModal(`<h3>Conferir documentos de ${esc(nomeInteg(i))}</h3>
-   <p class="sub">O sistema olha cada arquivo, descobre o documento e de quem é, e sugere o nome. Os arquivos são guardados em PDF, com o nome <b>DOCUMENTO - NOME DO INTEGRANTE</b>. Corrija o que precisar; se o item acima estiver marcado, o que foi lido bem é salvo sozinho e só ficam aqui os que precisam da sua ajuda. ${RT.sample?"A leitura usa IA (Claude): as imagens são enviadas ao serviço só para identificar o documento.":"A leitura automática não está disponível aqui: escolha o tipo de cada arquivo."}</p>
+   <p class="sub">O sistema olha cada arquivo, descobre o documento e de quem é, e sugere o nome. Os arquivos são guardados em PDF, com o nome <b>DOCUMENTO - NOME DO INTEGRANTE</b>. Corrija o que precisar; se o item acima estiver marcado, o que foi lido bem é salvo sozinho e só ficam aqui os que precisam da sua ajuda. ${RT.sample?"A leitura usa IA (Claude): as imagens são enviadas ao serviço só para identificar o documento.":"A leitura é feita aqui no navegador, sem enviar os documentos para fora. Ela erra mais que a IA: confira o tipo e os números de cada arquivo."}</p>
    <div class="xdcopc"><label><input type="checkbox" id="xdcauto" ${XDC.autoPadrao?"checked":""}> Salvar sozinho quando terminar de ler</label><label><input type="checkbox" id="xdcjunta" checked> Juntar frente e verso no mesmo PDF</label></div>
    <div class="xdcprog sub" id="xdcprog"></div>
    <div id="xdclist" class="xdclist">${XDC.rows.map(r=>xdcLinha(i,r)).join("")}</div>
@@ -15541,7 +15662,7 @@ function xdcAbre(i,itens){
 function xdcResumo(i,res){
   const ov=openModal(`<h3>Documentos de ${esc(nomeInteg(i))} organizados</h3>
    <p class="sub">${res.salvos.length} arquivo(s) salvo(s) em PDF com o nome do documento${res.campos.length?`; ${res.campos.length} dado(s) preenchido(s) no cadastro (${esc(res.campos.join(", "))})`:""}.${res.semPdf?` ${res.semPdf} foto(s) não puderam virar PDF e foram guardadas como estavam.`:""}${(res.deps||[]).length?` Dependentes atualizados: ${esc(res.deps.join(", "))}.`:""} Para trocar um nome, use o botão de renomear na lista.</p>
-   ${!res.campos.length&&!res.conflitos.length&&!(res.deps||[]).length&&podePii()?`<div class="callout sand" style="margin:8px 0">Nenhum dado de cadastro foi lido destes arquivos. Se eles têm CPF, RG ou outros números, abra a aba <b>Dados</b> e toque em <b>Ler dados dos documentos</b>.</div>`:""}
+   ${!res.campos.length&&!res.conflitos.length&&!(res.deps||[]).length&&podePii()?`<div class="callout sand" style="margin:8px 0">Nenhum dado de cadastro foi lido destes arquivos. Se eles têm CPF, RG ou outros números, abra a aba <b>Dados</b> e toque em <b>Ler dados dos documentos</b>, ou preencha à mão.</div>`:""}
    <div class="xdcres">${res.salvos.map(n=>`<div>${esc(n)}</div>`).join("")}</div>
    ${(res.avisos||[]).length?`<div class="callout sand" style="margin-top:10px"><b>Atenção</b>${res.avisos.map(a=>`<div class="xdcconf1">${esc(a)}</div>`).join("")}</div>`:""}
    ${res.conflitos.length?`<div class="callout sand" style="margin-top:10px"><b>Dados para você conferir</b> (não foram aplicados):${res.conflitos.map((c,n)=>`<div class="xdcconf1">${esc(c.l)}: lido <b>${esc(c.valor)}</b>${c.atual?`, cadastro tem <b>${esc(c.atual)}</b>`:""}${c.invalido?` <em>(dígito verificador não confere)</em>`:""} <button class="b sec sm" data-xap="${n}">Usar o lido</button></div>`).join("")}</div>`:""}
@@ -15709,7 +15830,7 @@ fDados=function(i){
   let h=xdcFDados1.apply(this,arguments);
   if(!podePii())return h;
   const n=xdcDocsParaLer(i).length;
-  const topo=`<div class="callout blue xdcler"><div><b>Preencher a partir dos documentos</b><div class="sub">${n?`O sistema lê ${n} documento(s) desta pessoa (RG, CPF, título, comprovantes…) e mostra o que encontrou para você confirmar.`:"Envie os documentos na aba Documentos; os dados lidos aparecem aqui."}</div></div>${n&&podeEd("pront")?`<button class="b" id="xdcler" style="flex:none">Ler dados dos documentos</button>`:""}</div>`;
+  const topo=`<div class="callout blue xdcler"><div><b>Preencher a partir dos documentos</b><div class="sub">${n?`O sistema lê ${n} documento(s) desta pessoa (RG, CPF, título, comprovantes…) e mostra o que encontrou para você confirmar.`:"Envie os documentos na aba Documentos; os dados lidos aparecem aqui."}</div></div>${n&&podeEd("pront")?`<button class="b" id="xdcler" style="flex:none">Ler dados dos documentos</button>`:""}</div>${n&&!RT.sample?`<div class="sub" style="margin:-8px 0 12px">A leitura é feita no próprio navegador: os documentos não saem do computador. Na primeira vez ela demora um pouco para preparar o leitor. Confira os números antes de salvar.</div>`:""}`;
   const deps=(i.dependentes||[]);
   const sec=`<h2 style="margin-top:18px">Documentos e filiação</h2><div class="grid g2">${Fp("rgOrgao","Órgão emissor do RG",i,'placeholder="ex.: SSP-SP"')}${Fp("rgEmissao","Expedição do RG",i,'type="date"')}${Fp("naturalidade","Naturalidade",i,'placeholder="cidade - UF"')}
      <div><label>Estado civil</label><select data-k="estadoCivil"><option value="">—</option>${XDC_ESTCIVIL.map(e=>`<option ${e===i.estadoCivil?"selected":""}>${e}</option>`).join("")}</select></div>
@@ -15744,7 +15865,6 @@ function xdcDepModal(i,k){
 async function xdcRelerDados(i){
   if(!podeEd("pront")||!podePii())return toast("Você só pode consultar esta tela.",true);
   const docs=xdcDocsParaLer(i);if(!docs.length)return toast("Nenhum documento pessoal para ler.",true);
-  if(!RT.sample)return toast("A leitura automática não está disponível aqui.",true);
   const ov=openModal(`<h3>Lendo documentos de ${esc(nomeInteg(i))}</h3><p class="sub" id="xrlp">Lendo 0 de ${docs.length}…</p><div class="xdcprogbar"><i id="xrlb"></i></div><div class="sub" id="xrll" style="margin-top:8px"></div>
    <div style="display:flex;justify-content:flex-end;margin-top:12px"><button class="b sec" id="xrlx">Cancelar</button></div>`);
   let cancel=false;ov.querySelector("#xrlx").onclick=()=>{cancel=true;ov.remove()};

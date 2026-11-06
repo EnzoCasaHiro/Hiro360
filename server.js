@@ -349,8 +349,8 @@ async function criaApp(opts = {}) {
     try {
       const st = await fs.promises.stat(f); if (!st.isFile()) throw 0;
       const ext = path.extname(f).toLowerCase();
-      const csp = "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdnjs.cloudflare.com; worker-src 'self' blob: https://cdnjs.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
-      res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream', 'content-length': st.size, 'cache-control': ext === '.html' ? 'no-cache' : 'public, max-age=3600', 'content-security-policy': csp });
+      const csp = "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdnjs.cloudflare.com; worker-src 'self' blob: https://cdnjs.cloudflare.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+      res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream', 'content-length': st.size, 'cache-control': ext === '.html' ? 'no-cache' : rel.startsWith('vendor') ? 'public, max-age=2592000, immutable' : 'public, max-age=3600', 'content-security-policy': csp });
       return m === 'HEAD' ? res.end() : fs.createReadStream(f).pipe(res);
     } catch (e) { return erro(res, 404, 'Página não encontrada.'); }
   }
