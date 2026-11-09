@@ -2018,10 +2018,11 @@ function bindNF(){
     drop.ondragover=e=>{e.preventDefault();drop.classList.add("on")};drop.ondragleave=()=>drop.classList.remove("on");
     drop.ondrop=e=>{e.preventDefault();drop.classList.remove("on");if(e.dataTransfer.files[0])nfLoad(e.dataTransfer.files[0])};
     fi.onchange=()=>fi.files[0]&&nfLoad(fi.files[0]);
-    bindNFXml();document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));document.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));
+    const pad=$("nfarqpad");if(pad)pad.onclick=async()=>{if(!await askConfirm("Renomear os arquivos das notas guardadas para o padrão NúmeroDaNF_DataDaCompra? Só muda o nome; o arquivo e os lançamentos continuam iguais.","Renomear"))return;const n=nfArqPadroniza();toast(n+" arquivo(s) renomeado(s).");go("nf",true)};bindNFXml();document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));document.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));
     return;
   }
   bindNFXml();nfNotasBind();
+  const pad=$("nfarqpad");if(pad)pad.onclick=async()=>{if(!await askConfirm("Renomear os arquivos das notas guardadas para o padrão NúmeroDaNF_DataDaCompra? Só muda o nome; o arquivo e os lançamentos continuam iguais.","Renomear"))return;const n=nfArqPadroniza();toast(n+" arquivo(s) renomeado(s).");go("nf",true)};
   document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));
   document.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));
   document.querySelectorAll("[data-nfyear]").forEach(b=>b.onclick=()=>{const y=+b.dataset.nfyear;NFUI.years.has(y)?NFUI.years.delete(y):NFUI.years.add(y);go("nf",true)});
@@ -3633,11 +3634,12 @@ const b64De=u8=>{let s="";for(let i=0;i<u8.length;i+=0x8000)s+=String.fromCharCo
 const u8De=b64=>Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
 async function gz(u8,dir){const cs=new(dir==="c"?CompressionStream:DecompressionStream)("gzip"),w=cs.writable.getWriter();w.write(u8);w.close();return new Uint8Array(await new Response(cs.readable).arrayBuffer())}
 async function nfArquivar(file,tipo,n,previa){
-  const id=uid8(),meta={nome:file.name,tipo,type:file.type||guessType(file)||"application/octet-stream",nota:n.nota,forn:n.forn,chave:n.chave||"",em:new Date().toISOString(),tam:file.size};
+  const id=uid8(),meta={nome:file.name,tipo,type:file.type||guessType(file)||"application/octet-stream",nota:n.nota,forn:n.forn,chave:n.chave||"",em:new Date().toISOString(),tam:file.size,...(n.date?{date:n.date}:{})};
+  const padrao=o=>({...o,nome:nfArqNomePadrao(n.nota,n.date,o.nome,id)});
   if(RT.assets){
     if(tipo!=="xml"){file=(await comprimir(file)).file;meta.nome=file.name;meta.type=file.type||meta.type;meta.tam=file.size}
     const r=await RT.assets.upload(file,{type:meta.type}).catch(e=>{throw new Error(`Não consegui guardar "${file.name}": ${e.message||e.code}`)});
-    put("nfarq",id,{...meta,asset:r.id});return id;
+    put("nfarq",id,padrao({...meta,asset:r.id}));return id;
   }
   if(!RT.db)return null;
   let alvo=file,metaDb={...meta};
@@ -3649,7 +3651,44 @@ async function nfArquivar(file,tipo,n,previa){
     u8=new Uint8Array(await previa.arrayBuffer());metaDb={...metaDb,nome:file.name.replace(/\.pdf$/i,"")+" (1ª página).jpg",type:"image/jpeg",gz:false,parcial:true};
   }
   if(u8.length>NFARQ_MAX)throw new Error(`"${file.name}" é grande demais para guardar sem o armazenamento de arquivos (só Editores do painel têm). Os dados foram lidos, mas o arquivo não ficou guardado.`);
-  put("nfarq",id,{...metaDb,b64:b64De(u8)});return id;
+  put("nfarq",id,padrao({...metaDb,b64:b64De(u8)}));return id;
+}
+/* nome padrão do arquivo guardado: NumeroDaNF_DataDaCompra (ex.: 12345_03-11-2026.pdf) */
+const nfExt=n=>(String(n||"").match(/\.[A-Za-z0-9]{2,5}$/)||[""])[0].toLowerCase();
+const nfDataArq=d=>/^\d{4}-\d{2}-\d{2}/.test(d||"")?d.slice(8,10)+"-"+d.slice(5,7)+"-"+d.slice(0,4):"sem-data";
+const nfNumArq=v=>String(v==null?"":v).trim().replace(/[\\/:*?"<>|\s]+/g,"-").replace(/^-+|-+$/g,"")||"SN";
+function nfArqNomePadrao(nota,date,nomeAtual,excetoId){
+  const parcial=/\(1ª página\)/.test(nomeAtual||"")?" (1ª página)":"",ext=nfExt(nomeAtual)||".pdf";
+  const base=nfNumArq(nota)+"_"+nfDataArq(date);
+  const usados=new Set(Object.values(S.nfarq).filter(d=>d.id!==excetoId).map(d=>String(d.nome||"").toLowerCase()));
+  let nome=base+parcial+ext,k=2;while(usados.has(nome.toLowerCase()))nome=base+" ("+(k++)+")"+parcial+ext;
+  return nome;
+}
+/* número e data de um arquivo guardado: vêm da nota lançada que aponta para ele (o número do fornecedor vale mais que o Nº da planilha) */
+function nfArqInfo(d){
+  const L=(S.config.nf&&S.config.nf.rows)||[],num=d.nota==null?"":String(d.nota).trim();
+  const r=L.find(x=>x.arq===d.id)||(num?L.find(x=>[x.notaForn,x.nota].some(v=>v!=null&&String(v).trim()===num)&&(!d.forn||!x.local||NFN(x.local)===NFN(d.forn))):null)||null;
+  const nota=r?(r.notaForn!=null&&r.notaForn!==""?r.notaForn:(r.nota!=null&&r.nota!==""?r.nota:d.nota)):d.nota;
+  return{nota,date:(r&&r.date)||d.date||""};
+}
+/* o nome atual já está no padrão (descontando o " (2)" de nomes repetidos)? */
+function nfArqNoPadrao(d){
+  const i=nfArqInfo(d);if(!i.date)return true; // sem data da compra (nota excluída ou sem ligação): fica com o nome que tem
+  const base=nfNumArq(i.nota)+"_"+nfDataArq(i.date);
+  const sem=String(d.nome||"").replace(/\.[A-Za-z0-9]{2,5}$/,"").replace(/ \(1ª página\)$/,"").replace(/ \(\d+\)$/,"");
+  return sem===base;
+}
+/* renomeia os arquivos guardados para o padrão; ids = só esses (ex.: depois de editar uma nota) */
+function nfArqPadroniza(ids){
+  if(!podeEd("nf")&&!podeEd("fin"))return 0;
+  let n=0;
+  Object.values(S.nfarq).filter(d=>!ids||ids.includes(d.id)).forEach(d=>{
+    if(nfArqNoPadrao(d))return;
+    const i=nfArqInfo(d),nome=nfArqNomePadrao(i.nota,i.date,d.nome,d.id);
+    put("nfarq",d.id,{...strip(d),nome,...(i.date&&!d.date?{date:i.date}:{})});n++;
+  });
+  if(n&&!ids)try{audit("Notas fiscais: arquivos renomeados",n+" arquivo(s) no padrão NumeroDaNF_DataDaCompra")}catch(e){}
+  return n;
 }
 async function nfArqBytes(d){
   if(d.asset){const r=await fetch("/_blob/"+d.asset);if(!r.ok)throw new Error(`"${d.nome}" não foi encontrado no armazenamento.`);return new Uint8Array(await r.arrayBuffer())}
@@ -3660,7 +3699,9 @@ async function nfArqBaixar(id){const d=S.nfarq[id];if(!d)return toast("Arquivo n
 function nfArqCard(){
   const l=Object.values(S.nfarq).sort((a,b)=>(b.em||"").localeCompare(a.em||"")).slice(0,12);
   if(!l.length)return"";
-  return `<div class="card"><h2>Notas lidas e guardadas</h2><p class="sub" style="margin:0 0 8px">O arquivo original de cada nota lida fica guardado aqui e também na conta a pagar dela.</p>
+  const fora=(podeEd("nf")||podeEd("fin"))?Object.values(S.nfarq).filter(d=>!nfArqNoPadrao(d)).length:0;
+  return `<div class="card"><h2>Notas lidas e guardadas</h2><p class="sub" style="margin:0 0 8px">O arquivo original de cada nota lida fica guardado aqui e também na conta a pagar dela. O nome segue o padrão <b>NúmeroDaNF_DataDaCompra</b> (ex.: 12345_03-11-2026.pdf).</p>
+   ${fora?`<div class="callout sand" style="margin:0 0 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="grow">${fora} arquivo(s) guardado(s) ainda estão com o nome antigo.</span><button class="b sm" id="nfarqpad">Renomear para o padrão</button></div>`:""}
    ${l.map(d=>`<div class="doc"><div class="grow"><div class="nm">NF ${esc(d.nota||"s/n")} — ${esc(d.forn||"")}</div><div class="sub">${esc(d.nome)} · ${d.em?brDate(d.em.slice(0,10)):""}${d.parcial?" · só a 1ª página":""}</div></div><button class="b sec sm" data-nfver="${esc(d.id)}">${ic("eye")} Ver</button> <button class="b sec sm" data-nfarq="${esc(d.id)}">${ic("down")} Baixar</button></div>`).join("")}</div>`;
 }
 
@@ -7627,6 +7668,7 @@ function nfEditaNota(k){
     const rows=[];let pos=false;
     st.rows.forEach((r,i)=>{if(g.idx.includes(i)){if(!pos){rows.push(...novos);pos=true}}else rows.push(r)});
     if(!nfSave(rows,st.fileName)){gravado=false;return}
+    if(g.arq&&S.nfarq[g.arq])nfArqPadroniza([g.arq]); // número ou data mudou: o arquivo acompanha
     ov.remove();toast("Nota atualizada.");go("nf",true);
   };
 }
@@ -7761,7 +7803,7 @@ async function nfSeparaExistentes(notas){
     if(n.fonte==="planilha"){n.av.unshift(`Parece com a nota Nº ${m.g.nota==null?"s/n":m.g.nota} já lançada. Confira antes de lançar.`);resto.push(n);continue}
     const rot=`NF ${n.nota||"s/n"} — ${n.forn} (Nº ${m.g.nota==null?"s/n":m.g.nota} da planilha)`;
     if(m.rows.some(r=>r.arq&&S.nfarq[r.arq])){msgs.push(`${rot}: essa nota já está no sistema, com o arquivo anexado.`);continue}
-    let id=null;try{id=await nfArquivar(n.arq,n.arqTipo,n,null)}catch(e){msgs.push(e.message);continue}
+    let id=null;try{id=await nfArquivar(n.arq,n.arqTipo,{...n,nota:n.nota||m.g.notaForn||m.g.nota,date:n.date||m.g.date},null)}catch(e){msgs.push(e.message);continue}
     if(!id){msgs.push(`${rot}: não consegui guardar o arquivo.`);continue}
     const st=S.config.nf,idx=new Set(m.g.idx);
     const rows=st.rows.map((r,i)=>idx.has(i)?{...r,arq:id,...(n.chave&&!r.chave?{chave:n.chave}:{}),...(n.nota&&r.notaForn==null?{notaForn:n.nota}:{})}:r);
@@ -14925,6 +14967,7 @@ const xdcToks=s=>xdcNorm(s).split(" ").filter(t=>t&&!xdcStop.has(t));
 function xdcMesmoNome(a,b){
   const A=xdcToks(a),B=xdcToks(b);if(!A.length||!B.length)return false;
   if(A.length>=2&&B.length>=2&&A[0]===B[0]&&A[A.length-1]===B[B.length-1])return true;
+  if(A.length>=2&&B.length>=2&&A[0]!==B[0])return false; // primeiro nome diferente: outra pessoa da família (filhos têm o mesmo sobrenome)
   const c=A.filter(t=>B.includes(t)).length;return c>=2&&c/Math.min(A.length,B.length)>=.6;
 }
 const xdcPrimeiro=n=>String(n||"").trim().split(/\s+/)[0]||"";
@@ -14948,17 +14991,31 @@ function xdcNomeFinal(i,r){
   return doc+" - "+nomeInteg(i);
 }
 /* decide se o documento é do integrante ou de um familiar, a partir do que a IA leu */
+/* documentos que trazem a filiação (mãe/pai) impressa junto com o nome do titular: a leitura às vezes pega o nome da mãe */
+const XDC_COM_FILIACAO=new Set(["RG","CNH","CPF","CTPS","PIS/NIS","Cartão do Cidadão (NIS)","Título de eleitor","Reservista"]);
+const xdcTemNome=(txt,nome)=>{const t=" "+xdcNorm(txt)+" ",n=xdcToks(nome);return n.length>=2&&t.includes(" "+n[0]+" ")&&t.includes(" "+n[n.length-1]+" ")&&n.every(p=>t.includes(" "+p+" "))};
 function xdcTitular(i,leu){
   const meu=xdcNomeC(i),nome=String(leu.nome||"").trim(),fil=Array.isArray(leu.filiacao)?leu.filiacao:[];
-  if(!nome)return{quem:"colab",pessoa:"",parent:""};
-  if(xdcMesmoNome(meu,nome))return{quem:"colab",pessoa:"",parent:""};
+  const colab={quem:"colab",pessoa:"",parent:""};
+  if(!nome||!meu)return colab;
+  if(xdcMesmoNome(meu,nome))return colab;
+  /* a leitura pegou o nome da mãe ou do pai no lugar do titular (comum na CTPS, que mostra os dois nomes):
+     o nome lido é a mãe/pai do cadastro, ou aparece na própria filiação do documento, ou o nome do integrante
+     está impresso no documento (e não como filiação) */
+  if(XDC_COM_FILIACAO.has(leu.tipo)){
+    const ehPai=[i.mae,i.pai].some(p=>p&&xdcMesmoNome(p,nome));
+    const naFil=fil.some(f=>xdcMesmoNome(f,nome));
+    const meuNaFil=fil.some(f=>xdcMesmoNome(meu,f));
+    const impresso=leu.txt&&xdcTemNome(leu.txt,meu);
+    if(ehPai||naFil||(leu.temIntegrante===true&&!meuNaFil)||(impresso&&!meuNaFil)||(leu.tipo==="CTPS"&&meuNaFil))return{...colab,troca:nome};
+  }
   if(fil.some(f=>xdcMesmoNome(meu,f)))return{quem:"familiar",pessoa:xdcTitulo(nome),parent:"filho(a)"};
   return{quem:"familiar",pessoa:xdcTitulo(nome),parent:"familiar"};
 }
 
 /* ---------- leitura por IA ---------- */
 const XDC_PROMPT=(i,pags,nimg)=>`Você ajuda o RH de uma casa de repouso no Brasil a organizar e cadastrar documentos de um integrante. Olhe com atenção TODAS as imagens (são as páginas/fotos de UM arquivo, em ordem). A foto pode estar girada, de lado ou de cabeça para baixo: leia mesmo assim.
-O integrante desta pasta se chama "${xdcNomeC(i)}". O documento pode ser dele ou de outra pessoa (filho, cônjuge, mãe…).${pags?` O arquivo tem ${pags} página(s); você recebeu ${nimg} imagem(ns).`:""}
+${xdcNomeC(i)?`O integrante desta pasta se chama "${xdcNomeC(i)}". O documento pode ser dele ou de outra pessoa (filho, cônjuge, mãe…).`:"É um integrante novo e o nome dele ainda não foi digitado: leia com cuidado o nome completo do titular, porque ele será usado no cadastro."}${pags?` O arquivo tem ${pags} página(s); você recebeu ${nimg} imagem(ns).`:""}
 Responda APENAS com um objeto JSON, sem comentários, neste formato (use null no que não existir ou não der para ler):
 {"tipo":"um destes valores exatos: ${XDC_TIPOS.join(" | ")}",
  "nome":"nome completo de quem é o documento, como impresso",
@@ -14966,8 +15023,10 @@ Responda APENAS com um objeto JSON, sem comentários, neste formato (use null no
  "lado":"frente | verso | frente e verso | null",
  "validade":"AAAA-MM-DD ou null",
  "legivel":true,
+ "aparece_integrante":"true se o nome do integrante desta pasta está impresso no documento como titular (não como mãe/pai); senão false",
  "dados":{"cpf":"","rg":"","rgOrgao":"","rgEmissao":"AAAA-MM-DD","nascimento":"AAAA-MM-DD","naturalidade":"cidade - UF","mae":"","pai":"","estadoCivil":"","pis":"","ctps":"número e série/UF","titulo":"","tituloZona":"","tituloSecao":"","cnh":"","endereco":"logradouro, número, complemento - bairro","cep":"","cidade":"cidade - UF"}}
 Como preencher:
+- ATENÇÃO à filiação: RG, CNH, CTPS (inclusive a Carteira de Trabalho Digital), título e NIT trazem também o nome da mãe e do pai. Esses nomes vão SÓ em "filiacao", nunca em "nome". Na CTPS o titular é o nome que aparece no topo/na identificação do trabalhador, acima de "Filiação" ou "Nome da mãe".
 - "nome": RG/CPF/CNH/título/CTPS/NIT = o titular; certidão de nascimento = quem nasceu; comprovante de residência = o titular da conta; certidão de casamento = se "${xdcNomeC(i)}" for um dos cônjuges, use o nome dele(a).
 - "dados": copie TUDO o que estiver legível neste arquivo sobre a pessoa do campo "nome" (não deixe em branco o que dá para ler). Datas sempre no formato AAAA-MM-DD (ex.: 10/MAR/1977 vira 1977-03-10). Números como impressos (pode manter pontos e traços). RG: o "Registro Geral". CPF: 11 dígitos (no verso do RG aparece como "CPF"). PIS/NIT/NIS/PASEP vão em "pis" (o Cartão do Cidadão e o comprovante de inscrição NIT trazem esse número). CTPS: número e série. Título: número de inscrição, zona e seção. Estado civil: só se o documento disser (certidão de casamento com averbação de divórcio = "divorciado(a)").
 - "lado": "frente e verso" se o arquivo mostra os dois lados (um RG aberto, ou um lado em cada página/foto); "frente" ou "verso" se só um lado; null se o documento não tem lados (digital, conta, certidão).
@@ -15154,7 +15213,9 @@ function xocrExtrai(texto,file){
   if(tipo==="RG"){const e=data(/EXPEDI|EMISSAO/);if(e)dados.rgEmissao=e}
   if(tipo==="RG"||/REGISTRO GERAL/.test(TU)){for(const l of perto(/REGISTRO GERAL|\bR\.?G\.?\b|IDENTIDADE/,1)){const m=l.match(/\b\d{1,3}[.\s]?\d{3}[.\s]?\d{3}[\-\s]?[\dX]\b/);if(m&&m[0].replace(/\D/g,"")!==cpf){dados.rg=m[0].replace(/\s/g,"");break}}}
   const texto1=(re,n=1,ok=/^[A-Z ]{5,}$/,min=2)=>{for(const l of perto(re,n)){const t=l.replace(re,"").replace(/^[\s:.\-]+/,"").trim();if(ok.test(t)&&t.split(" ").filter(x=>x.length>1).length>=min)return t}return""};
-  const nome=texto1(/^NOME( CIVIL)?\b|\bNOME:/);
+  const nome=texto1(/^NOME( CIVIL)?\b(?! D[AO] (MAE|PAI))|(?<!D[AO] (MAE|PAI) )\bNOME:(?! ?D[AO] (MAE|PAI))/);
+  // texto sem a parte da filiação (para saber se o nome do integrante aparece como titular)
+  const semFil=[];let pula=0;UN.forEach(l=>{if(/FILIACAO/.test(l)){pula=3;return}if(/\b(MAE|PAI)\b/.test(l)){pula=Math.max(pula,1);return}if(pula>0){pula--;return}semFil.push(l)});
   const nat=texto1(/NATURALIDADE/,1,/^[A-Z][A-Z .\-\/]{3,}$/,1);if(nat)dados.naturalidade=nat;
   const mae=texto1(/\bMAE\b:?/);if(mae)dados.mae=mae;const pai=texto1(/\bPAI\b:?/);if(pai)dados.pai=pai;
   const fil=[];UN.forEach((l,k)=>{if(/FILIACAO/.test(l))for(let j=1;j<=3&&k+j<UN.length;j++){const t=UN[k+j].trim();if(/^[A-Z ]{5,}$/.test(t)&&t.split(" ").length>=2)fil.push(t)}});
@@ -15163,7 +15224,7 @@ function xocrExtrai(texto,file){
   if(tipo==="CNH"){const r=digs(perto(/REGISTRO/).join(" ")).find(d=>d.length===11&&d!==cpf);if(r)dados.cnh=r}
   if(tipo==="Comprovante de residência"){const c=(perto(/CEP/,1).join(" ").match(/\b\d{5}-?\d{3}\b/)||UN.join(" ").match(/\b\d{5}-\d{3}\b/)||[])[0];if(c)dados.cep=c}
   const validade=data(/VALIDADE/,1);
-  return{tipo,nome,filiacao:fil.slice(0,2),lado:null,paginas:0,validade,legivel:L.join("").replace(/[^A-Za-z0-9]/g,"").length>=20,dados:xdcDados({nome,dados}),ocr:true};
+  return{tipo,nome,filiacao:fil.slice(0,2),lado:null,paginas:0,validade,legivel:L.join("").replace(/[^A-Za-z0-9]/g,"").length>=20,dados:xdcDados({nome,dados}),ocr:true,txt:semFil.join("\n")};
 }
 async function xocrLe(file,imgs){
   try{const t=await xocrTextoArquivo(file,imgs);const r=xocrExtrai(t,file);r.paginas=imgs.paginas||imgs.length||0;return r}
@@ -15178,7 +15239,7 @@ async function xdcLe(i,file){
     try{
       const j=await RT.sample.json(XDC_PROMPT(i,imgs.paginas,imgs.length),{images:imgs,modelTier:"default"});
       if(!j||typeof j!=="object")return{erro:"resposta vazia"};
-      return{tipo:XDC_TIPOS.includes(j.tipo)?j.tipo:"Outro",nome:j.nome&&String(j.nome).trim()!=="null"?String(j.nome).trim():"",filiacao:Array.isArray(j.filiacao)?j.filiacao.filter(Boolean).map(String):[],lado:xdcLadoNorm(j.lado),paginas:imgs.paginas||0,validade:/^\d{4}-\d{2}-\d{2}$/.test(j.validade||"")?j.validade:"",legivel:j.legivel!==false,dados:xdcDados(j)};
+      return{tipo:XDC_TIPOS.includes(j.tipo)?j.tipo:"Outro",nome:j.nome&&String(j.nome).trim()!=="null"?String(j.nome).trim():"",filiacao:Array.isArray(j.filiacao)?j.filiacao.filter(Boolean).map(String):[],lado:xdcLadoNorm(j.lado),paginas:imgs.paginas||0,validade:/^\d{4}-\d{2}-\d{2}$/.test(j.validade||"")?j.validade:"",legivel:j.legivel!==false,temIntegrante:j.aparece_integrante===true||j.aparece_integrante==="true",dados:xdcDados(j)};
     }catch(e){
       const c=e&&e.code;
       if(c==="rate_limited"&&t<3){await xdcEsperar(20000);continue}
@@ -15231,7 +15292,7 @@ function xdcAbre(i,itens){
   XDC.rows=itens.map(it=>{
     const f=it.file||null,d=it.doc||null,orig=f?f.name:d.nome;
     const tipo0=(d&&d.rotulo&&xdcHeur(d.rotulo))||xdcHeur(orig)||"Outro";
-    const r={id:xdcId(),file:f,doc:d,orig,url:f&&/^image\//.test(f.type||"")?URL.createObjectURL(f):"",tipo:tipo0,quem:"colab",pessoa:"",parent:"filho(a)",lado:"",outro:"",validade:"",estado:"lendo",nomeEd:false,nome:""};r.lado=xdcHeurLado(orig)||(d&&xdcHeurLado(d.rotulo))||"";
+    const r={id:xdcId(),...(it.leu?{leu:it.leu}:{}),file:f,doc:d,orig,url:f&&/^image\//.test(f.type||"")?URL.createObjectURL(f):"",tipo:tipo0,quem:"colab",pessoa:"",parent:"filho(a)",lado:"",outro:"",validade:"",estado:"lendo",nomeEd:false,nome:""};r.lado=xdcHeurLado(orig)||(d&&xdcHeurLado(d.rotulo))||"";
     xdcRecompoe(i,r);return r;
   });
   const ov=openModal(`<h3>Conferir documentos de ${esc(nomeInteg(i))}</h3>
@@ -15267,13 +15328,15 @@ function xdcAbre(i,itens){
       const r=fila.shift();if(!XDC.rows.includes(r))continue;
       let arq=r.file;
       if(!arq&&r.doc){try{const b=await (await fetch("/_blob/"+r.doc.assetId)).blob();arq=new File([b],r.doc.nome,{type:r.doc.type})}catch(e){}}
-      const leu=(semIA||!arq?{erro:"sem leitura automática"}:await xdcLe(i,arq))||{erro:"sem resposta"};
+      const leu=r.leu||(semIA||!arq?{erro:"sem leitura automática"}:await xdcLe(i,arq))||{erro:"sem resposta"};delete r.leu;
       if(leu.semIA)semIA=true;
       if(!XDC.rows.includes(r))continue;
       if(leu.erro){r.estado="erro";r.msg=leu.erro}
       else{
         r.estado="ok";r.tipo=leu.tipo;r.lado=leu.lado||r.lado;r.paginas=leu.paginas||0;r.validade=leu.validade;
-        const t=xdcTitular(i,leu);r.quem=t.quem;r.pessoa=t.pessoa;r.parent=t.parent;r.props=xdcPropostas(S.integrantes[i.id]||i,leu.dados||{});r.dados=leu.dados||{};
+        const t=xdcTitular(i,leu);
+        if(t.troca&&leu.dados){const d=leu.dados={...leu.dados};delete d.nomeCompleto;["mae","pai"].forEach(k=>{if(d[k]&&xdcMesmoNome(d[k],xdcNomeC(i)))delete d[k]})}
+        r.quem=t.quem;r.pessoa=t.pessoa;r.parent=t.parent;r.props=xdcPropostas(S.integrantes[i.id]||i,leu.dados||{});r.dados=leu.dados||{};
         if(!leu.legivel){r.estado="erro";r.msg="imagem difícil de ler"}
       }
       xdcRecompoe(i,r);
@@ -15485,28 +15548,74 @@ function xdcRenomeia(d){
   ov.querySelector("#xrns").onclick=()=>{const v=ov.querySelector("#xrnn").value.trim().replace(/[\\/:*?"<>|]/g,"-");if(!v)return toast("Informe o nome.",true);put("docs",d.id,{...strip(d),nome:v+ext});ov.remove();go("pront",true)};
 }
 /* ---------- novo integrante já com os documentos ---------- */
+/* nome do titular a partir dos documentos lidos: o nome que mais se repete nos documentos pessoais
+   (RG, CPF e CNH valem mais). Certidão de nascimento, comprovante de residência e vacinação ficam de fora,
+   porque costumam ser de filhos ou de outra pessoa da casa. */
+const XDC_TIPO_PESO={"RG":3,"CNH":3,"CPF":3,"CTPS":2,"PIS/NIS":2,"Cartão do Cidadão (NIS)":2,"Título de eleitor":2,"Reservista":2,"Registro profissional (conselho)":1,"Diploma ou certificado":1,"ASO":1,"Contrato":1,"Comprovante bancário":1};
+function xdcNomeDosDocs(leituras){
+  const grupos=[];
+  leituras.forEach(l=>{
+    if(!l||l.erro||!l.nome)return;const p=XDC_TIPO_PESO[l.tipo];if(!p)return;
+    const nm=xdcFmt.nomeCompleto(l.nome);if(!nm||xdcToks(nm).length<2)return;
+    // a leitura pegou a mãe/pai como titular (o nome lido está na filiação do próprio documento): não serve
+    const d=l.dados||{};if([...(l.filiacao||[]),d.mae,d.pai].some(x=>x&&xdcMesmoNome(x,nm)))return;
+    let g=grupos.find(g=>xdcMesmoNome(g.nomes[0],nm));if(!g)grupos.push(g={nomes:[],pts:0,tipos:[]});
+    g.nomes.push(nm);g.pts+=p;g.tipos.push(l.tipo);
+  });
+  if(!grupos.length)return null;
+  grupos.sort((a,b)=>b.pts-a.pts);
+  const g=grupos[0],nome=g.nomes.slice().sort((a,b)=>xdcToks(b).length-xdcToks(a).length||b.length-a.length)[0];
+  return{nome,tipos:[...new Set(g.tipos)],outros:grupos.length>1};
+}
 function xdcNovo(){
   if(!podeEd("pront"))return toast("Você só pode consultar esta tela.",true);
-  let fs=[];
+  let fs=[],leus=null,lendo=false,existe=null;
   const ov=openModal(`<h3>Novo integrante</h3>
-   <label>Nome completo *<input id="xnnome" autocomplete="off" placeholder="ex.: Ana Paula Souza"></label>
-   <div class="drop" id="xndrop" style="padding:14px;margin-top:10px">${ic("up")}<div>Se já tiver, solte aqui todos os documentos de uma vez</div><div class="sub">O sistema lê, preenche o cadastro, converte para PDF e dá o nome de cada um. É opcional.</div></div>
+   <label>Nome completo<input id="xnnome" autocomplete="off" placeholder="ex.: Ana Paula Souza (ou deixe em branco e envie os documentos)"></label>
+   <div class="drop" id="xndrop" style="padding:14px;margin-top:10px">${ic("up")}<div>Solte aqui todos os documentos de uma vez</div><div class="sub">O sistema lê, preenche o cadastro, converte para PDF e dá o nome de cada um. Se você não souber o nome, deixe o campo acima em branco: o sistema lê o nome no RG, CPF ou CNH.</div></div>
    <input type="file" id="xnfile" multiple hidden accept=".pdf,.png,.jpg,.jpeg,.webp,.gif">
    <div class="sub" id="xnl" style="margin-top:6px"></div>
    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="b sec" id="xnc">Cancelar</button><button class="b" id="xnok">Criar integrante</button></div>`);
-  const add=l=>{fs=fs.concat([...l].filter(f=>guessType(f)&&/^(image\/|application\/pdf)/.test(guessType(f))));ov.querySelector("#xnl").textContent=fs.length?fs.length+" arquivo(s) para ler depois de criar.":""};
+  const inNome=ov.querySelector("#xnnome"),info=ov.querySelector("#xnl"),ok=ov.querySelector("#xnok");
+  const ativos=()=>Object.values(S.integrantes).filter(x=>(x.situacao||"Ativo")!=="Desligado");
+  const add=l=>{fs=fs.concat([...l].filter(f=>guessType(f)&&/^(image\/|application\/pdf)/.test(guessType(f))));leus=null;info.textContent=fs.length?fs.length+" arquivo(s) para ler"+(inNome.value.trim()?" depois de criar.":". Se o nome ficar em branco, ele será lido nos documentos."):""};
   const dz=ov.querySelector("#xndrop"),inp=ov.querySelector("#xnfile");
   dz.onclick=()=>inp.click();dz.ondragover=e=>{e.preventDefault();dz.classList.add("on")};dz.ondragleave=()=>dz.classList.remove("on");
   dz.ondrop=e=>{e.preventDefault();dz.classList.remove("on");add(e.dataTransfer.files)};inp.onchange=()=>{add(inp.files);inp.value=""};
-  ov.querySelector("#xnc").onclick=()=>ov.remove();
-  ov.querySelector("#xnnome").focus();
-  ov.querySelector("#xnok").onclick=()=>{
-    const nome=ov.querySelector("#xnnome").value.trim().replace(/\s+/g," ");
+  ov.querySelector("#xnc").onclick=()=>{lendo=false;ov.remove()};
+  inNome.oninput=()=>{if(existe){existe=null;ok.textContent="Criar integrante"}};
+  inNome.focus();
+  const abre=(id)=>{PR.sel=id;PR.tab=fs.length?"docs":"dados";PR.aba="ativos";ov.remove();go("pront",true);
+    if(fs.length){const it=fs.map((f,k)=>({file:f,...(leus&&leus[k]?{leu:leus[k]}:{})}));setTimeout(()=>xdcAbre(S.integrantes[id],it),250)}};
+  // lê os documentos (3 de cada vez) só para descobrir o nome; a leitura é reaproveitada na conferência
+  const leTodos=async()=>{
+    lendo=true;ok.disabled=true;const res=new Array(fs.length),fila=fs.map((f,k)=>k);let feitos=0;
+    info.textContent=`Lendo os documentos para descobrir o nome… 0 de ${fs.length}`;
+    const trab=async()=>{while(fila.length&&lendo){const k=fila.shift();res[k]=await xdcLe({},fs[k]).catch(e=>({erro:String(e&&e.message||e)}));feitos++;if(lendo)info.textContent=`Lendo os documentos para descobrir o nome… ${feitos} de ${fs.length}`}};
+    await Promise.all([trab(),trab(),trab()]);ok.disabled=false;
+    if(!lendo)return null;lendo=false;leus=res;return res;
+  };
+  ok.onclick=async()=>{
+    if(lendo)return;
+    if(existe)return abre(existe.id);
+    let nome=inNome.value.trim().replace(/\s+/g," ");
+    if(!nome){
+      if(!fs.length)return toast("Informe o nome completo ou envie os documentos para o sistema ler o nome.",true);
+      const res=leus||await leTodos();if(!res)return;
+      const achou=xdcNomeDosDocs(res);
+      if(!achou){info.textContent="Não consegui ler o nome nos documentos. Digite o nome completo e clique em Criar integrante.";inNome.focus();return}
+      inNome.value=achou.nome;
+      const igual=ativos().find(x=>xdcMesmoNome(xdcNomeC(x),achou.nome));
+      if(igual){existe=igual;ok.textContent="Enviar para "+xdcPrimeiro(nomeInteg(igual));
+        info.innerHTML=`Nome lido: <b>${esc(achou.nome)}</b>. Já existe <b>${esc(nomeInteg(igual))}</b> no cadastro. Clique em "Enviar para ${esc(xdcPrimeiro(nomeInteg(igual)))}" para guardar os documentos na pasta dela(e), ou corrija o nome para criar outra pessoa.`;return}
+      info.innerHTML=`Nome lido em ${esc(achou.tipos.join(", "))}: <b>${esc(achou.nome)}</b>.${achou.outros?" Há documentos de outras pessoas também (filhos ou familiares); eles vão para a pasta como documentos de familiar.":""} Confira e clique em Criar integrante.`;
+      ok.textContent="Criar integrante";return;
+    }
     if(nome.length<3)return toast("Informe o nome completo.",true);
-    if(Object.values(S.integrantes).some(x=>(x.situacao||"Ativo")!=="Desligado"&&xdcNorm(xdcNomeC(x))===xdcNorm(nome)))return toast("Já existe um integrante ativo com esse nome.",true);
+    if(ativos().some(x=>xdcNorm(xdcNomeC(x))===xdcNorm(nome)))return toast("Já existe um integrante ativo com esse nome.",true);
     const id=uid8();put("integrantes",id,{nome:"",nomeCompleto:nome,depto:"Outro",turno:"",dias:[0,1,2,3,4],situacao:"Ativo"});
-    PR.sel=id;PR.tab=fs.length?"docs":"dados";PR.aba="ativos";ov.remove();go("pront",true);
-    if(fs.length)setTimeout(()=>xdcAbre(S.integrantes[id],fs.map(f=>({file:f}))),250);
+    try{if(leus)audit("Integrante criado pelos documentos",nome)}catch(e){}
+    abre(id);
   };
 }
 

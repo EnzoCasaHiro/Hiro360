@@ -118,10 +118,11 @@ function bindNF(){
     drop.ondragover=e=>{e.preventDefault();drop.classList.add("on")};drop.ondragleave=()=>drop.classList.remove("on");
     drop.ondrop=e=>{e.preventDefault();drop.classList.remove("on");if(e.dataTransfer.files[0])nfLoad(e.dataTransfer.files[0])};
     fi.onchange=()=>fi.files[0]&&nfLoad(fi.files[0]);
-    bindNFXml();document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));document.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));
+    const pad=$("nfarqpad");if(pad)pad.onclick=async()=>{if(!await askConfirm("Renomear os arquivos das notas guardadas para o padrão NúmeroDaNF_DataDaCompra? Só muda o nome; o arquivo e os lançamentos continuam iguais.","Renomear"))return;const n=nfArqPadroniza();toast(n+" arquivo(s) renomeado(s).");go("nf",true)};bindNFXml();document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));document.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));
     return;
   }
   bindNFXml();nfNotasBind();
+  const pad=$("nfarqpad");if(pad)pad.onclick=async()=>{if(!await askConfirm("Renomear os arquivos das notas guardadas para o padrão NúmeroDaNF_DataDaCompra? Só muda o nome; o arquivo e os lançamentos continuam iguais.","Renomear"))return;const n=nfArqPadroniza();toast(n+" arquivo(s) renomeado(s).");go("nf",true)};
   document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));
   document.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));
   document.querySelectorAll("[data-nfyear]").forEach(b=>b.onclick=()=>{const y=+b.dataset.nfyear;NFUI.years.has(y)?NFUI.years.delete(y):NFUI.years.add(y);go("nf",true)});

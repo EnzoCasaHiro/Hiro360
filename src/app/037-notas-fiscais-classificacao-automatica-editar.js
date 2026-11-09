@@ -205,6 +205,7 @@ function nfEditaNota(k){
     const rows=[];let pos=false;
     st.rows.forEach((r,i)=>{if(g.idx.includes(i)){if(!pos){rows.push(...novos);pos=true}}else rows.push(r)});
     if(!nfSave(rows,st.fileName)){gravado=false;return}
+    if(g.arq&&S.nfarq[g.arq])nfArqPadroniza([g.arq]); // número ou data mudou: o arquivo acompanha
     ov.remove();toast("Nota atualizada.");go("nf",true);
   };
 }
@@ -339,7 +340,7 @@ async function nfSeparaExistentes(notas){
     if(n.fonte==="planilha"){n.av.unshift(`Parece com a nota Nº ${m.g.nota==null?"s/n":m.g.nota} já lançada. Confira antes de lançar.`);resto.push(n);continue}
     const rot=`NF ${n.nota||"s/n"} — ${n.forn} (Nº ${m.g.nota==null?"s/n":m.g.nota} da planilha)`;
     if(m.rows.some(r=>r.arq&&S.nfarq[r.arq])){msgs.push(`${rot}: essa nota já está no sistema, com o arquivo anexado.`);continue}
-    let id=null;try{id=await nfArquivar(n.arq,n.arqTipo,n,null)}catch(e){msgs.push(e.message);continue}
+    let id=null;try{id=await nfArquivar(n.arq,n.arqTipo,{...n,nota:n.nota||m.g.notaForn||m.g.nota,date:n.date||m.g.date},null)}catch(e){msgs.push(e.message);continue}
     if(!id){msgs.push(`${rot}: não consegui guardar o arquivo.`);continue}
     const st=S.config.nf,idx=new Set(m.g.idx);
     const rows=st.rows.map((r,i)=>idx.has(i)?{...r,arq:id,...(n.chave&&!r.chave?{chave:n.chave}:{}),...(n.nota&&r.notaForn==null?{notaForn:n.nota}:{})}:r);

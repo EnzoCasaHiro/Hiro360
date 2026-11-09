@@ -358,11 +358,12 @@ const b64De=u8=>{let s="";for(let i=0;i<u8.length;i+=0x8000)s+=String.fromCharCo
 const u8De=b64=>Uint8Array.from(atob(b64),c=>c.charCodeAt(0));
 async function gz(u8,dir){const cs=new(dir==="c"?CompressionStream:DecompressionStream)("gzip"),w=cs.writable.getWriter();w.write(u8);w.close();return new Uint8Array(await new Response(cs.readable).arrayBuffer())}
 async function nfArquivar(file,tipo,n,previa){
-  const id=uid8(),meta={nome:file.name,tipo,type:file.type||guessType(file)||"application/octet-stream",nota:n.nota,forn:n.forn,chave:n.chave||"",em:new Date().toISOString(),tam:file.size};
+  const id=uid8(),meta={nome:file.name,tipo,type:file.type||guessType(file)||"application/octet-stream",nota:n.nota,forn:n.forn,chave:n.chave||"",em:new Date().toISOString(),tam:file.size,...(n.date?{date:n.date}:{})};
+  const padrao=o=>({...o,nome:nfArqNomePadrao(n.nota,n.date,o.nome,id)});
   if(RT.assets){
     if(tipo!=="xml"){file=(await comprimir(file)).file;meta.nome=file.name;meta.type=file.type||meta.type;meta.tam=file.size}
     const r=await RT.assets.upload(file,{type:meta.type}).catch(e=>{throw new Error(`Não consegui guardar "${file.name}": ${e.message||e.code}`)});
-    put("nfarq",id,{...meta,asset:r.id});return id;
+    put("nfarq",id,padrao({...meta,asset:r.id}));return id;
   }
   if(!RT.db)return null;
   let alvo=file,metaDb={...meta};
@@ -374,7 +375,44 @@ async function nfArquivar(file,tipo,n,previa){
     u8=new Uint8Array(await previa.arrayBuffer());metaDb={...metaDb,nome:file.name.replace(/\.pdf$/i,"")+" (1ª página).jpg",type:"image/jpeg",gz:false,parcial:true};
   }
   if(u8.length>NFARQ_MAX)throw new Error(`"${file.name}" é grande demais para guardar sem o armazenamento de arquivos (só Editores do painel têm). Os dados foram lidos, mas o arquivo não ficou guardado.`);
-  put("nfarq",id,{...metaDb,b64:b64De(u8)});return id;
+  put("nfarq",id,padrao({...metaDb,b64:b64De(u8)}));return id;
+}
+/* nome padrão do arquivo guardado: NumeroDaNF_DataDaCompra (ex.: 12345_03-11-2026.pdf) */
+const nfExt=n=>(String(n||"").match(/\.[A-Za-z0-9]{2,5}$/)||[""])[0].toLowerCase();
+const nfDataArq=d=>/^\d{4}-\d{2}-\d{2}/.test(d||"")?d.slice(8,10)+"-"+d.slice(5,7)+"-"+d.slice(0,4):"sem-data";
+const nfNumArq=v=>String(v==null?"":v).trim().replace(/[\\/:*?"<>|\s]+/g,"-").replace(/^-+|-+$/g,"")||"SN";
+function nfArqNomePadrao(nota,date,nomeAtual,excetoId){
+  const parcial=/\(1ª página\)/.test(nomeAtual||"")?" (1ª página)":"",ext=nfExt(nomeAtual)||".pdf";
+  const base=nfNumArq(nota)+"_"+nfDataArq(date);
+  const usados=new Set(Object.values(S.nfarq).filter(d=>d.id!==excetoId).map(d=>String(d.nome||"").toLowerCase()));
+  let nome=base+parcial+ext,k=2;while(usados.has(nome.toLowerCase()))nome=base+" ("+(k++)+")"+parcial+ext;
+  return nome;
+}
+/* número e data de um arquivo guardado: vêm da nota lançada que aponta para ele (o número do fornecedor vale mais que o Nº da planilha) */
+function nfArqInfo(d){
+  const L=(S.config.nf&&S.config.nf.rows)||[],num=d.nota==null?"":String(d.nota).trim();
+  const r=L.find(x=>x.arq===d.id)||(num?L.find(x=>[x.notaForn,x.nota].some(v=>v!=null&&String(v).trim()===num)&&(!d.forn||!x.local||NFN(x.local)===NFN(d.forn))):null)||null;
+  const nota=r?(r.notaForn!=null&&r.notaForn!==""?r.notaForn:(r.nota!=null&&r.nota!==""?r.nota:d.nota)):d.nota;
+  return{nota,date:(r&&r.date)||d.date||""};
+}
+/* o nome atual já está no padrão (descontando o " (2)" de nomes repetidos)? */
+function nfArqNoPadrao(d){
+  const i=nfArqInfo(d);if(!i.date)return true; // sem data da compra (nota excluída ou sem ligação): fica com o nome que tem
+  const base=nfNumArq(i.nota)+"_"+nfDataArq(i.date);
+  const sem=String(d.nome||"").replace(/\.[A-Za-z0-9]{2,5}$/,"").replace(/ \(1ª página\)$/,"").replace(/ \(\d+\)$/,"");
+  return sem===base;
+}
+/* renomeia os arquivos guardados para o padrão; ids = só esses (ex.: depois de editar uma nota) */
+function nfArqPadroniza(ids){
+  if(!podeEd("nf")&&!podeEd("fin"))return 0;
+  let n=0;
+  Object.values(S.nfarq).filter(d=>!ids||ids.includes(d.id)).forEach(d=>{
+    if(nfArqNoPadrao(d))return;
+    const i=nfArqInfo(d),nome=nfArqNomePadrao(i.nota,i.date,d.nome,d.id);
+    put("nfarq",d.id,{...strip(d),nome,...(i.date&&!d.date?{date:i.date}:{})});n++;
+  });
+  if(n&&!ids)try{audit("Notas fiscais: arquivos renomeados",n+" arquivo(s) no padrão NumeroDaNF_DataDaCompra")}catch(e){}
+  return n;
 }
 async function nfArqBytes(d){
   if(d.asset){const r=await fetch("/_blob/"+d.asset);if(!r.ok)throw new Error(`"${d.nome}" não foi encontrado no armazenamento.`);return new Uint8Array(await r.arrayBuffer())}
@@ -385,7 +423,9 @@ async function nfArqBaixar(id){const d=S.nfarq[id];if(!d)return toast("Arquivo n
 function nfArqCard(){
   const l=Object.values(S.nfarq).sort((a,b)=>(b.em||"").localeCompare(a.em||"")).slice(0,12);
   if(!l.length)return"";
-  return `<div class="card"><h2>Notas lidas e guardadas</h2><p class="sub" style="margin:0 0 8px">O arquivo original de cada nota lida fica guardado aqui e também na conta a pagar dela.</p>
+  const fora=(podeEd("nf")||podeEd("fin"))?Object.values(S.nfarq).filter(d=>!nfArqNoPadrao(d)).length:0;
+  return `<div class="card"><h2>Notas lidas e guardadas</h2><p class="sub" style="margin:0 0 8px">O arquivo original de cada nota lida fica guardado aqui e também na conta a pagar dela. O nome segue o padrão <b>NúmeroDaNF_DataDaCompra</b> (ex.: 12345_03-11-2026.pdf).</p>
+   ${fora?`<div class="callout sand" style="margin:0 0 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap"><span class="grow">${fora} arquivo(s) guardado(s) ainda estão com o nome antigo.</span><button class="b sm" id="nfarqpad">Renomear para o padrão</button></div>`:""}
    ${l.map(d=>`<div class="doc"><div class="grow"><div class="nm">NF ${esc(d.nota||"s/n")} — ${esc(d.forn||"")}</div><div class="sub">${esc(d.nome)} · ${d.em?brDate(d.em.slice(0,10)):""}${d.parcial?" · só a 1ª página":""}</div></div><button class="b sec sm" data-nfver="${esc(d.id)}">${ic("eye")} Ver</button> <button class="b sec sm" data-nfarq="${esc(d.id)}">${ic("down")} Baixar</button></div>`).join("")}</div>`;
 }
 
