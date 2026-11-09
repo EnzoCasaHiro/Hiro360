@@ -167,7 +167,7 @@ function renderResult(R){
      <details><summary>Ver jornada dia a dia</summary><div class="wrap"><table><thead><tr><th>Dia</th><th>Situação</th><th>Marcações</th><th class="n">Trab.</th><th class="n">Prev.</th><th class="n">Atraso</th><th class="n">Saída ant.</th><th class="n">Extra</th><th>Avisos</th></tr></thead><tbody>
      ${u.rows.map(r=>`<tr><td>${brDate(r.day).slice(0,5)} ${r.wd}</td><td><span class="pill s-${r.status}">${STL[r.status]}</span></td><td><button class="lnk" data-mk="${u.uid}" data-mday="${r.day}">${r.intervals.join("<br>")||"— editar"}</button></td>
       <td class="n">${fmtHHMM(r.workedMin)}</td><td class="n">${fmtHHMM(r.expectedMin)}</td><td class="n">${r.late||""}</td><td class="n">${r.early||""}</td><td class="n">${r.extra||""}</td>
-      <td>${r.night?`<span class="chip night">noturno → ${brDate(r.endsOn).slice(0,5)}</span>`:""}${r.flags.map(f=>`<span class="chip">${esc(FLAG_LABEL[f]||f)}</span>`).join("")}${r.oc?`<span class="chip" title="${esc(r.oc.texto)}">${esc(OC[r.oc.tipo])}</span>`:""}</td></tr>`).join("")||`<tr><td colspan="9">Sem jornadas no período.</td></tr>`}
+      <td>${r.night?`<span class="chip night">noturno → ${brDate(r.endsOn).slice(0,5)}</span>`:""}${flagsVisiveis(r).map(f=>`<span class="chip">${esc(FLAG_LABEL[f]||f)}</span>`).join("")}${r.oc?`<span class="chip" title="${esc(r.oc.texto)}">${esc(OC[r.oc.tipo])}</span>`:""}</td></tr>`).join("")||`<tr><td colspan="9">Sem jornadas no período.</td></tr>`}
      </tbody></table></div></details></div>`}).join("");
 }
 function bindResult(){

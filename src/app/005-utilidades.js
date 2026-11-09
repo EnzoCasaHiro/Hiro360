@@ -41,4 +41,7 @@ const CATS=["Documentos pessoais","Contrato e admissão","ASO e exames","Atestad
 const OC={atestado:"Atestado médico",falta_justificada:"Falta justificada",esquecimento:"Esquecimento de ponto",outro:"Outro registro"};
 const STL={ok:"OK",falta:"Falta",pendencia:"Pendência",atestado:"Atestado",justificada:"Justificada",esquecido:"Ponto esquecido",sem_escala:"Sem escala",feriado:"Feriado"};
 const FLAG_LABEL={tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trabalhou no feriado",multiplos_periodos:"múltiplos períodos",intervalo_preassinalado:"intervalo descontado",justificar:"a justificar",falta_saida:"falta marcação de saída",falta_entrada:"falta marcação de entrada",falta_pontual:"marcação pontual ausente",escala_lancada:"escala lançada manualmente"};
+// ajustes feitos à mão (previsto/escala do dia) não aparecem como aviso na folha nem na tela do ponto; o histórico continua guardando quem mudou
+const FLAG_OCULTA=new Set(["escala_lancada","previsto_manual"]);
+const flagsVisiveis=r=>((r&&r.flags)||[]).filter(f=>!FLAG_OCULTA.has(f));
 

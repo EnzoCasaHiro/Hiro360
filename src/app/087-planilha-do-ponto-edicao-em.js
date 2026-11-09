@@ -203,10 +203,23 @@ function plnExcel(){
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Ponto");
   XLSX.writeFile(wb,safe(`Ponto ${nome} ${PLN.de} a ${PLN.ate}`)+".xlsx");
 }
+// arquivo com uma aba por integrante (ex.: fechamento do mês inteiro): usa a aba do integrante aberto,
+// achada pelo nome da aba ou pela linha "Integrante" no topo; arquivo de uma aba só vale como antes
+function plnAbaDoIntegrante(wb){
+  const nomes=wb.SheetNames;if(nomes.length<2)return nomes[0];
+  const ig=integByUid(PLN.uid),alvo=ig?NFN(nomeInteg(ig)):"";if(!alvo)return null;
+  // mesmo nome, nome cortado (aba do Excel tem até 31 letras) ou um nome contido no outro (ex.: sem o último sobrenome)
+  const ta=alvo.split(" "),igual=t=>{t=NFN(t);if(!t)return false;if(t===alvo||(t.length>=8&&(alvo.startsWith(t)||t.startsWith(alvo))))return true;
+    const tt=t.split(" "),[a,b]=tt.length<=ta.length?[tt,ta]:[ta,tt];return a.length>=2&&a[0]===b[0]&&a.every(x=>b.includes(x))};
+  return nomes.find(n=>igual(n))||nomes.find(n=>{const L=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:""}).slice(0,8);
+    return L.some(l=>/^integrante$/i.test(String(l[0]).trim())&&igual(l[1]))})||null;
+}
 async function plnImporta(f){
   try{
     if(typeof XLSX==="undefined")throw new Error("a biblioteca de Excel não carregou. Recarregue a página.");
-    const wb=XLSX.read(await f.arrayBuffer(),{type:"array"}),A=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""});
+    const wb=XLSX.read(await f.arrayBuffer(),{type:"array"}),aba=plnAbaDoIntegrante(wb);
+    if(!aba)throw new Error("este arquivo tem várias abas e nenhuma é deste integrante. Confira o nome na aba ou na linha \"Integrante\".");
+    const A=XLSX.utils.sheet_to_json(wb.Sheets[aba],{header:1,raw:true,defval:""});
     const hi=A.findIndex(l=>/^data$/i.test(String(l[0]).trim()));
     if(hi<0)throw new Error('não achei o cabeçalho com "Data" na primeira coluna. Use o arquivo de "Baixar Excel".');
     const cols=A[hi].map((h,i)=>/^(entrada|sa[ií]da|batida)/i.test(String(h).trim())?i:-1).filter(i=>i>=0),cp=A[hi].findIndex(h=>/^previst/i.test(String(h).trim()));

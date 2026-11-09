@@ -346,6 +346,9 @@ const CATS=["Documentos pessoais","Contrato e admissão","ASO e exames","Atestad
 const OC={atestado:"Atestado médico",falta_justificada:"Falta justificada",esquecimento:"Esquecimento de ponto",outro:"Outro registro"};
 const STL={ok:"OK",falta:"Falta",pendencia:"Pendência",atestado:"Atestado",justificada:"Justificada",esquecido:"Ponto esquecido",sem_escala:"Sem escala",feriado:"Feriado"};
 const FLAG_LABEL={tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trabalhou no feriado",multiplos_periodos:"múltiplos períodos",intervalo_preassinalado:"intervalo descontado",justificar:"a justificar",falta_saida:"falta marcação de saída",falta_entrada:"falta marcação de entrada",falta_pontual:"marcação pontual ausente",escala_lancada:"escala lançada manualmente"};
+// ajustes feitos à mão (previsto/escala do dia) não aparecem como aviso na folha nem na tela do ponto; o histórico continua guardando quem mudou
+const FLAG_OCULTA=new Set(["escala_lancada","previsto_manual"]);
+const flagsVisiveis=r=>((r&&r.flags)||[]).filter(f=>!FLAG_OCULTA.has(f));
 
 /* ================= persistência (db + assets) ================= */
 const RT={db:null,assets:null,dl:null,user:null,sample:null,ready:false};
@@ -887,7 +890,7 @@ function renderResult(R){
      <details><summary>Ver jornada dia a dia</summary><div class="wrap"><table><thead><tr><th>Dia</th><th>Situação</th><th>Marcações</th><th class="n">Trab.</th><th class="n">Prev.</th><th class="n">Atraso</th><th class="n">Saída ant.</th><th class="n">Extra</th><th>Avisos</th></tr></thead><tbody>
      ${u.rows.map(r=>`<tr><td>${brDate(r.day).slice(0,5)} ${r.wd}</td><td><span class="pill s-${r.status}">${STL[r.status]}</span></td><td><button class="lnk" data-mk="${u.uid}" data-mday="${r.day}">${r.intervals.join("<br>")||"— editar"}</button></td>
       <td class="n">${fmtHHMM(r.workedMin)}</td><td class="n">${fmtHHMM(r.expectedMin)}</td><td class="n">${r.late||""}</td><td class="n">${r.early||""}</td><td class="n">${r.extra||""}</td>
-      <td>${r.night?`<span class="chip night">noturno → ${brDate(r.endsOn).slice(0,5)}</span>`:""}${r.flags.map(f=>`<span class="chip">${esc(FLAG_LABEL[f]||f)}</span>`).join("")}${r.oc?`<span class="chip" title="${esc(r.oc.texto)}">${esc(OC[r.oc.tipo])}</span>`:""}</td></tr>`).join("")||`<tr><td colspan="9">Sem jornadas no período.</td></tr>`}
+      <td>${r.night?`<span class="chip night">noturno → ${brDate(r.endsOn).slice(0,5)}</span>`:""}${flagsVisiveis(r).map(f=>`<span class="chip">${esc(FLAG_LABEL[f]||f)}</span>`).join("")}${r.oc?`<span class="chip" title="${esc(r.oc.texto)}">${esc(OC[r.oc.tipo])}</span>`:""}</td></tr>`).join("")||`<tr><td colspan="9">Sem jornadas no período.</td></tr>`}
      </tbody></table></div></details></div>`}).join("");
 }
 function bindResult(){
@@ -1620,7 +1623,7 @@ function journeyTable(R){
       const iv=r.intervals[k],m=iv&&iv.match(/^(\d{2}:\d{2})–(\d{2}:\d{2})(\s\(\+1\))?$/);
       row.push(m?m[1]:"",m?m[2]+(m[3]?" (+1)":""):"");
     }
-    row.push(fmtHHMM(r.workedMin),fmtHHMM(r.expectedMin),r.late||0,r.early||0,r.extra||0,r.night?"Sim":"",r.nightReal?fmtHHMM(r.nightReal):"",r.nightReal?fmtHHMM(r.nightFicta):"",r.oc?`${OC[r.oc.tipo]}: ${r.oc.texto||""}`:r.flags.join(", "));
+    row.push(fmtHHMM(r.workedMin),fmtHHMM(r.expectedMin),r.late||0,r.early||0,r.extra||0,r.night?"Sim":"",r.nightReal?fmtHHMM(r.nightReal):"",r.nightReal?fmtHHMM(r.nightFicta):"",r.oc?`${OC[r.oc.tipo]}: ${r.oc.texto||""}`:flagsVisiveis(r).map(f=>FLAG_LABEL[f]||f).join(", "));
     rows.push(row);statuses.push(r.status);
   }));
   return{head,rows,statuses,maxP};
@@ -1645,10 +1648,10 @@ function obsText(r){
     return base+(r.oc.texto?": "+r.oc.texto:"");
   }
   if(r.status==="falta")return "Falta";
-  if(r.status==="pendencia")return "Pendência"+(r.flags.filter(f=>f!=="justificar").length?": "+r.flags.join(", "):"");
+  if(r.status==="pendencia"){const fl=flagsVisiveis(r).filter(f=>f!=="justificar");return "Pendência"+(fl.length?": "+fl.map(f=>FLAG_LABEL[f]||f).join(", "):"")}
   if(r.status==="sem_escala")return "Marcação fora da escala";
   if(r.status==="feriado")return "Feriado";
-  const extra=(r.flags||[]).filter(f=>f!=="tolerancia_art58"&&f!=="trabalhou_feriado").map(f=>FLAG_LABEL[f]||f);
+  const extra=flagsVisiveis(r).filter(f=>f!=="tolerancia_art58"&&f!=="trabalhou_feriado").map(f=>FLAG_LABEL[f]||f);
   if(r.feriadoMin)extra.push(`Trabalhou no feriado: ${fmtHHMM(r.feriadoMin)} com adicional`);
   if(r.nightReal)extra.push(`Noturno: ${fmtHHMM(r.nightReal)} reais = ${fmtHHMM(r.nightFicta)} (hora de 52min30s)`);
   return extra.length?extra.join(" · "):"";
@@ -16098,10 +16101,23 @@ function plnExcel(){
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Ponto");
   XLSX.writeFile(wb,safe(`Ponto ${nome} ${PLN.de} a ${PLN.ate}`)+".xlsx");
 }
+// arquivo com uma aba por integrante (ex.: fechamento do mês inteiro): usa a aba do integrante aberto,
+// achada pelo nome da aba ou pela linha "Integrante" no topo; arquivo de uma aba só vale como antes
+function plnAbaDoIntegrante(wb){
+  const nomes=wb.SheetNames;if(nomes.length<2)return nomes[0];
+  const ig=integByUid(PLN.uid),alvo=ig?NFN(nomeInteg(ig)):"";if(!alvo)return null;
+  // mesmo nome, nome cortado (aba do Excel tem até 31 letras) ou um nome contido no outro (ex.: sem o último sobrenome)
+  const ta=alvo.split(" "),igual=t=>{t=NFN(t);if(!t)return false;if(t===alvo||(t.length>=8&&(alvo.startsWith(t)||t.startsWith(alvo))))return true;
+    const tt=t.split(" "),[a,b]=tt.length<=ta.length?[tt,ta]:[ta,tt];return a.length>=2&&a[0]===b[0]&&a.every(x=>b.includes(x))};
+  return nomes.find(n=>igual(n))||nomes.find(n=>{const L=XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:""}).slice(0,8);
+    return L.some(l=>/^integrante$/i.test(String(l[0]).trim())&&igual(l[1]))})||null;
+}
 async function plnImporta(f){
   try{
     if(typeof XLSX==="undefined")throw new Error("a biblioteca de Excel não carregou. Recarregue a página.");
-    const wb=XLSX.read(await f.arrayBuffer(),{type:"array"}),A=XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]],{header:1,raw:true,defval:""});
+    const wb=XLSX.read(await f.arrayBuffer(),{type:"array"}),aba=plnAbaDoIntegrante(wb);
+    if(!aba)throw new Error("este arquivo tem várias abas e nenhuma é deste integrante. Confira o nome na aba ou na linha \"Integrante\".");
+    const A=XLSX.utils.sheet_to_json(wb.Sheets[aba],{header:1,raw:true,defval:""});
     const hi=A.findIndex(l=>/^data$/i.test(String(l[0]).trim()));
     if(hi<0)throw new Error('não achei o cabeçalho com "Data" na primeira coluna. Use o arquivo de "Baixar Excel".');
     const cols=A[hi].map((h,i)=>/^(entrada|sa[ií]da|batida)/i.test(String(h).trim())?i:-1).filter(i=>i>=0),cp=A[hi].findIndex(h=>/^previst/i.test(String(h).trim()));

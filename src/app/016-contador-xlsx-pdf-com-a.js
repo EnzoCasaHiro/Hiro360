@@ -39,7 +39,7 @@ function journeyTable(R){
       const iv=r.intervals[k],m=iv&&iv.match(/^(\d{2}:\d{2})–(\d{2}:\d{2})(\s\(\+1\))?$/);
       row.push(m?m[1]:"",m?m[2]+(m[3]?" (+1)":""):"");
     }
-    row.push(fmtHHMM(r.workedMin),fmtHHMM(r.expectedMin),r.late||0,r.early||0,r.extra||0,r.night?"Sim":"",r.nightReal?fmtHHMM(r.nightReal):"",r.nightReal?fmtHHMM(r.nightFicta):"",r.oc?`${OC[r.oc.tipo]}: ${r.oc.texto||""}`:r.flags.join(", "));
+    row.push(fmtHHMM(r.workedMin),fmtHHMM(r.expectedMin),r.late||0,r.early||0,r.extra||0,r.night?"Sim":"",r.nightReal?fmtHHMM(r.nightReal):"",r.nightReal?fmtHHMM(r.nightFicta):"",r.oc?`${OC[r.oc.tipo]}: ${r.oc.texto||""}`:flagsVisiveis(r).map(f=>FLAG_LABEL[f]||f).join(", "));
     rows.push(row);statuses.push(r.status);
   }));
   return{head,rows,statuses,maxP};
@@ -64,10 +64,10 @@ function obsText(r){
     return base+(r.oc.texto?": "+r.oc.texto:"");
   }
   if(r.status==="falta")return "Falta";
-  if(r.status==="pendencia")return "Pendência"+(r.flags.filter(f=>f!=="justificar").length?": "+r.flags.join(", "):"");
+  if(r.status==="pendencia"){const fl=flagsVisiveis(r).filter(f=>f!=="justificar");return "Pendência"+(fl.length?": "+fl.map(f=>FLAG_LABEL[f]||f).join(", "):"")}
   if(r.status==="sem_escala")return "Marcação fora da escala";
   if(r.status==="feriado")return "Feriado";
-  const extra=(r.flags||[]).filter(f=>f!=="tolerancia_art58"&&f!=="trabalhou_feriado").map(f=>FLAG_LABEL[f]||f);
+  const extra=flagsVisiveis(r).filter(f=>f!=="tolerancia_art58"&&f!=="trabalhou_feriado").map(f=>FLAG_LABEL[f]||f);
   if(r.feriadoMin)extra.push(`Trabalhou no feriado: ${fmtHHMM(r.feriadoMin)} com adicional`);
   if(r.nightReal)extra.push(`Noturno: ${fmtHHMM(r.nightReal)} reais = ${fmtHHMM(r.nightFicta)} (hora de 52min30s)`);
   return extra.length?extra.join(" · "):"";
