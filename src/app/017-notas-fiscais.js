@@ -96,6 +96,7 @@ function pgNF(){
    <div class="stat"><b>${notas}</b><span>notas</span></div>
    <div class="stat"><b style="font-size:16px">${topCat?esc(topCat):"—"}</b><span>maior categoria</span></div>
    <div class="stat"><b>${rows.length}</b><span>itens lançados</span></div></div>
+  ${nfBuscaCard()}
   <div class="card"><h2>Filtros</h2>
    <label>Ano</label><div class="daypicker">${[...NFUI.allYears].sort().map(y=>`<button type="button" class="daypill ${NFUI.years.has(y)?"on":""}" data-nfyear="${y}" style="width:auto;padding:0 10px">${y}</button>`).join("")||'<span class="sub">sem datas na planilha</span>'}</div>
    <label style="margin-top:10px">Mês</label><div class="daypicker">${meses.map(m=>`<button type="button" class="daypill ${NFUI.months.has(m)?"on":""}" data-nfmonth="${m}">${MESES3[m]}</button>`).join("")}</div>
@@ -122,6 +123,7 @@ function bindNF(){
     return;
   }
   bindNFXml();nfNotasBind();
+  nfBuscaBind();
   const pad=$("nfarqpad");if(pad)pad.onclick=async()=>{if(!await askConfirm("Renomear os arquivos das notas guardadas para o padrão NúmeroDaNF_DataDaCompra? Só muda o nome; o arquivo e os lançamentos continuam iguais.","Renomear"))return;const n=nfArqPadroniza();toast(n+" arquivo(s) renomeado(s).");go("nf",true)};
   document.querySelectorAll("[data-nfarq]").forEach(b=>b.onclick=()=>nfArqBaixar(b.dataset.nfarq));
   document.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));

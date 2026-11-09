@@ -121,6 +121,55 @@ async function nfReclassifica(){
   });
   if(n&&nfSave(rows,st.fileName)){toast(n+" item(ns) classificado(s) automaticamente.");go("nf",true)}else toast("Não reconheci nenhum dos itens pendentes.",true);
 }
+// ---- busca de produto: em quais notas ele foi comprado e por quanto (todas as notas, sem os filtros de ano/mês/categoria)
+const NFB={q:"",ver:50};
+const nfbTok=s=>NFN(s).split(" ").filter(Boolean).map(t=>t.length>3?t.replace(/(es|s)$/,""):t); // "fraldas" acha "fralda"
+function nfBusca(q){
+  const T=nfbTok(q);if(!T.length)return[];
+  const rows=(S.config.nf&&S.config.nf.rows)||[];
+  return rows.filter(r=>{const h=" "+NFN(r.item)+" ";return T.every(t=>h.includes(t))})
+    .map(r=>{const qtd=+r.qtd||0,un=qtd>0&&+r.total>0?(+r.total)/qtd:(+r.valor||0);return{r,un,k:nfKey(r)}})
+    .sort((a,b)=>(b.r.date||"").localeCompare(a.r.date||""));
+}
+function nfBuscaRes(){
+  const q=NFB.q.trim();if(!q)return`<div class="sub">Digite o nome do produto (ex.: fralda, luva, café). Aparecem todas as compras dele, de todas as notas.</div>`;
+  const R=nfBusca(q);if(!R.length)return`<div class="empty">Nenhuma compra encontrada com "${esc(q)}". Tente uma palavra só ou outra grafia.</div>`;
+  const un=R.filter(x=>x.un>0),notas=new Set(R.map(x=>x.k)).size,tot=R.reduce((s,x)=>s+(+x.r.total||0),0),qt=R.reduce((s,x)=>s+(+x.r.qtd||0),0);
+  const menor=un.length?un.reduce((a,b)=>b.un<a.un?b:a):null,maior=un.length?un.reduce((a,b)=>b.un>a.un?b:a):null,ult=un[0]||null;
+  const media=un.length?un.reduce((s,x)=>s+x.un,0)/un.length:0;
+  const F={};R.forEach(x=>{const f=x.r.local||"(sem fornecedor)";const o=F[f]=F[f]||{n:0,tot:0,min:Infinity,ult:""};o.n++;o.tot+=+x.r.total||0;if(x.un>0)o.min=Math.min(o.min,x.un);if((x.r.date||"")>o.ult)o.ult=x.r.date||""});
+  const forn=Object.entries(F).sort((a,b)=>(a[1].min-b[1].min)||(b[1].n-a[1].n));
+  const quando=x=>x?`${fmtBRL(x.un)}<div class="sub">${esc(x.r.local||"")}${x.r.date?" · "+brDate(x.r.date):""}</div>`:"—";
+  return`<div class="stats" style="margin:4px 0 12px">
+     <div class="stat"><b>${R.length}</b><span>compra(s) em ${notas} nota(s)</span></div>
+     <div class="stat"><b>${fmtBRL(tot)}</b><span>total gasto${qt?` · ${fmtQtdBR(qt)} un.`:""}</span></div>
+     <div class="stat"><b style="font-size:16px">${quando(ult)}</b><span>último preço (unidade)</span></div>
+     <div class="stat"><b style="font-size:16px">${quando(menor)}</b><span>menor preço</span></div>
+     <div class="stat"><b style="font-size:16px">${quando(maior)}</b><span>maior preço</span></div>
+     <div class="stat"><b>${fmtBRL(media)}</b><span>preço médio</span></div></div>
+   ${forn.length>1?`<details style="margin-bottom:10px"><summary style="cursor:pointer"><b>Comparar fornecedores</b> (${forn.length})</summary><div class="wrap" style="margin-top:6px"><table><thead><tr><th>Fornecedor</th><th class="n">Compras</th><th class="n">Menor preço</th><th class="n">Total</th><th>Última compra</th></tr></thead><tbody>
+     ${forn.map(([f,o])=>`<tr><td>${esc(f)}</td><td class="n">${o.n}</td><td class="n">${o.min<Infinity?fmtBRL(o.min):"—"}</td><td class="n">${fmtBRL(o.tot)}</td><td>${o.ult?brDate(o.ult):"—"}</td></tr>`).join("")}</tbody></table></div></details>`:""}
+   <div class="wrap"><table><thead><tr><th>Data</th><th>Nota</th><th>Fornecedor</th><th>Produto</th><th class="n">Qtd</th><th class="n">Valor un.</th><th class="n">Total</th><th></th></tr></thead><tbody>
+   ${R.slice(0,NFB.ver).map(x=>{const r=x.r,a=r.arq&&S.nfarq[r.arq]?r.arq:null,num=r.notaForn&&r.notaForn!==r.nota?r.notaForn:(r.nota==null?"s/n":r.nota);
+     return`<tr><td style="white-space:nowrap">${r.date?brDate(r.date):"—"}</td><td>${esc(String(num))}</td><td>${esc(r.local||"—")}</td><td>${esc(r.item)}</td><td class="n">${fmtQtdBR(+r.qtd||0)}</td><td class="n">${x.un>0?fmtBRL(x.un):"—"}</td><td class="n">${fmtBRL(+r.total||0)}</td>
+       <td style="white-space:nowrap">${a?`<button class="b sec sm" data-nfver="${esc(a)}" title="Ver a nota">${ic("eye")}</button> `:""}${podeEd("nf")?`<button class="b sec sm" data-nfed="${esc(x.k)}" title="Abrir a nota">${ic("edit")}</button>`:""}</td></tr>`}).join("")}
+   </tbody></table></div>
+   ${R.length>NFB.ver?`<button class="b sec sm" id="nfbmais" style="margin-top:8px">Mostrar mais (${R.length-NFB.ver})</button>`:""}`;
+}
+function nfBuscaCard(){
+  return`<div class="card" id="nfbcard"><h2>Buscar produto</h2><p class="sub" style="margin:0 0 10px">Veja em quais notas um produto já foi comprado, de quem e por quanto.</p>
+   <input id="nfbq" value="${esc(NFB.q)}" placeholder="ex.: fralda geriátrica G" autocomplete="off" style="max-width:520px">
+   <div id="nfbres" style="margin-top:12px">${nfBuscaRes()}</div></div>`;
+}
+function nfBuscaBind(){
+  const i=$("nfbq");if(!i)return;let t=null;
+  const liga=()=>{const box=$("nfbres");if(!box)return;
+    box.querySelectorAll("[data-nfver]").forEach(b=>b.onclick=()=>nfArqVer(b.dataset.nfver));
+    box.querySelectorAll("[data-nfed]").forEach(b=>b.onclick=()=>nfEditaNota(b.dataset.nfed));
+    const m=$("nfbmais");if(m)m.onclick=()=>{NFB.ver+=50;box.innerHTML=nfBuscaRes();liga()}};
+  i.oninput=()=>{clearTimeout(t);t=setTimeout(()=>{NFB.q=i.value;NFB.ver=50;const box=$("nfbres");if(box){box.innerHTML=nfBuscaRes();liga()}},250)};
+  liga();
+}
 // ---- notas lançadas: editar e excluir
 const NFE={ver:30};
 function nfGrupos(rows){
