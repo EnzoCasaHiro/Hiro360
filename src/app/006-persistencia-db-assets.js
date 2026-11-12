@@ -9,6 +9,7 @@ const empresa=()=>({...DEF_EMP,...(cfgG().empresa||{})});
 let refreshT=null;
 function refresh(){clearTimeout(refreshT);refreshT=setTimeout(()=>{const a=document.activeElement;if(a&&$("view").contains(a)&&/INPUT|TEXTAREA|SELECT/.test(a.tagName))return;go(ROUTE,true)},120)}
 function put(col,id,obj){
+  if(!dadosCarregados()){toast("Aguarde o sistema terminar de carregar os dados antes de salvar.",true);return}
   if(!escritaOk(col,id)){negado("alterar "+col);return}
   {const _b=XGUARD.map(f=>f(col,id,obj,S[col]&&S[col][id])).find(Boolean);if(_b){toast(_b,true);return}}
   S[col]=S[col]||{};
@@ -18,12 +19,16 @@ function put(col,id,obj){
   if(RT.db)RT.db.collection(col).doc(id).set(obj).catch(e=>toast("Não foi possível salvar: "+(e.message||e.code),true));
 }
 function del(col,id){
+  if(!dadosCarregados()){toast("Aguarde o sistema terminar de carregar os dados antes de excluir.",true);return}
   if(!escritaOk(col,id)){negado("excluir em "+col);return}
   {const _b=XGUARD.map(f=>f(col,id,null,S[col]&&S[col][id])).find(Boolean);if(_b){toast(_b,true);return}}
   histRegistra(col,id,S[col][id],null);
   delete S[col][id];
   if(RT.db)RT.db.collection(col).doc(id).delete().catch(e=>toast("Não foi possível excluir: "+(e.message||e.code),true));
 }
+const CARREGADOS=new Set();
+function dadosCarregados(){return !RT.db||CARREGADOS.size>=COLS_LEITURA().length}
+function COLS_LEITURA(){return["integrantes","docs","ocorr","config","marcacoes","acessos","perfis","pedidos","nfarq",...Object.keys(XCOLS)]}
 function strip(o){const c={...o};delete c.id;return c}
 function saveCfg(patch){const c={...strip(cfgG()),...patch};put("config","geral",c)}
 async function initRuntime(){
@@ -34,8 +39,8 @@ async function initRuntime(){
   }catch(e){}
   await identificar();
   if(RT.db){
-    for(const col of["integrantes","docs","ocorr","config","marcacoes","acessos","perfis","pedidos","nfarq",...Object.keys(XCOLS)]){
-      RT.db.collection(col).onSnapshot(q=>{const _old=S[col];S[col]={};q.docs.forEach(d=>{const _n=S[col][d.id]={...d.data(),id:d.id};if(_old&&_old[d.id]&&_n._t&&_n._t!==_old[d.id]._t){nomesCache([_n._u]);avisaConflito(col,d.id,_n,_old[d.id])}});if(col==="config"){RT.cfgOk=true;nfJunta()}if(col==="acessos")RT.acOk=true;registrarEntrada();refresh()},e=>toast("Erro ao ler "+col+": "+(e.message||e.code),true));
+    for(const col of COLS_LEITURA()){
+      RT.db.collection(col).onSnapshot(q=>{CARREGADOS.add(col);const _old=S[col];S[col]={};q.docs.forEach(d=>{const _n=S[col][d.id]={...d.data(),id:d.id};if(_old&&_old[d.id]&&_n._t&&_n._t!==_old[d.id]._t){nomesCache([_n._u]);avisaConflito(col,d.id,_n,_old[d.id])}});if(col==="config"){RT.cfgOk=true;nfJunta()}if(col==="acessos")RT.acOk=true;registrarEntrada();refresh()},e=>toast("Erro ao ler "+col+": "+(e.message||e.code),true));
     }
   }
   RT.ready=true;refresh();

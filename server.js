@@ -294,6 +294,8 @@ async function criaApp(opts = {}) {
       const len = +req.headers['content-length']; if (len > MAX_ARQ) return erro(res, 413, `O arquivo passa de ${MAX_ARQ / 1048576} MB.`);
       const buf = await lerCorpo(req, MAX_ARQ); if (!buf.length) return erro(res, 400, 'Arquivo vazio.');
       if (!conteudoOk(tipo, buf)) return erro(res, 415, 'O conteúdo do arquivo não corresponde ao formato informado.');
+      // limite de armazenamento (MAX_STORAGE_GB no painel): antes só era mostrado, agora é aplicado
+      const usoAtual = await db.blobUso(); if (usoAtual.bytes + buf.length > (+env.MAX_STORAGE_GB || 30) * 1073741824) return erro(res, 507, 'O espaço de arquivos da Casa Hiro está cheio. Peça à direção para liberar espaço.', 'sem_espaco');
       const id = crypto.randomBytes(16).toString('hex');
       let nome = ''; try { nome = decodeURIComponent(String(req.headers['x-name'] || '')).slice(0, 250); } catch (e) {}
       await fs.promises.writeFile(path.join(filesDir, id), buf);
@@ -330,6 +332,13 @@ async function criaApp(opts = {}) {
       for (const id of ids) { const u = await db.userPorId(id); if (u) out[id] = { name: u.name }; }
       return resp(res, 200, out);
     }
+    // desbloquear a tela: confere a senha da própria pessoa, sem abrir sessão nova
+    if (p === '/api/me/confirma-senha' && m === 'POST') {
+      const bl = limUser.bloqueado('senha:' + U.id); if (bl) return erro(res, 429, `Muitas tentativas erradas. Aguarde ${bl} minuto(s).`, 'bloqueado');
+      const b = (await lerJson(req, 5000)) || {};
+      if (!seg.confereSenha(String(b.senha || ''), U.hash)) { limUser.falha('senha:' + U.id); return erro(res, 401, 'Senha incorreta.', 'credencial'); }
+      limUser.ok('senha:' + U.id); return resp(res, 200, { ok: true });
+    }
     if (p === '/api/me/senha' && m === 'POST') {
       const b = (await lerJson(req, 5000)) || {}; if (!seg.confereSenha(String(b.atual || ''), U.hash)) return erro(res, 400, 'A senha atual não confere.');
       const f = seg.senhaFraca(b.nova, U.username); if (f) return erro(res, 400, f);
@@ -345,7 +354,7 @@ async function criaApp(opts = {}) {
         if (q) l = l.filter(u => (u.name + ' ' + u.username).toLowerCase().includes(q)); return resp(res, 200, { users: l });
       }
       if (p === '/api/users' && m === 'POST') {
-        const b = await lerJson(req, 5000); const un = String(b.username || '').toLowerCase().trim(); const nome = String(b.name || '').trim().slice(0, 120);
+        const b = (await lerJson(req, 5000)) || {}; const un = String(b.username || '').toLowerCase().trim(); const nome = String(b.name || '').trim().slice(0, 120);
         if (!seg.usuarioOk(un)) return erro(res, 400, 'Usuário: 3 a 40 caracteres, só letras minúsculas, números, ponto, hífen ou _.');
         if (!nome) return erro(res, 400, 'Informe o nome da pessoa.');
         const f = seg.senhaFraca(b.password, un); if (f) return erro(res, 400, f);
@@ -356,7 +365,7 @@ async function criaApp(opts = {}) {
       const mm = p.match(/^\/api\/users\/([A-Za-z0-9_]+)$/);
       if (mm && m === 'PATCH') {
         const alvo = await db.userPorId(mm[1]); if (!alvo) return erro(res, 404, 'Conta não encontrada.');
-        const b = await lerJson(req, 5000); const c = {};
+        const b = (await lerJson(req, 5000)) || {}; const c = {};
         if (b.name !== undefined) { const n = String(b.name).trim().slice(0, 120); if (!n) return erro(res, 400, 'Nome vazio.'); c.name = n; }
         if (b.password !== undefined) { const f = seg.senhaFraca(b.password, alvo.username); if (f) return erro(res, 400, f); c.hash = seg.hashSenha(b.password); }
         if (b.active !== undefined) c.active = b.active ? 1 : 0;

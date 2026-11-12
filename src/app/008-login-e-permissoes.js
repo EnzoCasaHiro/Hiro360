@@ -118,7 +118,7 @@ function renderGate(est){
   const logo=(document.querySelector("aside .logo")||{}).src||"";
   g.innerHTML=`<div class="gate-card">${logo?`<img src="${logo}" alt="Casa Hiro">`:""}<h1>${esc(t)}</h1><p class="sub">${esc(s)}</p>
    ${est==="pendente"?`<label style="text-align:left">Seu nome e função</label><input id="gmsg" placeholder="ex.: Maria Souza, enfermeira" maxlength="120"><button class="b" id="gped" style="margin-top:12px;width:100%">Pedir acesso</button>`:""}
-   ${est==="bloqueado"?`<button class="b" id="gcont" style="margin-top:6px;width:100%">Continuar${nome?" como "+esc(nome):""}</button>`:""}
+   ${est==="bloqueado"?`<form id="gform" style="text-align:left;margin-top:10px"><label>Senha de ${esc(nome||"você")}</label><input id="gsenha" type="password" autocomplete="current-password" required><div id="gerr" class="sub" style="color:var(--urgente,#C0392B);min-height:18px;margin-top:6px"></div><button class="b" id="gcont" type="submit" style="margin-top:6px;width:100%">Desbloquear</button></form>`:""}
    ${est==="solicitado"||est==="suspenso"||est==="semperfil"||est==="anon"?`<button class="b sec" id="gver" style="margin-top:6px;width:100%">Verificar de novo</button>`:""}
    <p class="sub" style="margin:16px 0 0;font-size:11.5px">Dados pessoais e de saúde seguem a LGPD (Lei 13.709/2018). Cada pessoa vê só o que o seu perfil permite.</p></div>`;
   const b=id=>$(id);
@@ -126,7 +126,11 @@ function renderGate(est){
     const msg=b("gmsg").value.trim();if(!msg){toast("Escreva seu nome e função.",true);return}
     ACC.pedido=true;put("pedidos",ACC.uid,{msg,em:new Date().toISOString()});audit("pedido",msg);renderGate("solicitado");
   };
-  if(b("gcont"))b("gcont").onclick=()=>{ACC.lock=false;idleT=Date.now();go(ROUTE,true)};
+  if(b("gform"))b("gform").onsubmit=async ev=>{
+    ev.preventDefault();const bt=b("gcont"),er=b("gerr");bt.disabled=true;er.textContent="";
+    try{await HOST.api("/api/me/confirma-senha",{method:"POST",json:{senha:b("gsenha").value}});ACC.lock=false;idleT=Date.now();go(ROUTE,true)}
+    catch(e){er.textContent=e.message;bt.disabled=false;b("gsenha").value="";b("gsenha").focus()}
+  };
   if(b("gver"))b("gver").onclick=()=>{go(ROUTE,true)};
 }
 function bloquear(){ACC.lock=true;audit("bloqueio","");go(ROUTE,true)}

@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "montar": "node tools/montar.js",
-    "test": "node tools/montar.js --checar && node --test test/permissoes.test.js",
+    "test": "node tools/montar.js --checar && node --test test/permissoes.test.js test/confirma-senha.test.js",
     "empacotar": "python3 tools/empacotar.py"
   },
   "engines": {

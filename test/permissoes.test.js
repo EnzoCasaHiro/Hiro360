@@ -114,3 +114,14 @@ test('histórico: só registro novo, de algo que a pessoa pode alterar', async (
   assert.equal(perm.podeGravarHist(dp, { col: 'config', rid: 'fin_2026', op: 'edit' }, null), false);
   assert.equal(perm.podeGravarHist(dp, { col: 'hist', rid: 'x' }, null), false);
 });
+
+test('endereço, telefone, e-mail, contato de emergência e estado civil são dados pessoais', async () => {
+  const est = await ctx({ 'acessos/u_ana': { perfil: 'est', ativo: true } }, ana);
+  const dado = { nomeCompleto: 'X', endereco: 'Rua A', cep: '1', cidade: 'C', telefone: '1', email: 'e', emergNome: 'N', emergTel: '2', estadoCivil: 'solteiro', cargo: 'Cozinha' };
+  const f = perm.filtra(est, 'integrantes/i1', dado);
+  for (const k of ['endereco', 'cep', 'cidade', 'telefone', 'email', 'emergNome', 'emergTel', 'estadoCivil']) assert.equal(f[k], undefined, k);
+  assert.equal(f.cargo, 'Cozinha');
+  const antigo = { endereco: 'Antigo', telefone: '9' };
+  const salvo = perm.preserva(est, 'integrantes/i1', { nomeCompleto: 'X', endereco: 'Novo' }, antigo);
+  assert.equal(salvo.endereco, 'Antigo'); // quem não vê não apaga nem troca
+});
