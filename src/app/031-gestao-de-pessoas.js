@@ -297,6 +297,170 @@ function bindBenef(){
   });
 }
 
+/* ---------- calendário de aniversários dos integrantes ----------
+   Entram só os integrantes em atividade na data em que o calendário é aberto ou o PDF é gerado:
+   não desligados, já admitidos e com o desligamento (se houver) a partir de hoje.
+   Férias e afastamento não tiram ninguém: a pessoa continua no quadro. */
+const ANIV={ym:hojeIso().slice(0,7),ver:"mes",sub:"custo"};
+const ANIV_SEM=["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
+function anivData(s){
+  s=String(s||"").trim();let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const r=m?{y:+m[1],m:+m[2],d:+m[3]}:(m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))?{y:+m[3],m:+m[2],d:+m[1]}:null;
+  return r&&r.m>=1&&r.m<=12&&r.d>=1&&r.d<=31?r:null;
+}
+const anivEmAtividade=(i,ref)=>(i.situacao||"Ativo")!=="Desligado"&&(!i.admissao||i.admissao<=ref)&&(!i.desligamento||i.desligamento>=ref);
+function anivLista(){
+  const ref=hojeIso(),ok=[],sem=[];
+  integList().filter(i=>anivEmAtividade(i,ref)).forEach(i=>{const n=anivData(i.nascimento);if(n)ok.push({i,...n});else sem.push(i)});
+  return{ref,ok,sem};
+}
+// de férias no dia do aniversário: férias programadas/gozadas (aba Férias) cobrindo a data; sem esse registro,
+// a situação "Férias" do cadastro vale para os aniversários do mês atual
+function anivFerias(i,iso){
+  const F=xs("ferias").filter(f=>f.integ===i.id&&f.status!=="cancelada"&&f.ini&&f.fim),h=hojeIso();
+  if(F.some(f=>f.ini<=iso&&f.fim>=iso))return true;
+  return i.situacao==="Férias"&&iso.slice(0,7)===h.slice(0,7)&&!F.some(f=>f.ini<=h&&f.fim>=h);
+}
+// dia -> aniversariantes; quem nasceu em 29/02 aparece no dia 28 nos anos que não são bissextos
+function anivDoMes(L,ano,mes){
+  const ult=new Date(ano,mes,0).getDate(),M=new Map();
+  L.ok.filter(x=>x.m===mes).forEach(x=>{const d=Math.min(x.d,ult);if(!M.has(d))M.set(d,[]);M.get(d).push({...x,fer:anivFerias(x.i,ano+"-"+String(mes).padStart(2,"0")+"-"+String(d).padStart(2,"0"))})});
+  M.forEach(a=>a.sort((p,q)=>nomeInteg(p.i).localeCompare(nomeInteg(q.i),"pt")));
+  return M;
+}
+function anivCurto(i){const p=String(nomeInteg(i)).trim().split(/\s+/);return p.length>1?p[0]+" "+p[p.length-1]:p[0]}
+const anivMesRot=ym=>MESES_PT[+ym.slice(5,7)-1]+" de "+ym.slice(0,4);
+const anivMesesOrd=M=>[...M.entries()].sort((a,b)=>a[0]-b[0]);
+(function(){const st=document.createElement("style");st.textContent=`
+.anv-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.anv-bar .tit{font:700 17px var(--serif);color:var(--ink);min-width:150px;text-align:center}
+.anv-sem,.anv-grade{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.anv-sem div{font:700 11px var(--ui);text-transform:uppercase;letter-spacing:.08em;color:var(--verde-medio);text-align:center;padding:4px 0}
+.anv-c{min-height:82px;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 6px;display:flex;flex-direction:column;gap:2px}
+.anv-c.vazio{background:transparent;border-color:transparent}
+.anv-c.tem{background:var(--verde-palido);border-color:var(--verde-claro)}
+.anv-c.hoje{box-shadow:inset 0 0 0 2px var(--verde-medio)}
+.anv-d{font:700 12px var(--ui);color:var(--mute)}.anv-c.fds .anv-d{color:var(--madeira)}
+.anv-n{font:700 12px var(--ui);color:var(--ok-tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.anv-fer{display:inline-block;margin-left:4px;padding:0 5px;border-radius:8px;background:var(--bege);color:var(--pend-tx);border:1px solid var(--madeira-clara);font:600 10px var(--ui);vertical-align:1px}
+.anv-ano{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.anv-m{border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}
+.anv-m h4{margin:0;padding:7px 10px;background:var(--verde-medio);color:#fff;font:700 12.5px var(--ui);display:flex;justify-content:space-between;cursor:pointer}
+.anv-m ul{list-style:none;margin:0;padding:6px 10px 8px}.anv-m li{display:flex;gap:8px;padding:2px 0;font-size:13px;color:var(--ink)}
+.anv-m li b{flex:none;width:22px;color:var(--ok-tx)}.anv-m .nada{color:var(--mute);font-size:12.5px;padding:2px 0}
+@media (max-width:640px){.anv-c{min-height:52px;padding:3px 4px}.anv-n{font-size:10px}.anv-d{font-size:10.5px}.anv-sem div{font-size:9.5px;letter-spacing:0}}
+`;document.head.appendChild(st)})();
+function anivGradeHtml(L,ym){
+  const ano=+ym.slice(0,4),mes=+ym.slice(5,7),M=anivDoMes(L,ano,mes),ult=new Date(ano,mes,0).getDate(),ini=pyWeekday(ym+"-01"),h=hojeIso();
+  let c="";for(let k=0;k<ini;k++)c+=`<div class="anv-c vazio"></div>`;
+  for(let d=1;d<=ult;d++){
+    const iso=ym+"-"+String(d).padStart(2,"0"),a=M.get(d)||[];
+    c+=`<div class="anv-c${a.length?" tem":""}${iso===h?" hoje":""}${pyWeekday(iso)>=5?" fds":""}"><span class="anv-d">${d}</span>${a.map(x=>`<span class="anv-n" title="${esc(nomeInteg(x.i)+(x.i.cargo?" — "+x.i.cargo:"")+(x.fer?" — de férias no dia do aniversário":""))}">${esc(anivCurto(x.i))}${x.fer?`<span class="anv-fer">férias</span>`:""}</span>`).join("")}</div>`;
+  }
+  const r=(ini+ult)%7;if(r)for(let k=r;k<7;k++)c+=`<div class="anv-c vazio"></div>`;
+  const lista=anivMesesOrd(M).flatMap(([d,a])=>a.map(x=>({d,x})));
+  return `<div class="anv-sem">${ANIV_SEM.map(w=>`<div>${w}</div>`).join("")}</div><div class="anv-grade">${c}</div>
+   ${lista.length?`<div class="wrap" style="margin-top:12px"><table><thead><tr><th>Dia</th><th>Integrante</th><th>Cargo</th><th>Completa</th></tr></thead><tbody>${lista.map(({d,x})=>`<tr><td><b>${String(d).padStart(2,"0")}/${ym.slice(5)}</b> <span class="sub">${ANIV_SEM[pyWeekday(ym+"-"+String(d).padStart(2,"0"))]}</span></td><td>${esc(nomeInteg(x.i))}${x.fer?`<span class="anv-fer">de férias</span>`:""}</td><td>${esc(x.i.cargo||"")}</td><td>${ano-x.y>0&&ano-x.y<120?(ano-x.y)+" anos":"—"}</td></tr>`).join("")}</tbody></table></div>`:`<div class="empty" style="margin-top:12px">Nenhum aniversariante em ${esc(anivMesRot(ym))}.</div>`}`;
+}
+function anivAnoHtml(L,ano){
+  return `<div class="anv-ano">${MESES_PT.map((nm,k)=>{const M=anivDoMes(L,ano,k+1),a=anivMesesOrd(M).flatMap(([d,v])=>v.map(x=>({d,x}))),ym=ano+"-"+String(k+1).padStart(2,"0");
+    return `<div class="anv-m"><h4 data-anvmes="${ym}" title="Abrir o mês"><span>${nm}</span><span>${a.length||""}</span></h4><ul>${a.length?a.map(({d,x})=>`<li><b>${String(d).padStart(2,"0")}</b><span>${esc(nomeInteg(x.i))}${x.fer?`<span class="anv-fer">férias</span>`:""}</span></li>`).join(""):`<li class="nada">Ninguém faz aniversário.</li>`}</ul></div>`}).join("")}</div>`;
+}
+function anivHtml(){
+  const L=anivLista(),ym=ANIV.ym,ano=+ym.slice(0,4),noMes=L.ok.filter(x=>x.m===+ym.slice(5,7)).length;
+  const prox=L.ok.map(x=>{const h=L.ref,y=+h.slice(0,4),f=a=>a+"-"+String(x.m).padStart(2,"0")+"-"+String(Math.min(x.d,new Date(a,x.m,0).getDate())).padStart(2,"0");let t=f(y);if(t<h)t=f(y+1);return{x,t}}).sort((a,b)=>a.t.localeCompare(b.t))[0];
+  return `<div class="card"><h2>Calendário de aniversários</h2><p class="sub" style="margin:0 0 10px">Mostra só os integrantes em atividade hoje (${brDate(L.ref)}): quem foi desligado ou ainda não foi admitido não aparece. A data vem do campo Nascimento do cadastro do integrante.</p>
+   <div class="stats"><div class="stat"><b>${L.ok.length}</b><span>integrantes em atividade com nascimento</span></div><div class="stat"><b>${noMes}</b><span>aniversário(s) em ${esc(MESES_PT[+ym.slice(5,7)-1].toLowerCase())}</span></div>${prox?`<div class="stat"><b>${brDate(prox.t).slice(0,5)}</b><span>próximo: ${esc(anivCurto(prox.x.i))}${prox.t===L.ref?" (hoje!)":""}</span></div>`:""}<div class="stat ${L.sem.length?"warn":""}"><b>${L.sem.length}</b><span>sem data de nascimento</span></div></div>
+   <div class="anv-bar" style="margin-top:12px">
+    <div class="xabsub" style="margin:0"><button type="button" data-anvver="mes" class="${ANIV.ver==="mes"?"on":""}">Mês</button><button type="button" data-anvver="ano" class="${ANIV.ver==="ano"?"on":""}">Ano inteiro</button></div>
+    <span style="display:inline-flex;gap:8px;align-items:center"><button class="b sec sm" id="anvant" aria-label="${ANIV.ver==="mes"?"Mês anterior":"Ano anterior"}">‹</button><span class="tit">${ANIV.ver==="mes"?esc(anivMesRot(ym)):ano}</span><button class="b sec sm" id="anvseg" aria-label="${ANIV.ver==="mes"?"Próximo mês":"Próximo ano"}">›</button></span>
+    ${ym!==hojeIso().slice(0,7)?`<button class="b sec sm" id="anvhoje">Hoje</button>`:""}
+    <span style="flex:1"></span><button class="b sec sm" id="anvpdfm">${ic("down")} PDF do mês</button><button class="b sm" id="anvpdfa">${ic("down")} PDF do ano ${ano}</button></div>
+   ${ANIV.ver==="mes"?anivGradeHtml(L,ym):anivAnoHtml(L,ano)}
+   ${L.sem.length?`<details style="margin-top:12px"><summary class="sub" style="cursor:pointer">${L.sem.length} integrante(s) em atividade sem data de nascimento — preencha no cadastro para entrarem no calendário</summary><div class="sub" style="margin-top:6px">${L.sem.map(i=>esc(nomeInteg(i))).join(" · ")}</div></details>`:""}</div>`;
+}
+function bindAniv(){
+  const mv=n=>{if(ANIV.ver==="mes")ANIV.ym=addMesesIso(ANIV.ym+"-01",n).slice(0,7);else ANIV.ym=(+ANIV.ym.slice(0,4)+n)+ANIV.ym.slice(4);go("gp",true)};
+  const a=$("anvant"),s=$("anvseg"),h=$("anvhoje");if(a)a.onclick=()=>mv(-1);if(s)s.onclick=()=>mv(1);if(h)h.onclick=()=>{ANIV.ym=hojeIso().slice(0,7);go("gp",true)};
+  document.querySelectorAll("[data-anvver]").forEach(b=>b.onclick=()=>{ANIV.ver=b.dataset.anvver;go("gp",true)});
+  document.querySelectorAll("[data-anvmes]").forEach(b=>b.onclick=()=>{ANIV.ym=b.dataset.anvmes;ANIV.ver="mes";go("gp",true)});
+  const pm=$("anvpdfm"),pa=$("anvpdfa");if(pm)pm.onclick=()=>anivPdf("mes");if(pa)pa.onclick=()=>anivPdf("ano");
+}
+
+/* PDF no padrão Casa Hiro: faixa verde com o logotipo, grade do mês e rodapé da casa */
+const ANVC={verde:[30,92,42],verde2:[46,125,50],pal:[214,237,216],claro:[169,213,160],creme:[243,235,216],areia:[245,239,224],linha:[207,199,179],txt:[34,34,34],mute:[138,133,119],mad:[125,90,60]};
+function anivFit(doc,s,w){s=String(s);if(doc.getTextWidth(s)<=w)return s;while(s.length>1&&doc.getTextWidth(s+"…")>w)s=s.slice(0,-1);return s+"…"}
+function anivPdfFaixa(doc,lg,tit,sub){
+  const C=ANVC,W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=24;
+  doc.setFillColor(...C.areia);doc.rect(0,0,W,H,"F");
+  doc.setFillColor(...C.verde);doc.roundedRect(M,16,W-2*M,42,5,5,"F");
+  if(lg&&lg.branco){try{doc.addImage(lg.branco,"PNG",M+8,20,25,34)}catch(e){}}
+  doc.setTextColor(255,255,255);doc.setFont("times","bold");doc.setFontSize(17);doc.text("CASA HIRO",M+42,35);
+  doc.setFont("times","italic");doc.setFontSize(7.5);doc.setTextColor(...C.pal);doc.text("A ciência do cuidado com o acolhimento de casa.",M+42,47);
+  doc.setFont("times","bold");doc.setFontSize(15);doc.setTextColor(255,255,255);doc.text(tit,W-M-10,34,{align:"right"});
+  doc.setFont("helvetica","normal");doc.setFontSize(7.5);doc.setTextColor(...C.pal);doc.text(sub,W-M-10,47,{align:"right"});
+}
+function anivPdfRodape(doc,pg,tot){
+  const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight();
+  doc.setFont("times","italic");doc.setFontSize(7);doc.setTextColor(140,90,50);doc.text("Casa Hiro™ · Caraguatatuba — Litoral Norte de SP",24,H-16);doc.text("Página "+pg+" de "+tot,W-24,H-16,{align:"right"});
+}
+function anivPdfMes(doc,L,ano,mes,lg,sub){
+  const C=ANVC,W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=24,ym=ano+"-"+String(mes).padStart(2,"0");
+  anivPdfFaixa(doc,lg,"Aniversariantes de "+anivMesRot(ym),sub);
+  const Mp=anivDoMes(L,ano,mes),ult=new Date(ano,mes,0).getDate(),ini=pyWeekday(ym+"-01"),nr=Math.ceil((ini+ult)/7);
+  const cw=(W-2*M)/7,y0=66,hh=18,ch=(H-y0-hh-4-30)/nr;
+  ANIV_SEM.forEach((w,k)=>{doc.setFillColor(...(k>=5?C.verde:C.verde2));doc.roundedRect(M+k*cw+1,y0,cw-2,hh,3,3,"F");doc.setTextColor(255,255,255);doc.setFont("helvetica","bold");doc.setFontSize(8.5);doc.text(w.toUpperCase(),M+k*cw+cw/2,y0+hh/2,{align:"center",baseline:"middle"})});
+  for(let d=1;d<=ult;d++){
+    const p=ini+d-1,x=M+(p%7)*cw+1,y=y0+hh+4+Math.floor(p/7)*ch,w=cw-2,h=ch-3,a=Mp.get(d)||[],fds=p%7>=5;
+    doc.setLineWidth(.6);doc.setDrawColor(...(a.length?C.claro:C.linha));doc.setFillColor(...(a.length?C.pal:[255,255,255]));doc.roundedRect(x,y,w,h,4,4,"FD");
+    doc.setFont("helvetica","bold");doc.setFontSize(10);doc.setTextColor(...(fds?C.mad:C.mute));doc.text(String(d),x+6,y+11);
+    if(a.length){
+      const fs=a.length<=2?9.5:a.length<=4?8.2:7.2,lh=fs+2.6,cab=Math.max(1,Math.floor((h-20)/lh)),mostra=a.length>cab?cab-1:a.length;
+      doc.setFontSize(fs);doc.setTextColor(...C.verde);
+      a.slice(0,mostra).forEach((v,k)=>{doc.setFont("helvetica","bold");doc.setFontSize(fs);doc.setTextColor(...C.verde);const tag=v.fer?" (férias)":"";doc.setFont("helvetica","italic");const tw=v.fer?doc.getTextWidth(tag):0;doc.setFont("helvetica","bold");const nm=anivFit(doc,anivCurto(v.i),w-12-tw);doc.text(nm,x+6,y+22+k*lh,{baseline:"middle"});if(v.fer){const nx=x+6+doc.getTextWidth(nm);doc.setFont("helvetica","italic");doc.setTextColor(...C.mad);doc.text(tag,nx,y+22+k*lh,{baseline:"middle"})}});
+      if(a.length>mostra){doc.setFont("helvetica","normal");doc.setTextColor(...C.mute);doc.text("+ "+(a.length-mostra)+" mais",x+6,y+22+mostra*lh,{baseline:"middle"})}
+    }
+  }
+}
+function anivPdfAno(doc,L,ano,lg,sub){
+  const C=ANVC,W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=24,gx=8,gy=8;
+  anivPdfFaixa(doc,lg,"Aniversariantes de "+ano,sub);
+  const bw=(W-2*M-3*gx)/4,y0=68,bh=(H-y0-30-2*gy)/3;
+  MESES_PT.forEach((nm,k)=>{
+    const x=M+(k%4)*(bw+gx),y=y0+Math.floor(k/4)*(bh+gy),Mp=anivDoMes(L,ano,k+1),a=anivMesesOrd(Mp).flatMap(([d,v])=>v.map(i=>({d,i})));
+    doc.setFillColor(255,255,255);doc.setDrawColor(...C.linha);doc.setLineWidth(.6);doc.roundedRect(x,y,bw,bh,5,5,"FD");
+    doc.setFillColor(...C.verde2);doc.roundedRect(x,y,bw,17,5,5,"F");doc.rect(x,y+10,bw,7,"F");
+    doc.setTextColor(255,255,255);doc.setFont("times","bold");doc.setFontSize(10.5);doc.text(nm,x+8,y+9,{baseline:"middle"});
+    if(a.length){doc.setFont("helvetica","normal");doc.setFontSize(7.5);doc.text(a.length+(a.length>1?" aniversariantes":" aniversariante"),x+bw-8,y+9,{align:"right",baseline:"middle"})}
+    const lh=10.5,cab=Math.floor((bh-24)/lh),mostra=a.length>cab?cab-1:a.length;
+    if(!a.length){doc.setFont("helvetica","italic");doc.setFontSize(7.5);doc.setTextColor(...C.mute);doc.text("Ninguém faz aniversário.",x+8,y+29,{baseline:"middle"})}
+    a.slice(0,mostra).forEach((v,j)=>{const ly=y+29+j*lh;doc.setFont("helvetica","bold");doc.setFontSize(8);doc.setTextColor(...C.verde);doc.text(String(v.d).padStart(2,"0"),x+8,ly,{baseline:"middle"});
+      doc.setFont("helvetica","normal");doc.setTextColor(...C.txt);const tag=v.i.fer?" (férias)":"";doc.setFont("helvetica","italic");const tw=tag?doc.getTextWidth(tag):0;doc.setFont("helvetica","normal");const nm=anivFit(doc,nomeInteg(v.i.i),bw-34-tw);doc.text(nm,x+26,ly,{baseline:"middle"});if(tag){doc.setFont("helvetica","italic");doc.setTextColor(...C.mad);doc.text(tag,x+26+doc.getTextWidth(nm),ly,{baseline:"middle"})}});
+    if(a.length>mostra){doc.setFont("helvetica","italic");doc.setFontSize(7.5);doc.setTextColor(...C.mute);doc.text("+ "+(a.length-mostra)+" mais (veja a página do mês)",x+8,y+29+mostra*lh,{baseline:"middle"})}
+  });
+}
+async function anivPdf(modo){
+  const L=anivLista();
+  if(!L.ok.length){toast("Nenhum integrante em atividade tem a data de nascimento cadastrada.",true);return}
+  if(typeof window.jspdf==="undefined"||!window.jspdf.jsPDF){toast("A biblioteca de PDF não carregou. Recarregue a página e tente de novo.",true);return}
+  try{
+    const lg=await logosMarca(),{jsPDF}=window.jspdf,doc=new jsPDF({orientation:"landscape",unit:"pt",format:"a4"});
+    const ano=+ANIV.ym.slice(0,4),mes=+ANIV.ym.slice(5,7),sub=`Integrantes em atividade em ${brDate(L.ref)} · emitido em ${new Date().toLocaleDateString("pt-BR")}`;
+    if(modo==="ano"){anivPdfAno(doc,L,ano,lg,sub);for(let m=1;m<=12;m++){doc.addPage();anivPdfMes(doc,L,ano,m,lg,sub)}}
+    else anivPdfMes(doc,L,ano,mes,lg,sub);
+    const tot=doc.getNumberOfPages();for(let p=1;p<=tot;p++){doc.setPage(p);anivPdfRodape(doc,p,tot)}
+    const nome=modo==="ano"?"aniversarios-"+ano+".pdf":"aniversarios-"+ANIV.ym+".pdf";
+    if(await saveFile(nome,new Uint8Array(doc.output("arraybuffer"))))toast(modo==="ano"?`Calendário de aniversários de ${ano} baixado.`:`Aniversariantes de ${anivMesRot(ANIV.ym)} baixado.`);
+  }catch(e){console.error(e);toast("Não consegui gerar o PDF: "+(e.message||e),true)}
+}
+function benefAbaHtml(){
+  return `<div class="xabsub"><button type="button" data-bfsub="custo" class="${ANIV.sub==="custo"?"on":""}">Custo da folha e benefícios</button><button type="button" data-bfsub="aniv" class="${ANIV.sub==="aniv"?"on":""}">Calendário de aniversários</button></div>`+(ANIV.sub==="aniv"?anivHtml():benefHtml());
+}
+function bindBenefAba(){
+  document.querySelectorAll("[data-bfsub]").forEach(b=>b.onclick=()=>{ANIV.sub=b.dataset.bfsub;go("gp",true)});
+  if(ANIV.sub==="aniv")bindAniv();else bindBenef();
+}
+
 /* ---------- pessoas e empresas (cadastro único) ---------- */
 const pessoasCrud={id:"pessoas",col:"pessoas",mod:"gp",novoLabel:"Cadastrar pessoa ou empresa",novoTit:"Pessoa ou empresa",
   campos:[{k:"nome",l:"Nome ou razão social",req:true,full:true},{k:"tipo",l:"Tipo",t:"sel",opts:["Fornecedor","Prestador","Cliente","Responsável de residente","Familiar","Outro"],req:true},{k:"doc",l:"CNPJ ou CPF"},{k:"tel",l:"Telefone"},{k:"email",l:"E-mail"},{k:"obs",l:"Observação",full:true}],
@@ -321,7 +485,7 @@ xpage("gp","Gestão de pessoas","Férias, banco de horas, fechamento do ponto, a
   {k:"mov",l:"Admissão e desligamento",html:()=>xcrud(movCrud)},
   {k:"trein",l:"Treinamentos",html:()=>treinHtml()+xcrud(treinCrud),bind:bindTrein},
   {k:"epi",l:"EPI e uniformes",html:()=>xcrud(epiCrud)},
-  {k:"benef",l:"Benefícios e custo da folha",html:benefHtml,bind:bindBenef},
+  {k:"benef",l:"Benefícios e aniversários",html:benefAbaHtml,bind:bindBenefAba},
   {k:"pessoas",l:"Pessoas e empresas",html:()=>pessoasHtml()+xcrud(pessoasCrud)}
 ]);
 
@@ -358,6 +522,9 @@ REPORTS.push(
  {id:"gp_banco",g:"Departamento pessoal",t:"Banco de horas (mês selecionado)",d:"Trabalhado, esperado e saldo acumulado por integrante.",pii:false,b:()=>({titulo:"Banco de horas — "+BHST.ym.slice(5)+"/"+BHST.ym.slice(0,4),sub:relSub({},false),
    cols:[{h:"Integrante",w:30},{h:"Trabalhado (h)",t:"num",w:14},{h:"Esperado (h)",t:"num",w:14},{h:"Saldo do mês (h)",t:"num",w:16},{h:"Saldo acumulado (h)",t:"num",w:18}],
    rows:[...bhSaldos(BHST.ym).por.values()].map(x=>[nomeInteg(x.ig),+(x.trab/60).toFixed(2),+(x.esp/60).toFixed(2),+(x.mes/60).toFixed(2),+(x.acum/60).toFixed(2)])})},
+ {id:"gp_aniv",g:"Departamento pessoal",t:"Aniversariantes do ano",d:"Integrantes em atividade na data do pedido, por mês e dia (o calendário em PDF fica em Gestão de pessoas → Benefícios e aniversários).",pii:true,b:()=>{const L=anivLista();return{titulo:"Aniversariantes — integrantes em atividade",sub:`em atividade em ${brDate(L.ref)} · `+relSub({},false),
+   cols:[{h:"Mês",w:14},{h:"Dia",t:"num",w:7},{h:"Integrante",w:38},{h:"Cargo",w:26},{h:"De férias no dia",w:14,c:true}],
+   rows:L.ok.slice().sort((a,b)=>a.m-b.m||a.d-b.d||nomeInteg(a.i).localeCompare(nomeInteg(b.i),"pt")).map(x=>{const y=+L.ref.slice(0,4),d=Math.min(x.d,new Date(y,x.m,0).getDate());return[MESES_PT[x.m-1],d,nomeInteg(x.i),x.i.cargo||"",anivFerias(x.i,y+"-"+String(x.m).padStart(2,"0")+"-"+String(d).padStart(2,"0"))?"Sim":""]})}}},
  {id:"gp_folha",g:"Departamento pessoal",t:"Custo da folha e benefícios",d:"Salários, FGTS, VT, VR e provisões por integrante no mês escolhido na aba Benefícios.",pii:true,b:()=>({titulo:"Custo da folha — "+BFST.ym.slice(5)+"/"+BFST.ym.slice(0,4),sub:relSub({},false),sensivel:true,
    cols:[{h:"Integrante",w:28},{h:"Salário",t:"money",w:14},{h:"Dias",t:"num",w:7},{h:"VT casa",t:"money",w:12},{h:"VR",t:"money",w:12},{h:"FGTS",t:"money",w:12},{h:"13º + férias (prov.)",t:"money",w:18}],
    rows:bfLinhas(BFST.ym).map(x=>[nomeInteg(x.i),x.sal,x.dias,x.vtEmp,x.vrEmp,x.fgts,x.p13+x.pfer]),tot:[null,"sum",null,"sum","sum","sum","sum"]})}
