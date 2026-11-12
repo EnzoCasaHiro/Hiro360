@@ -396,7 +396,7 @@ function anivHtml(){
     <span style="flex:1"></span>
     <div class="xabsub" style="margin:0"><button type="button" data-anvver="mural" class="${ANIV.ver==="mural"?"on":""}">Mural</button><button type="button" data-anvver="mes" class="${ANIV.ver==="mes"?"on":""}">Calendário</button><button type="button" data-anvver="ano" class="${porAno?"on":""}">Ano inteiro</button></div></div>
    ${ANIV.ver==="mural"?`<p class="sub" style="margin:0 0 8px">${noMes?`${noMes} aniversariante${noMes>1?"s":""} no mês.`:""}</p>`+anivMuralHtml(L,ym):ANIV.ver==="mes"?anivGradeHtml(L,ym):anivAnoHtml(L,ano)}
-   <div class="row" style="margin-top:14px;gap:8px"><button class="b sec sm" id="anvpdfm" style="flex:none">${ic("down")} PDF de ${esc(MESES_PT[+ym.slice(5,7)-1].toLowerCase())}</button><button class="b sec sm" id="anvpdfa" style="flex:none">${ic("down")} PDF do ano ${ano}</button></div>
+   <div class="row" style="margin-top:14px;gap:8px"><button class="b sec sm" id="anvpdfm" style="flex:none">${ic("down")} PDF de ${esc(MESES_PT[+ym.slice(5,7)-1].toLowerCase())}</button><button class="b sec sm" id="anvpdfr" style="flex:none" title="Uma página só, com os 12 meses">${ic("down")} PDF do ano ${ano} — resumo</button><button class="b sec sm" id="anvpdfa" style="flex:none" title="Resumo e uma página por mês (13 páginas)">${ic("down")} PDF do ano ${ano} — completo</button></div>
    ${L.sem.length?`<details style="margin-top:12px"><summary class="sub" style="cursor:pointer">${L.sem.length} integrante(s) em atividade sem data de nascimento — preencha no cadastro para entrarem no mural</summary><div class="sub" style="margin-top:6px">${L.sem.map(i=>esc(nomeInteg(i))).join(" · ")}</div></details>`:""}</div>`;
 }
 function bindAniv(){
@@ -405,7 +405,7 @@ function bindAniv(){
   if(sel)sel.onchange=()=>{ANIV.ym=sel.value;go("gp",true)};
   document.querySelectorAll("[data-anvver]").forEach(b=>b.onclick=()=>{ANIV.ver=b.dataset.anvver;go("gp",true)});
   document.querySelectorAll("[data-anvmes]").forEach(b=>b.onclick=()=>{ANIV.ym=b.dataset.anvmes;ANIV.ver="mural";go("gp",true)});
-  const pm=$("anvpdfm"),pa=$("anvpdfa");if(pm)pm.onclick=()=>anivPdf("mes");if(pa)pa.onclick=()=>anivPdf("ano");
+  const pm=$("anvpdfm"),pa=$("anvpdfa");if(pm)pm.onclick=()=>anivPdf("mes");if(pa)pa.onclick=()=>anivPdf("ano");const pr=$("anvpdfr");if(pr)pr.onclick=()=>anivPdf("resumo");
 }
 
 /* PDF no padrão Casa Hiro: faixa verde com o logotipo, grade do mês e rodapé da casa */
@@ -467,11 +467,12 @@ async function anivPdf(modo){
   try{
     const lg=await logosMarca(),{jsPDF}=window.jspdf,doc=new jsPDF({orientation:"landscape",unit:"pt",format:"a4"});
     const ano=+ANIV.ym.slice(0,4),mes=+ANIV.ym.slice(5,7),sub=`Integrantes em atividade em ${brDate(L.ref)} · emitido em ${new Date().toLocaleDateString("pt-BR")}`;
-    if(modo==="ano"){anivPdfAno(doc,L,ano,lg,sub);for(let m=1;m<=12;m++){doc.addPage();anivPdfMes(doc,L,ano,m,lg,sub)}}
+    if(modo==="resumo")anivPdfAno(doc,L,ano,lg,sub);
+    else if(modo==="ano"){anivPdfAno(doc,L,ano,lg,sub);for(let m=1;m<=12;m++){doc.addPage();anivPdfMes(doc,L,ano,m,lg,sub)}}
     else anivPdfMes(doc,L,ano,mes,lg,sub);
     const tot=doc.getNumberOfPages();for(let p=1;p<=tot;p++){doc.setPage(p);anivPdfRodape(doc,p,tot)}
-    const nome=modo==="ano"?"aniversarios-"+ano+".pdf":"aniversarios-"+ANIV.ym+".pdf";
-    if(await saveFile(nome,new Uint8Array(doc.output("arraybuffer"))))toast(modo==="ano"?`Calendário de aniversários de ${ano} baixado.`:`Aniversariantes de ${anivMesRot(ANIV.ym)} baixado.`);
+    const nome=modo==="resumo"?"aniversarios-"+ano+"-resumo.pdf":modo==="ano"?"aniversarios-"+ano+".pdf":"aniversarios-"+ANIV.ym+".pdf";
+    if(await saveFile(nome,new Uint8Array(doc.output("arraybuffer"))))toast(modo==="resumo"?`Resumo dos aniversários de ${ano} baixado.`:modo==="ano"?`Calendário de aniversários de ${ano} baixado.`:`Aniversariantes de ${anivMesRot(ANIV.ym)} baixado.`);
   }catch(e){console.error(e);toast("Não consegui gerar o PDF: "+(e.message||e),true)}
 }
 function benefAbaHtml(){
