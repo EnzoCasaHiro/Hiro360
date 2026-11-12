@@ -6492,7 +6492,7 @@ function bindBenef(){
    Entram só os integrantes em atividade na data em que o calendário é aberto ou o PDF é gerado:
    não desligados, já admitidos e com o desligamento (se houver) a partir de hoje.
    Férias e afastamento não tiram ninguém: a pessoa continua no quadro. */
-const ANIV={ym:hojeIso().slice(0,7),ver:"mes",sub:"custo"};
+const ANIV={ym:hojeIso().slice(0,7),ver:"mural",sub:"custo"};
 const ANIV_SEM=["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
 function anivData(s){
   s=String(s||"").trim();let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
@@ -6534,12 +6534,15 @@ const anivMesesOrd=M=>[...M.entries()].sort((a,b)=>a[0]-b[0]);
 .anv-d{font:700 12px var(--ui);color:var(--mute)}.anv-c.fds .anv-d{color:var(--madeira)}
 .anv-n{font:700 12px var(--ui);color:var(--ok-tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .anv-fer{display:inline-block;margin-left:4px;padding:0 5px;border-radius:8px;background:var(--bege);color:var(--pend-tx);border:1px solid var(--madeira-clara);font:600 10px var(--ui);vertical-align:1px}
+.anv-av{display:flex;gap:12px;align-items:center;margin-bottom:6px}.anv-av.passou{opacity:.6}.anv-av.hoje{border-width:2px}
+.anv-dia{flex:none;width:46px;text-align:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:3px 0;line-height:1.1}.anv-dia b{display:block;font:700 19px var(--serif);color:var(--ok-tx)}.anv-dia span{font-size:10.5px;color:var(--mute);text-transform:uppercase}
+.anv-tx{flex:1;min-width:0}.anv-tx>b{font-size:14px}.anv-qd{flex:none;font-size:12px;color:var(--mute);text-align:right}.anv-av.hoje .anv-qd{color:var(--pend-tx);font-weight:700}
 .anv-ano{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
 .anv-m{border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}
 .anv-m h4{margin:0;padding:7px 10px;background:var(--verde-medio);color:#fff;font:700 12.5px var(--ui);display:flex;justify-content:space-between;cursor:pointer}
 .anv-m ul{list-style:none;margin:0;padding:6px 10px 8px}.anv-m li{display:flex;gap:8px;padding:2px 0;font-size:13px;color:var(--ink)}
 .anv-m li b{flex:none;width:22px;color:var(--ok-tx)}.anv-m .nada{color:var(--mute);font-size:12.5px;padding:2px 0}
-@media (max-width:640px){.anv-c{min-height:52px;padding:3px 4px}.anv-n{font-size:10px}.anv-d{font-size:10.5px}.anv-sem div{font-size:9.5px;letter-spacing:0}}
+@media (max-width:640px){.anv-c{min-height:52px;padding:3px 4px}.anv-n{font-size:10px}.anv-d{font-size:10.5px}.anv-sem div{font-size:9.5px;letter-spacing:0}.anv-av{flex-wrap:wrap;gap:4px 12px}.anv-qd{width:100%;text-align:left;padding-left:58px}}
 `;document.head.appendChild(st)})();
 function anivGradeHtml(L,ym){
   const ano=+ym.slice(0,4),mes=+ym.slice(5,7),M=anivDoMes(L,ano,mes),ult=new Date(ano,mes,0).getDate(),ini=pyWeekday(ym+"-01"),h=hojeIso();
@@ -6557,24 +6560,42 @@ function anivAnoHtml(L,ano){
   return `<div class="anv-ano">${MESES_PT.map((nm,k)=>{const M=anivDoMes(L,ano,k+1),a=anivMesesOrd(M).flatMap(([d,v])=>v.map(x=>({d,x}))),ym=ano+"-"+String(k+1).padStart(2,"0");
     return `<div class="anv-m"><h4 data-anvmes="${ym}" title="Abrir o mês"><span>${nm}</span><span>${a.length||""}</span></h4><ul>${a.length?a.map(({d,x})=>`<li><b>${String(d).padStart(2,"0")}</b><span>${esc(nomeInteg(x.i))}${x.fer?`<span class="anv-fer">férias</span>`:""}</span></li>`).join(""):`<li class="nada">Ninguém faz aniversário.</li>`}</ul></div>`}).join("")}</div>`;
 }
+// mural do mês, no mesmo jeito do mural de avisos do Início: um cartão por aniversariante, em ordem de dia
+function anivMuralHtml(L,ym){
+  const ano=+ym.slice(0,4),mes=+ym.slice(5,7),h=L.ref,lista=anivMesesOrd(anivDoMes(L,ano,mes)).flatMap(([d,a])=>a.map(x=>({d,x})));
+  if(!lista.length)return `<div class="empty">Ninguém faz aniversário em ${esc(anivMesRot(ym))}.</div>`;
+  return lista.map(({d,x})=>{
+    const iso=ym+"-"+String(d).padStart(2,"0"),dd=daysBetweenIso(h,iso),anos=ano-x.y,hoje=dd===0;
+    const quando=hoje?"É hoje!":dd>0?(dd===1?"amanhã":`daqui a ${dd} dias`):(dd===-1?"foi ontem":`foi há ${-dd} dias`);
+    return `<div class="callout anv-av${hoje?" sand hoje":""}${dd<0?" passou":""}"><div class="anv-dia"><b>${String(d).padStart(2,"0")}</b><span>${ANIV_SEM[pyWeekday(iso)]}</span></div>
+     <div class="anv-tx"><b>${hoje?"🎂 ":""}${esc(nomeInteg(x.i))}</b>${x.fer?`<span class="anv-fer">de férias</span>`:""}
+      <div class="sub">${[x.i.cargo,anos>0&&anos<120?`completa ${anos} anos`:""].filter(Boolean).map(esc).join(" · ")}</div></div>
+     <span class="anv-qd">${quando}</span></div>`;
+  }).join("");
+}
+function anivMesOpts(ym){
+  const y=+hojeIso().slice(0,4),L=[];for(let a=y-1;a<=y+1;a++)for(let m=1;m<=12;m++)L.push(a+"-"+String(m).padStart(2,"0"));
+  if(!L.includes(ym))L.push(ym);
+  return L.sort().map(v=>`<option value="${v}" ${v===ym?"selected":""}>${esc(anivMesRot(v))}</option>`).join("");
+}
 function anivHtml(){
-  const L=anivLista(),ym=ANIV.ym,ano=+ym.slice(0,4),noMes=L.ok.filter(x=>x.m===+ym.slice(5,7)).length;
-  const prox=L.ok.map(x=>{const h=L.ref,y=+h.slice(0,4),f=a=>a+"-"+String(x.m).padStart(2,"0")+"-"+String(Math.min(x.d,new Date(a,x.m,0).getDate())).padStart(2,"0");let t=f(y);if(t<h)t=f(y+1);return{x,t}}).sort((a,b)=>a.t.localeCompare(b.t))[0];
-  return `<div class="card"><h2>Calendário de aniversários</h2><p class="sub" style="margin:0 0 10px">Mostra só os integrantes em atividade hoje (${brDate(L.ref)}): quem foi desligado ou ainda não foi admitido não aparece. A data vem do campo Nascimento do cadastro do integrante.</p>
-   <div class="stats"><div class="stat"><b>${L.ok.length}</b><span>integrantes em atividade com nascimento</span></div><div class="stat"><b>${noMes}</b><span>aniversário(s) em ${esc(MESES_PT[+ym.slice(5,7)-1].toLowerCase())}</span></div>${prox?`<div class="stat"><b>${brDate(prox.t).slice(0,5)}</b><span>próximo: ${esc(anivCurto(prox.x.i))}${prox.t===L.ref?" (hoje!)":""}</span></div>`:""}<div class="stat ${L.sem.length?"warn":""}"><b>${L.sem.length}</b><span>sem data de nascimento</span></div></div>
-   <div class="anv-bar" style="margin-top:12px">
-    <div class="xabsub" style="margin:0"><button type="button" data-anvver="mes" class="${ANIV.ver==="mes"?"on":""}">Mês</button><button type="button" data-anvver="ano" class="${ANIV.ver==="ano"?"on":""}">Ano inteiro</button></div>
-    <span style="display:inline-flex;gap:8px;align-items:center"><button class="b sec sm" id="anvant" aria-label="${ANIV.ver==="mes"?"Mês anterior":"Ano anterior"}">‹</button><span class="tit">${ANIV.ver==="mes"?esc(anivMesRot(ym)):ano}</span><button class="b sec sm" id="anvseg" aria-label="${ANIV.ver==="mes"?"Próximo mês":"Próximo ano"}">›</button></span>
-    ${ym!==hojeIso().slice(0,7)?`<button class="b sec sm" id="anvhoje">Hoje</button>`:""}
-    <span style="flex:1"></span><button class="b sec sm" id="anvpdfm">${ic("down")} PDF do mês</button><button class="b sm" id="anvpdfa">${ic("down")} PDF do ano ${ano}</button></div>
-   ${ANIV.ver==="mes"?anivGradeHtml(L,ym):anivAnoHtml(L,ano)}
-   ${L.sem.length?`<details style="margin-top:12px"><summary class="sub" style="cursor:pointer">${L.sem.length} integrante(s) em atividade sem data de nascimento — preencha no cadastro para entrarem no calendário</summary><div class="sub" style="margin-top:6px">${L.sem.map(i=>esc(nomeInteg(i))).join(" · ")}</div></details>`:""}</div>`;
+  const L=anivLista(),ym=ANIV.ym,ano=+ym.slice(0,4),noMes=L.ok.filter(x=>x.m===+ym.slice(5,7)).length,porAno=ANIV.ver==="ano";
+  return `<div class="card"><h2>Aniversariantes${porAno?" de "+ano:" de "+esc(anivMesRot(ym))}</h2><p class="sub" style="margin:0 0 10px">Integrantes em atividade hoje (${brDate(L.ref)}). Quem foi desligado ou ainda não foi admitido não aparece. A data vem do campo Nascimento do cadastro.</p>
+   <div class="anv-bar">
+    <span style="display:inline-flex;gap:6px;align-items:center;flex-wrap:nowrap"><button class="b sec sm" id="anvant" aria-label="${porAno?"Ano anterior":"Mês anterior"}">‹</button>${porAno?`<span class="tit">${ano}</span>`:`<select id="anvsel" aria-label="Escolher o mês" style="width:auto;min-width:180px">${anivMesOpts(ym)}</select>`}<button class="b sec sm" id="anvseg" aria-label="${porAno?"Próximo ano":"Próximo mês"}">›</button></span>
+    ${ym!==hojeIso().slice(0,7)?`<button class="b sec sm" id="anvhoje">Mês atual</button>`:""}
+    <span style="flex:1"></span>
+    <div class="xabsub" style="margin:0"><button type="button" data-anvver="mural" class="${ANIV.ver==="mural"?"on":""}">Mural</button><button type="button" data-anvver="mes" class="${ANIV.ver==="mes"?"on":""}">Calendário</button><button type="button" data-anvver="ano" class="${porAno?"on":""}">Ano inteiro</button></div></div>
+   ${ANIV.ver==="mural"?`<p class="sub" style="margin:0 0 8px">${noMes?`${noMes} aniversariante${noMes>1?"s":""} no mês.`:""}</p>`+anivMuralHtml(L,ym):ANIV.ver==="mes"?anivGradeHtml(L,ym):anivAnoHtml(L,ano)}
+   <div class="row" style="margin-top:14px;gap:8px"><button class="b sec sm" id="anvpdfm" style="flex:none">${ic("down")} PDF de ${esc(MESES_PT[+ym.slice(5,7)-1].toLowerCase())}</button><button class="b sec sm" id="anvpdfa" style="flex:none">${ic("down")} PDF do ano ${ano}</button></div>
+   ${L.sem.length?`<details style="margin-top:12px"><summary class="sub" style="cursor:pointer">${L.sem.length} integrante(s) em atividade sem data de nascimento — preencha no cadastro para entrarem no mural</summary><div class="sub" style="margin-top:6px">${L.sem.map(i=>esc(nomeInteg(i))).join(" · ")}</div></details>`:""}</div>`;
 }
 function bindAniv(){
-  const mv=n=>{if(ANIV.ver==="mes")ANIV.ym=addMesesIso(ANIV.ym+"-01",n).slice(0,7);else ANIV.ym=(+ANIV.ym.slice(0,4)+n)+ANIV.ym.slice(4);go("gp",true)};
-  const a=$("anvant"),s=$("anvseg"),h=$("anvhoje");if(a)a.onclick=()=>mv(-1);if(s)s.onclick=()=>mv(1);if(h)h.onclick=()=>{ANIV.ym=hojeIso().slice(0,7);go("gp",true)};
+  const mv=n=>{if(ANIV.ver!=="ano")ANIV.ym=addMesesIso(ANIV.ym+"-01",n).slice(0,7);else ANIV.ym=(+ANIV.ym.slice(0,4)+n)+ANIV.ym.slice(4);go("gp",true)};
+  const a=$("anvant"),s=$("anvseg"),h=$("anvhoje"),sel=$("anvsel");if(a)a.onclick=()=>mv(-1);if(s)s.onclick=()=>mv(1);if(h)h.onclick=()=>{ANIV.ym=hojeIso().slice(0,7);go("gp",true)};
+  if(sel)sel.onchange=()=>{ANIV.ym=sel.value;go("gp",true)};
   document.querySelectorAll("[data-anvver]").forEach(b=>b.onclick=()=>{ANIV.ver=b.dataset.anvver;go("gp",true)});
-  document.querySelectorAll("[data-anvmes]").forEach(b=>b.onclick=()=>{ANIV.ym=b.dataset.anvmes;ANIV.ver="mes";go("gp",true)});
+  document.querySelectorAll("[data-anvmes]").forEach(b=>b.onclick=()=>{ANIV.ym=b.dataset.anvmes;ANIV.ver="mural";go("gp",true)});
   const pm=$("anvpdfm"),pa=$("anvpdfa");if(pm)pm.onclick=()=>anivPdf("mes");if(pa)pa.onclick=()=>anivPdf("ano");
 }
 
@@ -6648,7 +6669,7 @@ function benefAbaHtml(){
   return `<div class="xabsub"><button type="button" data-bfsub="custo" class="${ANIV.sub==="custo"?"on":""}">Custo da folha e benefícios</button><button type="button" data-bfsub="aniv" class="${ANIV.sub==="aniv"?"on":""}">Calendário de aniversários</button></div>`+(ANIV.sub==="aniv"?anivHtml():benefHtml());
 }
 function bindBenefAba(){
-  document.querySelectorAll("[data-bfsub]").forEach(b=>b.onclick=()=>{ANIV.sub=b.dataset.bfsub;go("gp",true)});
+  document.querySelectorAll("[data-bfsub]").forEach(b=>b.onclick=()=>{ANIV.sub=b.dataset.bfsub;if(ANIV.sub==="aniv"){ANIV.ym=hojeIso().slice(0,7);ANIV.ver="mural"}go("gp",true)});
   if(ANIV.sub==="aniv")bindAniv();else bindBenef();
 }
 
