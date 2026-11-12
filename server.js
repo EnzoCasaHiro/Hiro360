@@ -51,7 +51,7 @@ async function criaApp(opts = {}) {
     if (!seg.usuarioOk(u) || fraca) console.error('[casa-hiro] ADMIN_RESET: ADMIN_USER/ADMIN_PASSWORD inválidos:', fraca || 'usuário (3-40, letras minúsculas, números . _ -)');
     else {
       const ex = await db.userPorNome(u);
-      if (ex) { await db.userAtualiza(ex.id, { hash: seg.hashSenha(env.ADMIN_PASSWORD), active: 1, admin: 1, mfa: null }); await db.sessApagaUser(ex.id); }
+      if (ex) { await db.userAtualiza(ex.id, { hash: seg.hashSenha(env.ADMIN_PASSWORD), active: 1, admin: 1 }); await db.sessApagaUser(ex.id); }
       else await db.userCria({ id: seg.novoId('u'), username: u, name: env.ADMIN_NAME || 'Direção', hash: seg.hashSenha(env.ADMIN_PASSWORD), admin: true });
       console.warn('[casa-hiro] ADMIN_RESET: senha de', u, 'redefinida. Entre, depois APAGUE ADMIN_RESET e ADMIN_PASSWORD do painel e reimplante.');
     }
@@ -87,24 +87,11 @@ async function criaApp(opts = {}) {
     if (agora - s.last > 60000) await db.sessToca(th, agora);
     return { th, user: u };
   }
-  /* ---- verificação em duas etapas ---- */
-  const mfaDe = u => { try { return u && u.mfa ? JSON.parse(u.mfa) : {}; } catch (e) { return {}; } };
-  const mfaGrava = (id, o) => db.userAtualiza(id, { mfa: o ? JSON.stringify(o) : null });
-  const LEMBRAR_MS = 30 * 24 * 3600 * 1000, desafios = new Map(); // desafio do login -> { uid, exp, n }
-  // obrigatória para administração e para quem altera o financeiro (MFA_OBRIGATORIO=0 no painel desliga a obrigação)
-  async function mfaObrigatorio(u) {
-    if (env.MFA_OBRIGATORIO === '0') return false; if (u.admin) return true;
-    const C = await perm.contexto(db, u); const mods = (C.perfil && C.perfil.mods) || {};
-    return ['fin', 'fin2', 'contab'].some(k => +mods[k] >= 2);
-  }
-  const cookieDisp = (req, tk, apaga) => `hiro_disp=${apaga ? '' : tk}; HttpOnly; SameSite=Strict; Path=/api/login; Max-Age=${apaga ? 0 : LEMBRAR_MS / 1000}${https_(req) ? '; Secure' : ''}`;
-  const dispDe = req => { const m = String(req.headers.cookie || '').match(/(?:^|;\s*)hiro_disp=([^;]+)/); return m ? m[1] : null; };
   async function abreSessao(req, res, u, extra = {}) {
     const tk = seg.novoToken(); await db.sessCria(seg.hashToken(tk), u.id, Date.now());
     await db.userAtualiza(u.id, { last_login: new Date().toISOString() });
     console.log('[casa-hiro] login:', u.username, 'ip', ipDe(req)); trilha(req, u, 'entrou', u.username, { ua: String(req.headers['user-agent'] || '').slice(0, 160), ...(extra.trilha || {}) });
-    const ck = [cookieSessao(req, tk)]; if (extra.disp) ck.push(cookieDisp(req, extra.disp));
-    return resp(res, 200, { user: pub(u) }, { 'set-cookie': ck });
+    return resp(res, 200, { user: pub(u) }, { 'set-cookie': cookieSessao(req, tk) });
   }
   const pub = u => ({ id: u.id, username: u.username, name: u.name, admin: !!u.admin, active: !!u.active, last_login: u.last_login || null });
 
@@ -188,36 +175,7 @@ async function criaApp(opts = {}) {
         return erro(res, u && okSenha && !u.active ? 403 : 401, u && okSenha && !u.active ? 'Seu acesso está suspenso. Fale com a direção.' : 'Usuário ou senha incorretos.', 'credencial');
       }
       limUser.ok('u:' + un + '|' + ip);
-      const mf = mfaDe(u);
-      if (mf.on) {
-        // aparelho lembrado (30 dias) entra sem código; senão, pede o código do aplicativo
-        const dt = dispDe(req), agora = Date.now();
-        if (dt && (mf.disp || []).some(x => x.h === seg.hashToken(dt) && x.exp > agora)) return abreSessao(req, res, u, { trilha: { aparelho: 'lembrado' } });
-        for (const [k, v] of desafios) if (v.exp < agora) desafios.delete(k);
-        const desafio = seg.novoToken(); desafios.set(desafio, { uid: u.id, exp: agora + 5 * 60000, n: 0 });
-        return resp(res, 200, { mfa: true, desafio });
-      }
       return abreSessao(req, res, u);
-    }
-    if (p === '/api/login/2fa' && m === 'POST') {
-      const ip = ipDe(req), b = (await lerJson(req, 5000)) || {};
-      if (limIp.bloqueado('i:' + ip)) return erro(res, 429, 'Muitas tentativas erradas. Aguarde alguns minutos.', 'bloqueado');
-      const dz = desafios.get(String(b.desafio || '')); if (!dz || dz.exp < Date.now()) return erro(res, 401, 'O tempo para digitar o código acabou. Entre de novo com usuário e senha.', 'mfa_expirou');
-      const u = await db.userPorId(dz.uid); if (!u || !u.active) return erro(res, 401, 'Entre de novo com usuário e senha.', 'mfa_expirou');
-      const mf = mfaDe(u); let ok = false, usouEmergencia = false;
-      const passo = seg.confere2fa(mf.segredo, b.codigo, mf.ult);
-      if (passo) { mf.ult = passo; ok = true; }
-      else { const cn = seg.normCodigo(b.codigo), i = (mf.rec || []).indexOf(seg.hashToken(cn)); if (cn.length === 8 && i >= 0) { mf.rec.splice(i, 1); ok = true; usouEmergencia = true; } }
-      if (!ok) {
-        dz.n++; limIp.falha('i:' + ip); limConta.falha('u:' + u.username); if (dz.n >= 5) desafios.delete(String(b.desafio));
-        trilha(req, u, 'código 2FA errado', u.username);
-        return erro(res, 401, dz.n >= 5 ? 'Código errado muitas vezes. Entre de novo com usuário e senha.' : 'Código errado. Confira no aplicativo e digite o número que aparece agora.', dz.n >= 5 ? 'mfa_expirou' : 'mfa_codigo');
-      }
-      desafios.delete(String(b.desafio));
-      let disp = null;
-      if (b.lembrar) { disp = seg.novoToken(); mf.disp = [...(mf.disp || []).filter(x => x.exp > Date.now()), { h: seg.hashToken(disp), exp: Date.now() + LEMBRAR_MS, ua: String(req.headers['user-agent'] || '').slice(0, 120) }].slice(-10); }
-      await mfaGrava(u.id, mf);
-      return abreSessao(req, res, u, { disp, trilha: { mfa: usouEmergencia ? 'código de emergência (restam ' + mf.rec.length + ')' : 'aplicativo' } });
     }
     if (p === '/api/logout' && m === 'POST') {
       const s = await sessao(req); if (s) await db.sessApaga(s.th);
@@ -280,45 +238,7 @@ async function criaApp(opts = {}) {
     }
 
     const S = await sessao(req);
-    const mfaS = S ? mfaDe(S.user) : null, mfaObr = S ? await mfaObrigatorio(S.user) : false, mfaPend = S ? (!mfaS.on && mfaObr) : false;
-    if (p === '/api/me' && m === 'GET') { return S ? resp(res, 200, { user: pub(S.user), ia: !!env.ANTHROPIC_API_KEY, maxUploadMb: MAX_ARQ / 1048576, mfa: { on: !!mfaS.on, pendente: mfaPend, obrigatorio: mfaObr, emergencia: (mfaS.rec || []).length, aparelhos: (mfaS.disp || []).filter(x => x.exp > Date.now()).length } }) : erro(res, 401, 'Entre com seu usuário e senha.', 'sem_sessao'); }
-    // quem é obrigado a usar 2FA e ainda não configurou só consegue configurar (ou trocar a senha)
-    if (mfaPend && (p.startsWith('/api/') || p.startsWith('/_blob/')) && !p.startsWith('/api/me/')) return erro(res, 403, 'Configure a verificação em duas etapas para continuar.', 'mfa_config');
-
-    /* ---- verificação em duas etapas: a própria pessoa configura ---- */
-    if (S && p === '/api/me/2fa/inicia' && m === 'POST') {
-      const b = (await lerJson(req, 5000)) || {}; if (!seg.confereSenha(String(b.senha || ''), S.user.hash)) return erro(res, 400, 'A senha não confere.');
-      const mf = mfaDe(S.user); if (mf.on) return erro(res, 409, 'A verificação em duas etapas já está ligada.');
-      mf.novo = seg.novoSegredo2fa(); await mfaGrava(S.user.id, mf);
-      const rot = encodeURIComponent('Hiro360:' + S.user.username);
-      return resp(res, 200, { segredo: mf.novo, uri: 'otpauth://totp/' + rot + '?secret=' + mf.novo + '&issuer=Hiro360&algorithm=SHA1&digits=6&period=30' });
-    }
-    if (S && p === '/api/me/2fa/confirma' && m === 'POST') {
-      const b = (await lerJson(req, 5000)) || {}; const mf = mfaDe(S.user);
-      if (!mf.novo) return erro(res, 400, 'Comece de novo a configuração.');
-      const passo = seg.confere2fa(mf.novo, b.codigo, 0); if (!passo) return erro(res, 400, 'Código errado. Confira se a hora do celular está certa e digite o número que aparece agora.');
-      const cods = seg.novosCodigosEmergencia();
-      await mfaGrava(S.user.id, { on: true, segredo: mf.novo, ult: passo, rec: cods.map(c => seg.hashToken(seg.normCodigo(c))), disp: [], em: new Date().toISOString() });
-      trilha(req, S.user, 'ligou 2FA', S.user.username);
-      return resp(res, 200, { ok: true, codigos: cods });
-    }
-    if (S && p === '/api/me/2fa/novos-codigos' && m === 'POST') {
-      const b = (await lerJson(req, 5000)) || {}; const mf = mfaDe(S.user);
-      const passo = mf.on ? seg.confere2fa(mf.segredo, b.codigo, mf.ult) : null; if (!passo) return erro(res, 400, 'Código errado.');
-      const cods = seg.novosCodigosEmergencia(); mf.ult = passo; mf.rec = cods.map(c => seg.hashToken(seg.normCodigo(c))); await mfaGrava(S.user.id, mf);
-      trilha(req, S.user, 'gerou novos códigos de emergência', S.user.username); return resp(res, 200, { ok: true, codigos: cods });
-    }
-    if (S && p === '/api/me/2fa/desliga' && m === 'POST') {
-      const b = (await lerJson(req, 5000)) || {}; const mf = mfaDe(S.user);
-      if (mfaObr) return erro(res, 403, 'Para o seu perfil a verificação em duas etapas é obrigatória.');
-      if (!seg.confereSenha(String(b.senha || ''), S.user.hash) || !seg.confere2fa(mf.segredo, b.codigo, mf.ult)) return erro(res, 400, 'Senha ou código errado.');
-      await mfaGrava(S.user.id, null); trilha(req, S.user, 'desligou 2FA', S.user.username); return resp(res, 200, { ok: true });
-    }
-    if (S && p === '/api/me/2fa/esquecer-aparelhos' && m === 'POST') {
-      const mf = mfaDe(S.user); mf.disp = []; await mfaGrava(S.user.id, mf); trilha(req, S.user, 'esqueceu aparelhos lembrados', S.user.username);
-      return resp(res, 200, { ok: true }, { 'set-cookie': cookieDisp(req, '', true) });
-    }
-
+    if (p === '/api/me' && m === 'GET') { return S ? resp(res, 200, { user: pub(S.user), ia: !!env.ANTHROPIC_API_KEY, maxUploadMb: MAX_ARQ / 1048576 }) : erro(res, 401, 'Entre com seu usuário e senha.', 'sem_sessao'); }
     const livreBackup = req.backupOk && p.startsWith('/api/backup');
     if (p.startsWith('/api/') || p.startsWith('/_blob/')) { if (!S && !livreBackup) return erro(res, 401, 'Entre com seu usuário e senha.', 'sem_sessao'); }
     const U = S ? S.user : { id: 'backup', admin: 1 };
@@ -421,7 +341,7 @@ async function criaApp(opts = {}) {
     if (p.startsWith('/api/users')) {
       if (!adm) return erro(res, 403, 'Só a administração gerencia contas.', 'negado');
       if (p === '/api/users' && m === 'GET') {
-        const q = (url.searchParams.get('q') || '').toLowerCase(); let l = await Promise.all((await db.userLista()).map(async u0 => { const u = await db.userPorId(u0.id); return { id: u.id, username: u.username, name: u.name, admin: !!u.admin, active: !!u.active, last_login: u.last_login || null, mfa: !!mfaDe(u).on }; }));
+        const q = (url.searchParams.get('q') || '').toLowerCase(); let l = (await db.userLista()).map(u => ({ id: u.id, username: u.username, name: u.name, admin: !!u.admin, active: !!u.active, last_login: u.last_login || null }));
         if (q) l = l.filter(u => (u.name + ' ' + u.username).toLowerCase().includes(q)); return resp(res, 200, { users: l });
       }
       if (p === '/api/users' && m === 'POST') {
@@ -438,12 +358,11 @@ async function criaApp(opts = {}) {
         const alvo = await db.userPorId(mm[1]); if (!alvo) return erro(res, 404, 'Conta não encontrada.');
         const b = await lerJson(req, 5000); const c = {};
         if (b.name !== undefined) { const n = String(b.name).trim().slice(0, 120); if (!n) return erro(res, 400, 'Nome vazio.'); c.name = n; }
-        if (b.password !== undefined) { const f = seg.senhaFraca(b.password, alvo.username); if (f) return erro(res, 400, f); c.hash = seg.hashSenha(b.password); const mf = mfaDe(alvo); if (mf.on) c.mfa = JSON.stringify({ ...mf, disp: [] }); }
+        if (b.password !== undefined) { const f = seg.senhaFraca(b.password, alvo.username); if (f) return erro(res, 400, f); c.hash = seg.hashSenha(b.password); }
         if (b.active !== undefined) c.active = b.active ? 1 : 0;
         if (b.admin !== undefined) c.admin = b.admin ? 1 : 0;
-        if (b.mfaReset) c.mfa = null; // perdeu o celular: a pessoa configura de novo no próximo login
         if ((c.active === 0 || c.admin === 0) && alvo.admin && alvo.active && (await db.adminsAtivos()) <= 1) return erro(res, 400, 'Precisa existir pelo menos um administrador ativo.');
-        await db.userAtualiza(alvo.id, c); trilha(req, U, 'alterou conta', alvo.username, { campos: Object.keys(c).map(k => k === 'hash' ? 'senha' : k) }); if (c.hash || c.active === 0 || b.mfaReset) await db.sessApagaUser(alvo.id);
+        await db.userAtualiza(alvo.id, c); trilha(req, U, 'alterou conta', alvo.username, { campos: Object.keys(c).map(k => k === 'hash' ? 'senha' : k) }); if (c.hash || c.active === 0) await db.sessApagaUser(alvo.id);
         return resp(res, 200, { user: pub(await db.userPorId(alvo.id)) });
       }
     }
