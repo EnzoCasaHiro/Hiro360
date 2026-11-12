@@ -3436,18 +3436,16 @@ const nfUnEst=u=>{const x=String(u||"").trim().toLowerCase();return!x||/^(un|und
    (dígito verificador da chave, CNPJ, número, mês, somas) e por uma tela de conferência antes de lançar.
    O arquivo original fica guardado (armazenamento de arquivos do painel ou, se não houver, no banco). */
 const NF_ACCEPT=".xml,.pdf,.png,.jpg,.jpeg,.webp,.json,.xlsx,.xls,image/*";
-const PDFJS_URL="/vendor/pdfjs-3.11.174/pdf.min.js",PDFJS_WORKER="/vendor/pdfjs-3.11.174/pdf.worker.min.js";
+const PDFJS_URL="/vendor/pdfjs-4.10.38/pdf.min.mjs",PDFJS_WORKER="/vendor/pdfjs-4.10.38/pdf.worker.min.mjs";
 let _pdfjs=null;
 function pdfjsCarrega(){
   if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
-  return _pdfjs||(_pdfjs=new Promise((ok,no)=>{
-    const s=document.createElement("script");s.src=PDFJS_URL;
-    s.onload=()=>{try{const L=window.pdfjsLib;L.GlobalWorkerOptions.workerSrc=PDFJS_WORKER;
-      // PDF malicioso não executa código (falha conhecida desta versão do leitor: CVE-2024-4367)
-      const gd=L.getDocument.bind(L);L.getDocument=o=>gd({...(o&&o.data?o:{data:o}),isEvalSupported:false,enableXfa:false})}catch(e){}ok(window.pdfjsLib)};
-    s.onerror=()=>{_pdfjs=null;no(new Error("Não consegui carregar o leitor de PDF. Envie uma foto da nota ou o XML."))};
-    document.head.appendChild(s);
-  }));
+  return _pdfjs||(_pdfjs=import(PDFJS_URL).then(M=>{
+    M.GlobalWorkerOptions.workerSrc=PDFJS_WORKER;
+    // PDF nunca executa código nem formulário dinâmico, mesmo que apareça uma falha nova no leitor
+    const L={...M,getDocument:o=>M.getDocument({...(o&&o.data?o:{data:o}),isEvalSupported:false,enableXfa:false})};
+    window.pdfjsLib=L;return L;
+  },()=>{_pdfjs=null;throw new Error("Não consegui carregar o leitor de PDF. Envie uma foto da nota ou o XML.")}));
 }
 const nfTipoArq=f=>{const n=(f.name||"").toLowerCase();return/\.xml$/.test(n)||/xml/.test(f.type)?"xml":/\.pdf$/.test(n)||f.type==="application/pdf"?"pdf":/^image\//.test(f.type)||/\.(png|jpe?g|webp)$/.test(n)?"img":""};
 const blobDe=(cv,tipo,q)=>new Promise(r=>cv.toBlob(r,tipo,q));
@@ -3643,6 +3641,8 @@ async function nfArquivar(file,tipo,n,previa){
   const padrao=o=>({...o,nome:nfArqNomePadrao(n.nota,n.date,o.nome,id)});
   if(RT.assets){
     if(tipo!=="xml"){file=(await comprimir(file)).file;meta.nome=file.name;meta.type=file.type||meta.type;meta.tam=file.size}
+    // o arquivo já sobe com o nome padrão (é o nome que o servidor guarda e devolve ao abrir pelo link)
+    meta.nome=nfArqNomePadrao(n.nota,n.date,file.name,id);file=new File([file],meta.nome,{type:meta.type});
     const r=await RT.assets.upload(file,{type:meta.type}).catch(e=>{throw new Error(`Não consegui guardar "${file.name}": ${e.message||e.code}`)});
     put("nfarq",id,padrao({...meta,asset:r.id}));return id;
   }
@@ -3668,6 +3668,11 @@ function nfArqNomePadrao(nota,date,nomeAtual,excetoId){
   const usados=new Set(Object.values(S.nfarq).filter(d=>d.id!==excetoId).map(d=>String(d.nome||"").toLowerCase()));
   let nome=base+parcial+ext,k=2;while(usados.has(nome.toLowerCase()))nome=base+" ("+(k++)+")"+parcial+ext;
   return nome;
+}
+/* nome que o arquivo vai ter, para mostrar na conferência antes de lançar (foto pode virar .jpg/.webp ao compactar) */
+function nfArqNomePrevia(nota,date,n){
+  const nome=nfArqNomePadrao(nota,date,(n.arq&&n.arq.name)||"");
+  return n.arqTipo==="img"?nome.replace(/\.[A-Za-z0-9]{2,5}$/,"")+" (imagem)":nome;
 }
 /* número e data de um arquivo guardado: vêm da nota lançada que aponta para ele (o número do fornecedor vale mais que o Nº da planilha) */
 function nfArqInfo(d){
@@ -3769,7 +3774,7 @@ async function nfImportar(files,opts){
    <button type="button" class="b sec sm" data-radd="${i}" style="margin-top:6px">${ic("plus")} Item</button>
    <label style="margin-top:10px">Vencimentos (duplicatas)</label><div data-dups>${n.dups.map((d,j)=>dupRow(d)).join("")}</div>
    <button type="button" class="b sec sm" data-dupadd style="margin-top:6px">${ic("plus")} Vencimento</button>
-   ${n.arq?`<div class="sub" style="margin-top:8px">${ic("clip")} Arquivo guardado: ${esc(n.arq.name)}</div>`:""}</details>`;
+   ${n.arq?`<div class="sub" style="margin-top:8px">${ic("clip")} O arquivo será guardado como <b data-arqnome>${esc(nfArqNomePrevia(n.nota,n.date,n))}</b> <span style="opacity:.7">(enviado como ${esc(n.arq.name)})</span></div>`:""}</details>`;
   const dupRow=d=>`<div class="row" data-dup style="margin-bottom:4px"><input type="date" data-d="venc" value="${esc(d.venc||"")}"><input data-d="valor" inputmode="decimal" value="${d.valor||""}" placeholder="Valor"><button type="button" class="b sec sm" data-dupdel style="flex:none">${ic("trash")}</button></div>`;
   const ov=openModal(`<h3>Conferir e lançar notas fiscais</h3>
    <div class="sub" style="margin-bottom:10px">${novas.length} nota(s) lida(s)${notas.length>novas.length?` · ${notas.length-novas.length} já estava(m) no sistema`:""}${erros.length?` · ${erros.length} arquivo(s) com erro: ${esc(erros.join(" | "))}`:""}. Corrija o que precisar: o que você ajustar aqui é o que vai para o sistema.</div>
@@ -3785,6 +3790,9 @@ async function nfImportar(files,opts){
   ov.querySelectorAll("[data-radd]").forEach(b=>b.onclick=()=>{const n=novas[+b.dataset.radd],r={item:"",qtd:1,valor:"",total:"",_cat:"A classificar",_sub:"A classificar",_cc:""};n.rows.push(r);
     const tb=b.previousElementSibling.querySelector("tbody");tb.insertAdjacentHTML("beforeend",itemRow(r,n.rows.length-1));const tr=tb.lastElementChild;tr.querySelector("[data-rdel]").onclick=()=>tr.remove();tr.querySelector('[data-r="item"]').focus()});
   nfIAPreenche(ov,novas);
+  ov.querySelectorAll("details[data-nota]").forEach(box=>{const n=novas[+box.dataset.nota],alvo=box.querySelector("[data-arqnome]");if(!alvo)return;
+    const atual=()=>{alvo.textContent=nfArqNomePrevia(box.querySelector('[data-h="nota"]').value.trim(),nfData(box.querySelector('[data-h="date"]').value)||n.date,n)};
+    box.querySelectorAll('[data-h="nota"],[data-h="date"]').forEach(i=>i.addEventListener("input",atual))});
   ov.querySelectorAll("[data-dupdel]").forEach(b=>b.onclick=()=>b.closest("[data-dup]").remove());
   ov.querySelectorAll("[data-dupadd]").forEach(b=>b.onclick=()=>{b.previousElementSibling.insertAdjacentHTML("beforeend",dupRow({}));const r=b.previousElementSibling.lastElementChild;r.querySelector("[data-dupdel]").onclick=()=>r.remove()});
   ov.querySelector("#xcx").onclick=()=>ov.remove();
@@ -6046,7 +6054,7 @@ function bindHistorico(){
   if($("hsmais"))$("hsmais").onclick=()=>{HST.n+=60;go("acesso",true)};
   if($("trver"))$("trver").onclick=async()=>{HST.trMes=$("trmes").value;const box=$("trbox");box.textContent="Carregando…";
     try{const r=await fetch("/api/trilha?mes="+encodeURIComponent(HST.trMes),{credentials:"same-origin"});const j=await r.json();if(!r.ok)throw new Error(j.erro||"erro");
-      box.innerHTML=j.itens.length?`<table class="tbl"><tr><th>Quando</th><th>Quem</th><th>O quê</th><th>Onde</th><th>IP</th></tr>${j.itens.slice(0,800).map(x=>`<tr><td>${esc(new Date(x.t).toLocaleString("pt-BR"))}</td><td>${esc(x.n||x.u)}</td><td>${esc(x.acao)}</td><td>${esc(x.alvo)}</td><td>${esc(x.ip)}</td></tr>`).join("")}</table>${j.itens.length>800?`<p class="sub">Mostrando as 800 mais recentes de ${j.itens.length}.</p>`:""}`:`<div class="empty">Nada registrado neste mês.</div>`}
+      box.innerHTML=j.itens.length?`<table class="tbl"><tr><th>Quando</th><th>Quem</th><th>O quê</th><th>Onde</th><th>IP</th></tr>${j.itens.slice(0,800).map(x=>`<tr><td>${esc(new Date(x.t).toLocaleString("pt-BR"))}</td><td>${esc(x.n||x.u)}</td><td>${esc(x.acao)}</td><td>${esc(x.alvo)}</td><td>${esc(x.ip)}</td></tr>`).join("")}</table>${j.itens.length>800?`<p class="sub">Mostrando as 800 mais recentes de ${j.itens.length}.</p>`:""}<p class="sub" style="margin-top:8px">A trilha guarda também a versão anterior de cada dado alterado (prova do que mudou). <a href="/api/trilha?completo=1&mes=${encodeURIComponent(HST.trMes)}" download>Baixar o mês completo</a> para guardar ou mostrar a um auditor.</p>`:`<div class="empty">Nada registrado neste mês.</div>`}
     catch(e){box.textContent="Não consegui carregar: "+e.message}};
   document.querySelectorAll("[data-hrest]").forEach(b=>b.onclick=async()=>{
     const h=S.hist[b.dataset.hrest];if(!h||!h.antes)return;
@@ -6480,6 +6488,170 @@ function bindBenef(){
   });
 }
 
+/* ---------- calendário de aniversários dos integrantes ----------
+   Entram só os integrantes em atividade na data em que o calendário é aberto ou o PDF é gerado:
+   não desligados, já admitidos e com o desligamento (se houver) a partir de hoje.
+   Férias e afastamento não tiram ninguém: a pessoa continua no quadro. */
+const ANIV={ym:hojeIso().slice(0,7),ver:"mes",sub:"custo"};
+const ANIV_SEM=["Seg","Ter","Qua","Qui","Sex","Sáb","Dom"];
+function anivData(s){
+  s=String(s||"").trim();let m=s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const r=m?{y:+m[1],m:+m[2],d:+m[3]}:(m=s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/))?{y:+m[3],m:+m[2],d:+m[1]}:null;
+  return r&&r.m>=1&&r.m<=12&&r.d>=1&&r.d<=31?r:null;
+}
+const anivEmAtividade=(i,ref)=>(i.situacao||"Ativo")!=="Desligado"&&(!i.admissao||i.admissao<=ref)&&(!i.desligamento||i.desligamento>=ref);
+function anivLista(){
+  const ref=hojeIso(),ok=[],sem=[];
+  integList().filter(i=>anivEmAtividade(i,ref)).forEach(i=>{const n=anivData(i.nascimento);if(n)ok.push({i,...n});else sem.push(i)});
+  return{ref,ok,sem};
+}
+// de férias no dia do aniversário: férias programadas/gozadas (aba Férias) cobrindo a data; sem esse registro,
+// a situação "Férias" do cadastro vale para os aniversários do mês atual
+function anivFerias(i,iso){
+  const F=xs("ferias").filter(f=>f.integ===i.id&&f.status!=="cancelada"&&f.ini&&f.fim),h=hojeIso();
+  if(F.some(f=>f.ini<=iso&&f.fim>=iso))return true;
+  return i.situacao==="Férias"&&iso.slice(0,7)===h.slice(0,7)&&!F.some(f=>f.ini<=h&&f.fim>=h);
+}
+// dia -> aniversariantes; quem nasceu em 29/02 aparece no dia 28 nos anos que não são bissextos
+function anivDoMes(L,ano,mes){
+  const ult=new Date(ano,mes,0).getDate(),M=new Map();
+  L.ok.filter(x=>x.m===mes).forEach(x=>{const d=Math.min(x.d,ult);if(!M.has(d))M.set(d,[]);M.get(d).push({...x,fer:anivFerias(x.i,ano+"-"+String(mes).padStart(2,"0")+"-"+String(d).padStart(2,"0"))})});
+  M.forEach(a=>a.sort((p,q)=>nomeInteg(p.i).localeCompare(nomeInteg(q.i),"pt")));
+  return M;
+}
+function anivCurto(i){const p=String(nomeInteg(i)).trim().split(/\s+/);return p.length>1?p[0]+" "+p[p.length-1]:p[0]}
+const anivMesRot=ym=>MESES_PT[+ym.slice(5,7)-1]+" de "+ym.slice(0,4);
+const anivMesesOrd=M=>[...M.entries()].sort((a,b)=>a[0]-b[0]);
+(function(){const st=document.createElement("style");st.textContent=`
+.anv-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.anv-bar .tit{font:700 17px var(--serif);color:var(--ink);min-width:150px;text-align:center}
+.anv-sem,.anv-grade{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+.anv-sem div{font:700 11px var(--ui);text-transform:uppercase;letter-spacing:.08em;color:var(--verde-medio);text-align:center;padding:4px 0}
+.anv-c{min-height:82px;min-width:0;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:4px 6px;display:flex;flex-direction:column;gap:2px}
+.anv-c.vazio{background:transparent;border-color:transparent}
+.anv-c.tem{background:var(--verde-palido);border-color:var(--verde-claro)}
+.anv-c.hoje{box-shadow:inset 0 0 0 2px var(--verde-medio)}
+.anv-d{font:700 12px var(--ui);color:var(--mute)}.anv-c.fds .anv-d{color:var(--madeira)}
+.anv-n{font:700 12px var(--ui);color:var(--ok-tx);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.anv-fer{display:inline-block;margin-left:4px;padding:0 5px;border-radius:8px;background:var(--bege);color:var(--pend-tx);border:1px solid var(--madeira-clara);font:600 10px var(--ui);vertical-align:1px}
+.anv-ano{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.anv-m{border:1px solid var(--line);border-radius:10px;background:var(--card);overflow:hidden}
+.anv-m h4{margin:0;padding:7px 10px;background:var(--verde-medio);color:#fff;font:700 12.5px var(--ui);display:flex;justify-content:space-between;cursor:pointer}
+.anv-m ul{list-style:none;margin:0;padding:6px 10px 8px}.anv-m li{display:flex;gap:8px;padding:2px 0;font-size:13px;color:var(--ink)}
+.anv-m li b{flex:none;width:22px;color:var(--ok-tx)}.anv-m .nada{color:var(--mute);font-size:12.5px;padding:2px 0}
+@media (max-width:640px){.anv-c{min-height:52px;padding:3px 4px}.anv-n{font-size:10px}.anv-d{font-size:10.5px}.anv-sem div{font-size:9.5px;letter-spacing:0}}
+`;document.head.appendChild(st)})();
+function anivGradeHtml(L,ym){
+  const ano=+ym.slice(0,4),mes=+ym.slice(5,7),M=anivDoMes(L,ano,mes),ult=new Date(ano,mes,0).getDate(),ini=pyWeekday(ym+"-01"),h=hojeIso();
+  let c="";for(let k=0;k<ini;k++)c+=`<div class="anv-c vazio"></div>`;
+  for(let d=1;d<=ult;d++){
+    const iso=ym+"-"+String(d).padStart(2,"0"),a=M.get(d)||[];
+    c+=`<div class="anv-c${a.length?" tem":""}${iso===h?" hoje":""}${pyWeekday(iso)>=5?" fds":""}"><span class="anv-d">${d}</span>${a.map(x=>`<span class="anv-n" title="${esc(nomeInteg(x.i)+(x.i.cargo?" — "+x.i.cargo:"")+(x.fer?" — de férias no dia do aniversário":""))}">${esc(anivCurto(x.i))}${x.fer?`<span class="anv-fer">férias</span>`:""}</span>`).join("")}</div>`;
+  }
+  const r=(ini+ult)%7;if(r)for(let k=r;k<7;k++)c+=`<div class="anv-c vazio"></div>`;
+  const lista=anivMesesOrd(M).flatMap(([d,a])=>a.map(x=>({d,x})));
+  return `<div class="anv-sem">${ANIV_SEM.map(w=>`<div>${w}</div>`).join("")}</div><div class="anv-grade">${c}</div>
+   ${lista.length?`<div class="wrap" style="margin-top:12px"><table><thead><tr><th>Dia</th><th>Integrante</th><th>Cargo</th><th>Completa</th></tr></thead><tbody>${lista.map(({d,x})=>`<tr><td><b>${String(d).padStart(2,"0")}/${ym.slice(5)}</b> <span class="sub">${ANIV_SEM[pyWeekday(ym+"-"+String(d).padStart(2,"0"))]}</span></td><td>${esc(nomeInteg(x.i))}${x.fer?`<span class="anv-fer">de férias</span>`:""}</td><td>${esc(x.i.cargo||"")}</td><td>${ano-x.y>0&&ano-x.y<120?(ano-x.y)+" anos":"—"}</td></tr>`).join("")}</tbody></table></div>`:`<div class="empty" style="margin-top:12px">Nenhum aniversariante em ${esc(anivMesRot(ym))}.</div>`}`;
+}
+function anivAnoHtml(L,ano){
+  return `<div class="anv-ano">${MESES_PT.map((nm,k)=>{const M=anivDoMes(L,ano,k+1),a=anivMesesOrd(M).flatMap(([d,v])=>v.map(x=>({d,x}))),ym=ano+"-"+String(k+1).padStart(2,"0");
+    return `<div class="anv-m"><h4 data-anvmes="${ym}" title="Abrir o mês"><span>${nm}</span><span>${a.length||""}</span></h4><ul>${a.length?a.map(({d,x})=>`<li><b>${String(d).padStart(2,"0")}</b><span>${esc(nomeInteg(x.i))}${x.fer?`<span class="anv-fer">férias</span>`:""}</span></li>`).join(""):`<li class="nada">Ninguém faz aniversário.</li>`}</ul></div>`}).join("")}</div>`;
+}
+function anivHtml(){
+  const L=anivLista(),ym=ANIV.ym,ano=+ym.slice(0,4),noMes=L.ok.filter(x=>x.m===+ym.slice(5,7)).length;
+  const prox=L.ok.map(x=>{const h=L.ref,y=+h.slice(0,4),f=a=>a+"-"+String(x.m).padStart(2,"0")+"-"+String(Math.min(x.d,new Date(a,x.m,0).getDate())).padStart(2,"0");let t=f(y);if(t<h)t=f(y+1);return{x,t}}).sort((a,b)=>a.t.localeCompare(b.t))[0];
+  return `<div class="card"><h2>Calendário de aniversários</h2><p class="sub" style="margin:0 0 10px">Mostra só os integrantes em atividade hoje (${brDate(L.ref)}): quem foi desligado ou ainda não foi admitido não aparece. A data vem do campo Nascimento do cadastro do integrante.</p>
+   <div class="stats"><div class="stat"><b>${L.ok.length}</b><span>integrantes em atividade com nascimento</span></div><div class="stat"><b>${noMes}</b><span>aniversário(s) em ${esc(MESES_PT[+ym.slice(5,7)-1].toLowerCase())}</span></div>${prox?`<div class="stat"><b>${brDate(prox.t).slice(0,5)}</b><span>próximo: ${esc(anivCurto(prox.x.i))}${prox.t===L.ref?" (hoje!)":""}</span></div>`:""}<div class="stat ${L.sem.length?"warn":""}"><b>${L.sem.length}</b><span>sem data de nascimento</span></div></div>
+   <div class="anv-bar" style="margin-top:12px">
+    <div class="xabsub" style="margin:0"><button type="button" data-anvver="mes" class="${ANIV.ver==="mes"?"on":""}">Mês</button><button type="button" data-anvver="ano" class="${ANIV.ver==="ano"?"on":""}">Ano inteiro</button></div>
+    <span style="display:inline-flex;gap:8px;align-items:center"><button class="b sec sm" id="anvant" aria-label="${ANIV.ver==="mes"?"Mês anterior":"Ano anterior"}">‹</button><span class="tit">${ANIV.ver==="mes"?esc(anivMesRot(ym)):ano}</span><button class="b sec sm" id="anvseg" aria-label="${ANIV.ver==="mes"?"Próximo mês":"Próximo ano"}">›</button></span>
+    ${ym!==hojeIso().slice(0,7)?`<button class="b sec sm" id="anvhoje">Hoje</button>`:""}
+    <span style="flex:1"></span><button class="b sec sm" id="anvpdfm">${ic("down")} PDF do mês</button><button class="b sm" id="anvpdfa">${ic("down")} PDF do ano ${ano}</button></div>
+   ${ANIV.ver==="mes"?anivGradeHtml(L,ym):anivAnoHtml(L,ano)}
+   ${L.sem.length?`<details style="margin-top:12px"><summary class="sub" style="cursor:pointer">${L.sem.length} integrante(s) em atividade sem data de nascimento — preencha no cadastro para entrarem no calendário</summary><div class="sub" style="margin-top:6px">${L.sem.map(i=>esc(nomeInteg(i))).join(" · ")}</div></details>`:""}</div>`;
+}
+function bindAniv(){
+  const mv=n=>{if(ANIV.ver==="mes")ANIV.ym=addMesesIso(ANIV.ym+"-01",n).slice(0,7);else ANIV.ym=(+ANIV.ym.slice(0,4)+n)+ANIV.ym.slice(4);go("gp",true)};
+  const a=$("anvant"),s=$("anvseg"),h=$("anvhoje");if(a)a.onclick=()=>mv(-1);if(s)s.onclick=()=>mv(1);if(h)h.onclick=()=>{ANIV.ym=hojeIso().slice(0,7);go("gp",true)};
+  document.querySelectorAll("[data-anvver]").forEach(b=>b.onclick=()=>{ANIV.ver=b.dataset.anvver;go("gp",true)});
+  document.querySelectorAll("[data-anvmes]").forEach(b=>b.onclick=()=>{ANIV.ym=b.dataset.anvmes;ANIV.ver="mes";go("gp",true)});
+  const pm=$("anvpdfm"),pa=$("anvpdfa");if(pm)pm.onclick=()=>anivPdf("mes");if(pa)pa.onclick=()=>anivPdf("ano");
+}
+
+/* PDF no padrão Casa Hiro: faixa verde com o logotipo, grade do mês e rodapé da casa */
+const ANVC={verde:[30,92,42],verde2:[46,125,50],pal:[214,237,216],claro:[169,213,160],creme:[243,235,216],areia:[245,239,224],linha:[207,199,179],txt:[34,34,34],mute:[138,133,119],mad:[125,90,60]};
+function anivFit(doc,s,w){s=String(s);if(doc.getTextWidth(s)<=w)return s;while(s.length>1&&doc.getTextWidth(s+"…")>w)s=s.slice(0,-1);return s+"…"}
+function anivPdfFaixa(doc,lg,tit,sub){
+  const C=ANVC,W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=24;
+  doc.setFillColor(...C.areia);doc.rect(0,0,W,H,"F");
+  doc.setFillColor(...C.verde);doc.roundedRect(M,16,W-2*M,42,5,5,"F");
+  if(lg&&lg.branco){try{doc.addImage(lg.branco,"PNG",M+8,20,25,34)}catch(e){}}
+  doc.setTextColor(255,255,255);doc.setFont("times","bold");doc.setFontSize(17);doc.text("CASA HIRO",M+42,35);
+  doc.setFont("times","italic");doc.setFontSize(7.5);doc.setTextColor(...C.pal);doc.text("A ciência do cuidado com o acolhimento de casa.",M+42,47);
+  doc.setFont("times","bold");doc.setFontSize(15);doc.setTextColor(255,255,255);doc.text(tit,W-M-10,34,{align:"right"});
+  doc.setFont("helvetica","normal");doc.setFontSize(7.5);doc.setTextColor(...C.pal);doc.text(sub,W-M-10,47,{align:"right"});
+}
+function anivPdfRodape(doc,pg,tot){
+  const W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight();
+  doc.setFont("times","italic");doc.setFontSize(7);doc.setTextColor(140,90,50);doc.text("Casa Hiro™ · Caraguatatuba — Litoral Norte de SP",24,H-16);doc.text("Página "+pg+" de "+tot,W-24,H-16,{align:"right"});
+}
+function anivPdfMes(doc,L,ano,mes,lg,sub){
+  const C=ANVC,W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=24,ym=ano+"-"+String(mes).padStart(2,"0");
+  anivPdfFaixa(doc,lg,"Aniversariantes de "+anivMesRot(ym),sub);
+  const Mp=anivDoMes(L,ano,mes),ult=new Date(ano,mes,0).getDate(),ini=pyWeekday(ym+"-01"),nr=Math.ceil((ini+ult)/7);
+  const cw=(W-2*M)/7,y0=66,hh=18,ch=(H-y0-hh-4-30)/nr;
+  ANIV_SEM.forEach((w,k)=>{doc.setFillColor(...(k>=5?C.verde:C.verde2));doc.roundedRect(M+k*cw+1,y0,cw-2,hh,3,3,"F");doc.setTextColor(255,255,255);doc.setFont("helvetica","bold");doc.setFontSize(8.5);doc.text(w.toUpperCase(),M+k*cw+cw/2,y0+hh/2,{align:"center",baseline:"middle"})});
+  for(let d=1;d<=ult;d++){
+    const p=ini+d-1,x=M+(p%7)*cw+1,y=y0+hh+4+Math.floor(p/7)*ch,w=cw-2,h=ch-3,a=Mp.get(d)||[],fds=p%7>=5;
+    doc.setLineWidth(.6);doc.setDrawColor(...(a.length?C.claro:C.linha));doc.setFillColor(...(a.length?C.pal:[255,255,255]));doc.roundedRect(x,y,w,h,4,4,"FD");
+    doc.setFont("helvetica","bold");doc.setFontSize(10);doc.setTextColor(...(fds?C.mad:C.mute));doc.text(String(d),x+6,y+11);
+    if(a.length){
+      const fs=a.length<=2?9.5:a.length<=4?8.2:7.2,lh=fs+2.6,cab=Math.max(1,Math.floor((h-20)/lh)),mostra=a.length>cab?cab-1:a.length;
+      doc.setFontSize(fs);doc.setTextColor(...C.verde);
+      a.slice(0,mostra).forEach((v,k)=>{doc.setFont("helvetica","bold");doc.setFontSize(fs);doc.setTextColor(...C.verde);const tag=v.fer?" (férias)":"";doc.setFont("helvetica","italic");const tw=v.fer?doc.getTextWidth(tag):0;doc.setFont("helvetica","bold");const nm=anivFit(doc,anivCurto(v.i),w-12-tw);doc.text(nm,x+6,y+22+k*lh,{baseline:"middle"});if(v.fer){const nx=x+6+doc.getTextWidth(nm);doc.setFont("helvetica","italic");doc.setTextColor(...C.mad);doc.text(tag,nx,y+22+k*lh,{baseline:"middle"})}});
+      if(a.length>mostra){doc.setFont("helvetica","normal");doc.setTextColor(...C.mute);doc.text("+ "+(a.length-mostra)+" mais",x+6,y+22+mostra*lh,{baseline:"middle"})}
+    }
+  }
+}
+function anivPdfAno(doc,L,ano,lg,sub){
+  const C=ANVC,W=doc.internal.pageSize.getWidth(),H=doc.internal.pageSize.getHeight(),M=24,gx=8,gy=8;
+  anivPdfFaixa(doc,lg,"Aniversariantes de "+ano,sub);
+  const bw=(W-2*M-3*gx)/4,y0=68,bh=(H-y0-30-2*gy)/3;
+  MESES_PT.forEach((nm,k)=>{
+    const x=M+(k%4)*(bw+gx),y=y0+Math.floor(k/4)*(bh+gy),Mp=anivDoMes(L,ano,k+1),a=anivMesesOrd(Mp).flatMap(([d,v])=>v.map(i=>({d,i})));
+    doc.setFillColor(255,255,255);doc.setDrawColor(...C.linha);doc.setLineWidth(.6);doc.roundedRect(x,y,bw,bh,5,5,"FD");
+    doc.setFillColor(...C.verde2);doc.roundedRect(x,y,bw,17,5,5,"F");doc.rect(x,y+10,bw,7,"F");
+    doc.setTextColor(255,255,255);doc.setFont("times","bold");doc.setFontSize(10.5);doc.text(nm,x+8,y+9,{baseline:"middle"});
+    if(a.length){doc.setFont("helvetica","normal");doc.setFontSize(7.5);doc.text(a.length+(a.length>1?" aniversariantes":" aniversariante"),x+bw-8,y+9,{align:"right",baseline:"middle"})}
+    const lh=10.5,cab=Math.floor((bh-24)/lh),mostra=a.length>cab?cab-1:a.length;
+    if(!a.length){doc.setFont("helvetica","italic");doc.setFontSize(7.5);doc.setTextColor(...C.mute);doc.text("Ninguém faz aniversário.",x+8,y+29,{baseline:"middle"})}
+    a.slice(0,mostra).forEach((v,j)=>{const ly=y+29+j*lh;doc.setFont("helvetica","bold");doc.setFontSize(8);doc.setTextColor(...C.verde);doc.text(String(v.d).padStart(2,"0"),x+8,ly,{baseline:"middle"});
+      doc.setFont("helvetica","normal");doc.setTextColor(...C.txt);const tag=v.i.fer?" (férias)":"";doc.setFont("helvetica","italic");const tw=tag?doc.getTextWidth(tag):0;doc.setFont("helvetica","normal");const nm=anivFit(doc,nomeInteg(v.i.i),bw-34-tw);doc.text(nm,x+26,ly,{baseline:"middle"});if(tag){doc.setFont("helvetica","italic");doc.setTextColor(...C.mad);doc.text(tag,x+26+doc.getTextWidth(nm),ly,{baseline:"middle"})}});
+    if(a.length>mostra){doc.setFont("helvetica","italic");doc.setFontSize(7.5);doc.setTextColor(...C.mute);doc.text("+ "+(a.length-mostra)+" mais (veja a página do mês)",x+8,y+29+mostra*lh,{baseline:"middle"})}
+  });
+}
+async function anivPdf(modo){
+  const L=anivLista();
+  if(!L.ok.length){toast("Nenhum integrante em atividade tem a data de nascimento cadastrada.",true);return}
+  if(typeof window.jspdf==="undefined"||!window.jspdf.jsPDF){toast("A biblioteca de PDF não carregou. Recarregue a página e tente de novo.",true);return}
+  try{
+    const lg=await logosMarca(),{jsPDF}=window.jspdf,doc=new jsPDF({orientation:"landscape",unit:"pt",format:"a4"});
+    const ano=+ANIV.ym.slice(0,4),mes=+ANIV.ym.slice(5,7),sub=`Integrantes em atividade em ${brDate(L.ref)} · emitido em ${new Date().toLocaleDateString("pt-BR")}`;
+    if(modo==="ano"){anivPdfAno(doc,L,ano,lg,sub);for(let m=1;m<=12;m++){doc.addPage();anivPdfMes(doc,L,ano,m,lg,sub)}}
+    else anivPdfMes(doc,L,ano,mes,lg,sub);
+    const tot=doc.getNumberOfPages();for(let p=1;p<=tot;p++){doc.setPage(p);anivPdfRodape(doc,p,tot)}
+    const nome=modo==="ano"?"aniversarios-"+ano+".pdf":"aniversarios-"+ANIV.ym+".pdf";
+    if(await saveFile(nome,new Uint8Array(doc.output("arraybuffer"))))toast(modo==="ano"?`Calendário de aniversários de ${ano} baixado.`:`Aniversariantes de ${anivMesRot(ANIV.ym)} baixado.`);
+  }catch(e){console.error(e);toast("Não consegui gerar o PDF: "+(e.message||e),true)}
+}
+function benefAbaHtml(){
+  return `<div class="xabsub"><button type="button" data-bfsub="custo" class="${ANIV.sub==="custo"?"on":""}">Custo da folha e benefícios</button><button type="button" data-bfsub="aniv" class="${ANIV.sub==="aniv"?"on":""}">Calendário de aniversários</button></div>`+(ANIV.sub==="aniv"?anivHtml():benefHtml());
+}
+function bindBenefAba(){
+  document.querySelectorAll("[data-bfsub]").forEach(b=>b.onclick=()=>{ANIV.sub=b.dataset.bfsub;go("gp",true)});
+  if(ANIV.sub==="aniv")bindAniv();else bindBenef();
+}
+
 /* ---------- pessoas e empresas (cadastro único) ---------- */
 const pessoasCrud={id:"pessoas",col:"pessoas",mod:"gp",novoLabel:"Cadastrar pessoa ou empresa",novoTit:"Pessoa ou empresa",
   campos:[{k:"nome",l:"Nome ou razão social",req:true,full:true},{k:"tipo",l:"Tipo",t:"sel",opts:["Fornecedor","Prestador","Cliente","Responsável de residente","Familiar","Outro"],req:true},{k:"doc",l:"CNPJ ou CPF"},{k:"tel",l:"Telefone"},{k:"email",l:"E-mail"},{k:"obs",l:"Observação",full:true}],
@@ -6504,7 +6676,7 @@ xpage("gp","Gestão de pessoas","Férias, banco de horas, fechamento do ponto, a
   {k:"mov",l:"Admissão e desligamento",html:()=>xcrud(movCrud)},
   {k:"trein",l:"Treinamentos",html:()=>treinHtml()+xcrud(treinCrud),bind:bindTrein},
   {k:"epi",l:"EPI e uniformes",html:()=>xcrud(epiCrud)},
-  {k:"benef",l:"Benefícios e custo da folha",html:benefHtml,bind:bindBenef},
+  {k:"benef",l:"Benefícios e aniversários",html:benefAbaHtml,bind:bindBenefAba},
   {k:"pessoas",l:"Pessoas e empresas",html:()=>pessoasHtml()+xcrud(pessoasCrud)}
 ]);
 
@@ -6541,6 +6713,9 @@ REPORTS.push(
  {id:"gp_banco",g:"Departamento pessoal",t:"Banco de horas (mês selecionado)",d:"Trabalhado, esperado e saldo acumulado por integrante.",pii:false,b:()=>({titulo:"Banco de horas — "+BHST.ym.slice(5)+"/"+BHST.ym.slice(0,4),sub:relSub({},false),
    cols:[{h:"Integrante",w:30},{h:"Trabalhado (h)",t:"num",w:14},{h:"Esperado (h)",t:"num",w:14},{h:"Saldo do mês (h)",t:"num",w:16},{h:"Saldo acumulado (h)",t:"num",w:18}],
    rows:[...bhSaldos(BHST.ym).por.values()].map(x=>[nomeInteg(x.ig),+(x.trab/60).toFixed(2),+(x.esp/60).toFixed(2),+(x.mes/60).toFixed(2),+(x.acum/60).toFixed(2)])})},
+ {id:"gp_aniv",g:"Departamento pessoal",t:"Aniversariantes do ano",d:"Integrantes em atividade na data do pedido, por mês e dia (o calendário em PDF fica em Gestão de pessoas → Benefícios e aniversários).",pii:true,b:()=>{const L=anivLista();return{titulo:"Aniversariantes — integrantes em atividade",sub:`em atividade em ${brDate(L.ref)} · `+relSub({},false),
+   cols:[{h:"Mês",w:14},{h:"Dia",t:"num",w:7},{h:"Integrante",w:38},{h:"Cargo",w:26},{h:"De férias no dia",w:14,c:true}],
+   rows:L.ok.slice().sort((a,b)=>a.m-b.m||a.d-b.d||nomeInteg(a.i).localeCompare(nomeInteg(b.i),"pt")).map(x=>{const y=+L.ref.slice(0,4),d=Math.min(x.d,new Date(y,x.m,0).getDate());return[MESES_PT[x.m-1],d,nomeInteg(x.i),x.i.cargo||"",anivFerias(x.i,y+"-"+String(x.m).padStart(2,"0")+"-"+String(d).padStart(2,"0"))?"Sim":""]})}}},
  {id:"gp_folha",g:"Departamento pessoal",t:"Custo da folha e benefícios",d:"Salários, FGTS, VT, VR e provisões por integrante no mês escolhido na aba Benefícios.",pii:true,b:()=>({titulo:"Custo da folha — "+BFST.ym.slice(5)+"/"+BFST.ym.slice(0,4),sub:relSub({},false),sensivel:true,
    cols:[{h:"Integrante",w:28},{h:"Salário",t:"money",w:14},{h:"Dias",t:"num",w:7},{h:"VT casa",t:"money",w:12},{h:"VR",t:"money",w:12},{h:"FGTS",t:"money",w:12},{h:"13º + férias (prov.)",t:"money",w:18}],
    rows:bfLinhas(BFST.ym).map(x=>[nomeInteg(x.i),x.sal,x.dias,x.vtEmp,x.vrEmp,x.fgts,x.p13+x.pfer]),tot:[null,"sum",null,"sum","sum","sum","sum"]})}
@@ -15820,17 +15995,18 @@ if(window.HOST){
     box=$("hostcontas");if(!box)return;
     const perf=r=>{const a=S.acessos[r.id];return a?((perfis()[a.perfil]||{}).nome||a.perfil):(r.admin?"Administração":"sem perfil")};
     box.innerHTML=`<h2>Contas de login (${us.length})</h2>
-     ${us.map(u=>`<div class="doc" ${u.active?"":'style="opacity:.6"'}><div class="grow"><div class="nm">${esc(u.name)} ${u.admin?'<span class="chip">administrador</span>':""} ${u.active?"":'<span class="chip">suspenso</span>'}</div>
+     ${us.map(u=>`<div class="doc" ${u.active?"":'style="opacity:.6"'}><div class="grow"><div class="nm">${esc(u.name)} ${u.admin?'<span class="chip">administrador</span>':""} ${u.active?"":'<span class="chip">suspenso</span>'} ${u.mfa?'<span class="chip">2 etapas</span>':""}</div>
        <div class="sub">usuário <b>${esc(u.username)}</b> · ${esc(perf(u))}${u.last_login?" · último acesso "+esc(new Date(u.last_login).toLocaleString("pt-BR")):" · nunca entrou"}</div></div>
        <button class="b sec sm" data-hsenha="${esc(u.id)}">Nova senha</button>
        <button class="b sec sm" data-hativo="${esc(u.id)}">${u.active?"Suspender":"Reativar"}</button>
-       <button class="b sec sm" data-hadm="${esc(u.id)}">${u.admin?"Tirar admin":"Tornar admin"}</button></div>`).join("")}
+       <button class="b sec sm" data-hadm="${esc(u.id)}">${u.admin?"Tirar admin":"Tornar admin"}</button>${u.mfa?`<button class="b sec sm" data-hmfa="${esc(u.id)}" title="Para quem perdeu o celular: a pessoa configura de novo no próximo login">Refazer 2 etapas</button>`:""}</div>`).join("")}
      <div style="margin-top:12px"><button class="b" id="hnova">${ic("plus")||""} Criar conta</button></div>`;
     const por=id=>us.find(u=>u.id===id);
     const patch=async(id,corpo,ok)=>{try{await HOST.api("/api/users/"+id,{method:"PATCH",json:corpo});if(ok)toast(ok);hostContas()}catch(e){toast(e.message,true)}};
     box.querySelectorAll("[data-hsenha]").forEach(b=>b.onclick=()=>hostSenha(por(b.dataset.hsenha),()=>hostContas()));
     box.querySelectorAll("[data-hativo]").forEach(b=>b.onclick=()=>{const u=por(b.dataset.hativo);patch(u.id,{active:!u.active},u.active?"Conta suspensa.":"Conta reativada.")});
     box.querySelectorAll("[data-hadm]").forEach(b=>b.onclick=()=>{const u=por(b.dataset.hadm);patch(u.id,{admin:!u.admin},u.admin?"Deixou de ser administrador.":"Agora é administrador.")});
+    box.querySelectorAll("[data-hmfa]").forEach(b=>b.onclick=async()=>{const u=por(b.dataset.hmfa);if(await askConfirm(`Refazer a verificação em duas etapas de ${u.name}? Use quando a pessoa perdeu o celular. Ela vai configurar de novo no próximo login.`,"Refazer"))patch(u.id,{mfaReset:true},"Pronto. A pessoa configura de novo ao entrar.")});
     box.querySelector("#hnova").onclick=()=>hostNova(()=>{hostContas();go("acesso",true)});
   }
   function hostSenha(u,depois){
@@ -15865,8 +16041,8 @@ if(window.HOST){
   const _quem=desenharQuem;
   desenharQuem=function(){
     _quem();const q=$("quem");if(!q||!RT.db||q.querySelector("#qsair"))return;
-    q.insertAdjacentHTML("beforeend",`<div style="display:flex;gap:6px;margin-top:6px"><button class="b sec sm" id="qsenha" style="flex:1">Minha senha</button><button class="b sec sm" id="qsair" style="flex:1">Sair</button></div>`);
-    $("qsenha").onclick=hostMinhaSenha;$("qsair").onclick=()=>HOST.sair();
+    q.insertAdjacentHTML("beforeend",`<div style="display:flex;gap:6px;margin-top:6px"><button class="b sec sm" id="qsenha" style="flex:1">Minha senha</button><button class="b sec sm" id="q2fa" style="flex:1" title="Verificação em duas etapas">2 etapas</button><button class="b sec sm" id="qsair" style="flex:1">Sair</button></div>`);
+    $("qsenha").onclick=hostMinhaSenha;$("q2fa").onclick=()=>HOST.minha2fa();$("qsair").onclick=()=>HOST.sair();
   };
 
   /* Migração: backup .zip do claude.ai (dados + arquivos). Envia os arquivos ao servidor, troca os códigos antigos pelos novos e restaura. */

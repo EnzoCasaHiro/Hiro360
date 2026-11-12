@@ -155,18 +155,16 @@ const nfUnEst=u=>{const x=String(u||"").trim().toLowerCase();return!x||/^(un|und
    (dígito verificador da chave, CNPJ, número, mês, somas) e por uma tela de conferência antes de lançar.
    O arquivo original fica guardado (armazenamento de arquivos do painel ou, se não houver, no banco). */
 const NF_ACCEPT=".xml,.pdf,.png,.jpg,.jpeg,.webp,.json,.xlsx,.xls,image/*";
-const PDFJS_URL="/vendor/pdfjs-3.11.174/pdf.min.js",PDFJS_WORKER="/vendor/pdfjs-3.11.174/pdf.worker.min.js";
+const PDFJS_URL="/vendor/pdfjs-4.10.38/pdf.min.mjs",PDFJS_WORKER="/vendor/pdfjs-4.10.38/pdf.worker.min.mjs";
 let _pdfjs=null;
 function pdfjsCarrega(){
   if(window.pdfjsLib)return Promise.resolve(window.pdfjsLib);
-  return _pdfjs||(_pdfjs=new Promise((ok,no)=>{
-    const s=document.createElement("script");s.src=PDFJS_URL;
-    s.onload=()=>{try{const L=window.pdfjsLib;L.GlobalWorkerOptions.workerSrc=PDFJS_WORKER;
-      // PDF malicioso não executa código (falha conhecida desta versão do leitor: CVE-2024-4367)
-      const gd=L.getDocument.bind(L);L.getDocument=o=>gd({...(o&&o.data?o:{data:o}),isEvalSupported:false,enableXfa:false})}catch(e){}ok(window.pdfjsLib)};
-    s.onerror=()=>{_pdfjs=null;no(new Error("Não consegui carregar o leitor de PDF. Envie uma foto da nota ou o XML."))};
-    document.head.appendChild(s);
-  }));
+  return _pdfjs||(_pdfjs=import(PDFJS_URL).then(M=>{
+    M.GlobalWorkerOptions.workerSrc=PDFJS_WORKER;
+    // PDF nunca executa código nem formulário dinâmico, mesmo que apareça uma falha nova no leitor
+    const L={...M,getDocument:o=>M.getDocument({...(o&&o.data?o:{data:o}),isEvalSupported:false,enableXfa:false})};
+    window.pdfjsLib=L;return L;
+  },()=>{_pdfjs=null;throw new Error("Não consegui carregar o leitor de PDF. Envie uma foto da nota ou o XML.")}));
 }
 const nfTipoArq=f=>{const n=(f.name||"").toLowerCase();return/\.xml$/.test(n)||/xml/.test(f.type)?"xml":/\.pdf$/.test(n)||f.type==="application/pdf"?"pdf":/^image\//.test(f.type)||/\.(png|jpe?g|webp)$/.test(n)?"img":""};
 const blobDe=(cv,tipo,q)=>new Promise(r=>cv.toBlob(r,tipo,q));
@@ -362,6 +360,8 @@ async function nfArquivar(file,tipo,n,previa){
   const padrao=o=>({...o,nome:nfArqNomePadrao(n.nota,n.date,o.nome,id)});
   if(RT.assets){
     if(tipo!=="xml"){file=(await comprimir(file)).file;meta.nome=file.name;meta.type=file.type||meta.type;meta.tam=file.size}
+    // o arquivo já sobe com o nome padrão (é o nome que o servidor guarda e devolve ao abrir pelo link)
+    meta.nome=nfArqNomePadrao(n.nota,n.date,file.name,id);file=new File([file],meta.nome,{type:meta.type});
     const r=await RT.assets.upload(file,{type:meta.type}).catch(e=>{throw new Error(`Não consegui guardar "${file.name}": ${e.message||e.code}`)});
     put("nfarq",id,padrao({...meta,asset:r.id}));return id;
   }
@@ -387,6 +387,11 @@ function nfArqNomePadrao(nota,date,nomeAtual,excetoId){
   const usados=new Set(Object.values(S.nfarq).filter(d=>d.id!==excetoId).map(d=>String(d.nome||"").toLowerCase()));
   let nome=base+parcial+ext,k=2;while(usados.has(nome.toLowerCase()))nome=base+" ("+(k++)+")"+parcial+ext;
   return nome;
+}
+/* nome que o arquivo vai ter, para mostrar na conferência antes de lançar (foto pode virar .jpg/.webp ao compactar) */
+function nfArqNomePrevia(nota,date,n){
+  const nome=nfArqNomePadrao(nota,date,(n.arq&&n.arq.name)||"");
+  return n.arqTipo==="img"?nome.replace(/\.[A-Za-z0-9]{2,5}$/,"")+" (imagem)":nome;
 }
 /* número e data de um arquivo guardado: vêm da nota lançada que aponta para ele (o número do fornecedor vale mais que o Nº da planilha) */
 function nfArqInfo(d){
@@ -488,7 +493,7 @@ async function nfImportar(files,opts){
    <button type="button" class="b sec sm" data-radd="${i}" style="margin-top:6px">${ic("plus")} Item</button>
    <label style="margin-top:10px">Vencimentos (duplicatas)</label><div data-dups>${n.dups.map((d,j)=>dupRow(d)).join("")}</div>
    <button type="button" class="b sec sm" data-dupadd style="margin-top:6px">${ic("plus")} Vencimento</button>
-   ${n.arq?`<div class="sub" style="margin-top:8px">${ic("clip")} Arquivo guardado: ${esc(n.arq.name)}</div>`:""}</details>`;
+   ${n.arq?`<div class="sub" style="margin-top:8px">${ic("clip")} O arquivo será guardado como <b data-arqnome>${esc(nfArqNomePrevia(n.nota,n.date,n))}</b> <span style="opacity:.7">(enviado como ${esc(n.arq.name)})</span></div>`:""}</details>`;
   const dupRow=d=>`<div class="row" data-dup style="margin-bottom:4px"><input type="date" data-d="venc" value="${esc(d.venc||"")}"><input data-d="valor" inputmode="decimal" value="${d.valor||""}" placeholder="Valor"><button type="button" class="b sec sm" data-dupdel style="flex:none">${ic("trash")}</button></div>`;
   const ov=openModal(`<h3>Conferir e lançar notas fiscais</h3>
    <div class="sub" style="margin-bottom:10px">${novas.length} nota(s) lida(s)${notas.length>novas.length?` · ${notas.length-novas.length} já estava(m) no sistema`:""}${erros.length?` · ${erros.length} arquivo(s) com erro: ${esc(erros.join(" | "))}`:""}. Corrija o que precisar: o que você ajustar aqui é o que vai para o sistema.</div>
@@ -504,6 +509,9 @@ async function nfImportar(files,opts){
   ov.querySelectorAll("[data-radd]").forEach(b=>b.onclick=()=>{const n=novas[+b.dataset.radd],r={item:"",qtd:1,valor:"",total:"",_cat:"A classificar",_sub:"A classificar",_cc:""};n.rows.push(r);
     const tb=b.previousElementSibling.querySelector("tbody");tb.insertAdjacentHTML("beforeend",itemRow(r,n.rows.length-1));const tr=tb.lastElementChild;tr.querySelector("[data-rdel]").onclick=()=>tr.remove();tr.querySelector('[data-r="item"]').focus()});
   nfIAPreenche(ov,novas);
+  ov.querySelectorAll("details[data-nota]").forEach(box=>{const n=novas[+box.dataset.nota],alvo=box.querySelector("[data-arqnome]");if(!alvo)return;
+    const atual=()=>{alvo.textContent=nfArqNomePrevia(box.querySelector('[data-h="nota"]').value.trim(),nfData(box.querySelector('[data-h="date"]').value)||n.date,n)};
+    box.querySelectorAll('[data-h="nota"],[data-h="date"]').forEach(i=>i.addEventListener("input",atual))});
   ov.querySelectorAll("[data-dupdel]").forEach(b=>b.onclick=()=>b.closest("[data-dup]").remove());
   ov.querySelectorAll("[data-dupadd]").forEach(b=>b.onclick=()=>{b.previousElementSibling.insertAdjacentHTML("beforeend",dupRow({}));const r=b.previousElementSibling.lastElementChild;r.querySelector("[data-dupdel]").onclick=()=>r.remove()});
   ov.querySelector("#xcx").onclick=()=>ov.remove();

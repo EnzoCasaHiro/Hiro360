@@ -66,3 +66,51 @@ test('administração vê tudo', async () => {
   assert.equal(perm.podeLer(c, 'config/fin_2026', {}), true);
   assert.equal(perm.filtra(c, 'integrantes/x', { cpf: '1' }).cpf, '1');
 });
+
+test('documentos escaneados dos integrantes exigem permissão de dados pessoais', async () => {
+  const lei = await ctx({ 'acessos/u_ana': { perfil: 'leitura', ativo: true } }, ana);
+  const dp = await ctx({ 'acessos/u_ana': { perfil: 'dp', ativo: true } }, ana);
+  const doc = { uid: 'ig1', cat: 'Documentos pessoais', assetId: 'a1' };
+  assert.equal(perm.podeLer(lei, 'docs/d1', doc), false);
+  assert.equal(perm.podeLer(lei, 'hist/h1', { col: 'docs', rid: 'd1' }), false);
+  assert.equal(perm.podeLer(dp, 'docs/d1', doc), true);
+  assert.equal(perm.podeGravar(dp, 'docs/d1'), true);
+});
+
+test('configurações das telas novas têm dona: prescrições, reajustes e ponto fechados para o estoque', async () => {
+  const est = await ctx({ 'acessos/u_ana': { perfil: 'est', ativo: true } }, ana);
+  const enf = await ctx({ 'acessos/u_ana': { perfil: 'enf', ativo: true } }, ana);
+  const fin = await ctx({ 'acessos/u_ana': { perfil: 'fin', ativo: true } }, ana);
+  assert.equal(perm.podeLer(est, 'config/x_m_pres', {}), false);
+  assert.equal(perm.podeLer(est, 'config/x_m_contador', {}), false);
+  assert.equal(perm.podeGravar(est, 'config/x_m_ponto'), false);
+  assert.equal(perm.podeLer(est, 'config/x_foto_r1', {}), false);
+  assert.equal(perm.podeLer(enf, 'config/x_m_pres', {}), true);
+  assert.equal(perm.podeGravar(enf, 'config/x_m_pres'), true);
+  assert.equal(perm.podeLer(fin, 'config/x_m_ponto', {}), true); // folha do contador
+  assert.equal(perm.podeGravar(fin, 'config/x_m_ponto'), false);
+  assert.equal(perm.podeGravar(enf, 'config/x_m_acesso'), false);
+  assert.equal(perm.podeLer(enf, 'config/x_m_acesso', {}), true);
+  assert.equal(perm.podeGravar(enf, 'config/x_m_telainventada'), false);
+  assert.equal(perm.podeGravar(est, 'config/x_m_home'), true); // sugestões e preferências de cada um
+});
+
+test('CPF do termo de confidencialidade só para quem vê dados pessoais', async () => {
+  const enf = await ctx({ 'acessos/u_ana': { perfil: 'enf', ativo: true } }, ana);
+  const f = perm.filtra(enf, 'config/x_m_acesso', { confid: [{ nome: 'A', doc: '123' }] });
+  assert.deepEqual(f.confid, [{ nome: 'A' }]);
+});
+
+test('coleção desconhecida: só a administração cria', async () => {
+  const dp = await ctx({ 'acessos/u_ana': { perfil: 'dp', ativo: true } }, ana);
+  assert.equal(perm.podeGravar(dp, 'qualquer/x'), false);
+  assert.equal(perm.podeGravar(await ctx({}, adm), 'qualquer/x'), true);
+});
+
+test('histórico: só registro novo, de algo que a pessoa pode alterar', async () => {
+  const dp = await ctx({ 'acessos/u_ana': { perfil: 'dp', ativo: true } }, ana);
+  assert.equal(perm.podeGravarHist(dp, { col: 'marcacoes', rid: 'm1', op: 'edit' }, null), true);
+  assert.equal(perm.podeGravarHist(dp, { col: 'marcacoes', rid: 'm1', op: 'edit' }, { col: 'marcacoes' }), false);
+  assert.equal(perm.podeGravarHist(dp, { col: 'config', rid: 'fin_2026', op: 'edit' }, null), false);
+  assert.equal(perm.podeGravarHist(dp, { col: 'hist', rid: 'x' }, null), false);
+});

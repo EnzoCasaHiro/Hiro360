@@ -17,17 +17,18 @@ if(window.HOST){
     box=$("hostcontas");if(!box)return;
     const perf=r=>{const a=S.acessos[r.id];return a?((perfis()[a.perfil]||{}).nome||a.perfil):(r.admin?"Administração":"sem perfil")};
     box.innerHTML=`<h2>Contas de login (${us.length})</h2>
-     ${us.map(u=>`<div class="doc" ${u.active?"":'style="opacity:.6"'}><div class="grow"><div class="nm">${esc(u.name)} ${u.admin?'<span class="chip">administrador</span>':""} ${u.active?"":'<span class="chip">suspenso</span>'}</div>
+     ${us.map(u=>`<div class="doc" ${u.active?"":'style="opacity:.6"'}><div class="grow"><div class="nm">${esc(u.name)} ${u.admin?'<span class="chip">administrador</span>':""} ${u.active?"":'<span class="chip">suspenso</span>'} ${u.mfa?'<span class="chip">2 etapas</span>':""}</div>
        <div class="sub">usuário <b>${esc(u.username)}</b> · ${esc(perf(u))}${u.last_login?" · último acesso "+esc(new Date(u.last_login).toLocaleString("pt-BR")):" · nunca entrou"}</div></div>
        <button class="b sec sm" data-hsenha="${esc(u.id)}">Nova senha</button>
        <button class="b sec sm" data-hativo="${esc(u.id)}">${u.active?"Suspender":"Reativar"}</button>
-       <button class="b sec sm" data-hadm="${esc(u.id)}">${u.admin?"Tirar admin":"Tornar admin"}</button></div>`).join("")}
+       <button class="b sec sm" data-hadm="${esc(u.id)}">${u.admin?"Tirar admin":"Tornar admin"}</button>${u.mfa?`<button class="b sec sm" data-hmfa="${esc(u.id)}" title="Para quem perdeu o celular: a pessoa configura de novo no próximo login">Refazer 2 etapas</button>`:""}</div>`).join("")}
      <div style="margin-top:12px"><button class="b" id="hnova">${ic("plus")||""} Criar conta</button></div>`;
     const por=id=>us.find(u=>u.id===id);
     const patch=async(id,corpo,ok)=>{try{await HOST.api("/api/users/"+id,{method:"PATCH",json:corpo});if(ok)toast(ok);hostContas()}catch(e){toast(e.message,true)}};
     box.querySelectorAll("[data-hsenha]").forEach(b=>b.onclick=()=>hostSenha(por(b.dataset.hsenha),()=>hostContas()));
     box.querySelectorAll("[data-hativo]").forEach(b=>b.onclick=()=>{const u=por(b.dataset.hativo);patch(u.id,{active:!u.active},u.active?"Conta suspensa.":"Conta reativada.")});
     box.querySelectorAll("[data-hadm]").forEach(b=>b.onclick=()=>{const u=por(b.dataset.hadm);patch(u.id,{admin:!u.admin},u.admin?"Deixou de ser administrador.":"Agora é administrador.")});
+    box.querySelectorAll("[data-hmfa]").forEach(b=>b.onclick=async()=>{const u=por(b.dataset.hmfa);if(await askConfirm(`Refazer a verificação em duas etapas de ${u.name}? Use quando a pessoa perdeu o celular. Ela vai configurar de novo no próximo login.`,"Refazer"))patch(u.id,{mfaReset:true},"Pronto. A pessoa configura de novo ao entrar.")});
     box.querySelector("#hnova").onclick=()=>hostNova(()=>{hostContas();go("acesso",true)});
   }
   function hostSenha(u,depois){
@@ -62,8 +63,8 @@ if(window.HOST){
   const _quem=desenharQuem;
   desenharQuem=function(){
     _quem();const q=$("quem");if(!q||!RT.db||q.querySelector("#qsair"))return;
-    q.insertAdjacentHTML("beforeend",`<div style="display:flex;gap:6px;margin-top:6px"><button class="b sec sm" id="qsenha" style="flex:1">Minha senha</button><button class="b sec sm" id="qsair" style="flex:1">Sair</button></div>`);
-    $("qsenha").onclick=hostMinhaSenha;$("qsair").onclick=()=>HOST.sair();
+    q.insertAdjacentHTML("beforeend",`<div style="display:flex;gap:6px;margin-top:6px"><button class="b sec sm" id="qsenha" style="flex:1">Minha senha</button><button class="b sec sm" id="q2fa" style="flex:1" title="Verificação em duas etapas">2 etapas</button><button class="b sec sm" id="qsair" style="flex:1">Sair</button></div>`);
+    $("qsenha").onclick=hostMinhaSenha;$("q2fa").onclick=()=>HOST.minha2fa();$("qsair").onclick=()=>HOST.sair();
   };
 
   /* Migração: backup .zip do claude.ai (dados + arquivos). Envia os arquivos ao servidor, troca os códigos antigos pelos novos e restaura. */
