@@ -91,7 +91,8 @@ function specFolhaIndividual(u,R){
   });
   const nC=cols.length,tot=new Array(nC).fill(null);[nC-5,nC-4,nC-3,nC-2].forEach(i=>tot[i]="sum");
   const tint={col:2,map:{[STL.ok]:[214,237,216],[STL.falta]:[232,223,204],[STL.pendencia]:[240,230,211],[STL.atestado]:[214,234,248],[STL.justificada]:[214,237,216],[STL.esquecido]:[197,168,130]}};
-  return{titulo:`Folha de ponto — ${u.nome}`,sub:`${(u.ig&&u.ig.cargo)||"—"} · ${brDate(R.start)} a ${brDate(R.end)}${u.ig&&u.ig.id?" · Escala: "+escalasTexto(u.ig,R.start,R.end):""}`,sensivel:true,cols,rows,tot,tint,assinatura:{esq:`Integrante: ${u.nome}`,dir:"Casa Hiro — responsável"}};
+  const fb=folhaBanco(u,R),quadro={titulo:"Horas a mais e banco de horas — "+fb.mm,linhas:fb.linhas,notas:fb.notas};
+  return{titulo:`Folha de ponto — ${u.nome}`,sub:`${(u.ig&&u.ig.cargo)||"—"} · ${brDate(R.start)} a ${brDate(R.end)}${u.ig&&u.ig.id?" · Escala: "+escalasTexto(u.ig,R.start,R.end):""}`,sensivel:true,cols,rows,tot,tint,quadro,assinatura:{esq:`Integrante: ${u.nome}`,dir:"Casa Hiro — responsável"}};
 }
 
 function pgContador(){return pgContadorBase()+pgFolhasFiltro()}

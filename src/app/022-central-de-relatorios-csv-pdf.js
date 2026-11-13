@@ -65,7 +65,7 @@ function specJornadas(sel){
 function specResumoPonto(sel){
   const R0=POINT.result;if(!R0)return semDados("Resumo do ponto","Calcule o ponto na aba Ponto para gerar este relatório.");
   const S_=sel?new Set([...sel].map(String)):null,R={...R0,users:R0.users.filter(u=>!S_||S_.has(String(u.uid)))};
-  const rows=R.users.map(u=>{const d=u.t.worked-u.t.expected;return[u.nome,(u.ig&&u.ig.cargo)||"",u.t.escalados,u.t.trab,u.t.faltas,u.t.atestados,u.t.justificadas,u.t.esquecidos,u.t.expected,u.t.worked,(d>=0?"+":"−")+fmtHHMM(Math.abs(d)),u.t.late]});
+  const rows=R.users.map(u=>{const d=u.t.saldo;return[u.nome,(u.ig&&u.ig.cargo)||"",u.t.escalados,u.t.trab,u.t.faltas,u.t.atestados,u.t.justificadas,u.t.esquecidos,u.t.expected,u.t.worked,(d>=0?"+":"−")+fmtHHMM(Math.abs(d)),u.t.late]});
   return{titulo:"Resumo do ponto",sub:`${brDate(R.start)} a ${brDate(R.end)} · ${relSub({},false)}`,sensivel:true,
    cols:[{h:"Integrante",w:30},{h:"Cargo",w:22},{h:"Dias escalados",t:"num",w:10},{h:"Dias trabalhados",t:"num",w:11},{h:"Faltas",t:"num",w:8},{h:"Atestados",t:"num",w:10},{h:"Justificadas",t:"num",w:11},{h:"Esquecimentos",t:"num",w:13},{h:"Previsto",t:"hm",w:10},{h:"Trabalhado",t:"hm",w:11},{h:"Saldo",w:10,c:true},{h:"Atraso (min)",t:"num",w:11}],
    rows,tot:[null,null,"sum","sum","sum","sum","sum","sum","sum","sum",null,"sum"]};
@@ -244,6 +244,21 @@ async function relPdf(specs,opts){
       },
       willDrawPage:d=>{if(d.pageNumber>pag0){fundo();faixa(spec.titulo,spec.sub)}},
       didDrawPage:d=>rodape(d.pageNumber,spec.sensivel)});
+    if(spec.quadro){
+      const Q=spec.quadro,lh=15,x0=36,w=Math.min(420,W-72);
+      doc.setFont("times","italic");doc.setFontSize(7.5);
+      const NL=(Q.notas||[]).flatMap(n=>doc.splitTextToSize(n,w-20)),alt=26+Q.linhas.length*lh+NL.length*10+8;
+      let y=doc.lastAutoTable.finalY+18;
+      if(y+alt>H-50){doc.addPage();fundo();faixa(spec.titulo,spec.sub);y=90}
+      doc.setFillColor(255,255,255);doc.setDrawColor(...LINHA);doc.roundedRect(x0,y,w,alt,4,4,"FD");
+      doc.setFillColor(...VMED);doc.roundedRect(x0,y,w,20,4,4,"F");doc.rect(x0,y+12,w,8,"F");
+      doc.setFont("times","bold");doc.setFontSize(10);doc.setTextColor(255,255,255);doc.text(Q.titulo,x0+10,y+14);
+      Q.linhas.forEach(([k,v],i)=>{const yy=y+36+i*lh,forte=i===2||i===Q.linhas.length-1;
+        doc.setFont("times",forte?"bold":"normal");doc.setFontSize(9.5);doc.setTextColor(...(forte?VERDE:TXT));doc.text(k,x0+10,yy);doc.text(v,x0+w-10,yy,{align:"right"})});
+      doc.setFont("times","italic");doc.setFontSize(7.5);doc.setTextColor(...MUTE);
+      NL.forEach((n,i)=>doc.text(n,x0+10,y+34+Q.linhas.length*lh+i*10));
+      doc.lastAutoTable.finalY=y+alt;
+    }
     if(spec.assinatura){
       let y=doc.lastAutoTable.finalY+56;
       if(y>H-80){doc.addPage();fundo();faixa(spec.titulo,spec.sub);y=140}

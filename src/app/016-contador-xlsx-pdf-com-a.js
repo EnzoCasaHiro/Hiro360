@@ -19,7 +19,7 @@ function pgContadorBase(){
     <td>${m.length?`<span class="pill s-pendencia">falta: ${m.join(", ")}</span>`:`<span class="pill s-ok">completo</span>`}</td></tr>`}).join("")}</tbody></table></div>`:`<div class="empty">Nenhum integrante cadastrado.</div>`}
    <div class="row" style="margin-top:14px"><button class="b" id="xgo" style="flex:none" ${integList().length?"":"disabled"}>${ic("sheet")} Baixar XLSX</button>
     <button class="b wood" id="pgo" style="flex:none" ${integList().length?"":"disabled"}>${ic("file")} Baixar PDF</button></div>
-   <p class="sub">Capa, Integrantes (cadastro completo), Jornadas diárias e uma folha de ponto por integrante com campo de assinatura. Entrada e saída de cada batida em colunas separadas — a previsão de horas de cada dia muda conforme a escala da pessoa. As colunas de resultado (Trabalhado, Totais, Saldo, contagens) são fórmulas do Excel, não números fixos: reabrir ou editar uma célula recalcula tudo. Cores e tipografia seguem o Manual da Marca.</p></div>`;
+   <p class="sub">Capa, Integrantes (cadastro completo), Jornadas diárias e uma folha de ponto por integrante com campo de assinatura. Entrada e saída de cada batida em colunas separadas — a previsão de horas de cada dia muda conforme a escala da pessoa. As colunas de resultado (Trabalhado, Totais, contagens) são fórmulas do Excel; o saldo e o banco de horas descontam a tolerância da CLT, não números fixos: reabrir ou editar uma célula recalcula tudo. Cores e tipografia seguem o Manual da Marca.</p></div>`;
 }
 function bindContadorBase(){
   $("esave").onclick=()=>{const emp={};document.querySelectorAll("[data-e]").forEach(el=>emp[el.dataset.e]=el.value.trim());saveCfg({empresa:emp});toast("Dados da empresa salvos.");setTimeout(()=>go("contador",true),50)};
@@ -242,8 +242,8 @@ function buildPersonSheet(wb,e,ig,u){
   const pc=ws.getCell(totRow,prevCol);pc.value={formula:`ROUND(SUM(${colLetter(prevCol)}${headRowNo+1}:${colLetter(prevCol)}${lastData})*1440,0)/1440`,result:u.t.expected/1440};
   pc.numFmt="[h]:mm";pc.font=wc.font;pc.fill=totLabel.fill;pc.alignment=wc.alignment;pc.border=thinBorder(BR.verdeEsc);
   const ocCell=ws.getCell(totRow,obsCol);
-  ocCell.value={formula:`IF(${colLetter(workCol)}${totRow}>=${colLetter(prevCol)}${totRow},"Saldo: +"&TEXT(ROUND((${colLetter(workCol)}${totRow}-${colLetter(prevCol)}${totRow})*1440,0)/1440,"[h]:mm"),"Saldo: -"&TEXT(ROUND((${colLetter(prevCol)}${totRow}-${colLetter(workCol)}${totRow})*1440,0)/1440,"[h]:mm"))`,
-    result:(u.t.worked>=u.t.expected?"Saldo: +":"Saldo: -")+fmtHHMM(Math.abs(u.t.worked-u.t.expected))};
+  // saldo com a tolerância da CLT (art. 58 §1º) — não é a diferença simples das duas colunas
+  ocCell.value="Saldo do mês: "+hhmmS(u.t.saldo||0);
   ocCell.font=wc.font;ocCell.fill=totLabel.fill;ocCell.alignment={horizontal:"left",vertical:"middle"};ocCell.border=thinBorder(BR.verdeEsc);
   ws.getRow(totRow).height=22;
   // contadores: esquema fixo A-I (label A:D, valor E, label2 F:H, valor2 I)
@@ -259,15 +259,25 @@ function buildPersonSheet(wb,e,ig,u){
   labelCell(ws,"F"+cRow2,"Atestados");ws.mergeCells(`F${cRow2}:H${cRow2}`);
   const a1=ws.getCell("I"+cRow2);a1.value={formula:`COUNTIF(${colLetter(obsCol)}${headRowNo+1}:${colLetter(obsCol)}${lastData},"Atestado*")`,result:u.t.atestados};a1.font={bold:true,size:10,color:{argb:BR.ink}};a1.alignment={horizontal:"center"};
   ws.getRow(cRow1).height=20;ws.getRow(cRow2).height=20;
+  // horas a mais e banco de horas: esquema fixo A-I (label A:F, valor G:I)
+  const fb=folhaBanco(u,POINT.result),bRow=totRow+5;
+  ws.mergeCells(`A${bRow}:I${bRow}`);headerCell(ws,"A"+bRow,"Horas a mais e banco de horas — "+fb.mm,{h:"left"});ws.getRow(bRow).height=20;
+  fb.linhas.forEach(([k,v],i)=>{const rr=bRow+1+i,forte=i===2||i===fb.linhas.length-1;
+    ws.mergeCells(`A${rr}:F${rr}`);ws.mergeCells(`G${rr}:I${rr}`);labelCell(ws,"A"+rr,k);valueCell(ws,"G"+rr,v);
+    const vc=ws.getCell("G"+rr);vc.alignment={horizontal:"right",vertical:"middle"};if(forte)vc.font={name:"Calibri",size:10.5,bold:true,color:{argb:BR.verdeEsc}};ws.getRow(rr).height=19});
+  const nRow=bRow+1+fb.linhas.length;ws.mergeCells(`A${nRow}:I${nRow+1}`);
+  const nc=ws.getCell("A"+nRow);nc.value=fb.notas.join(" ");nc.font={italic:true,size:8.5,color:{argb:BR.mute}};nc.alignment={horizontal:"left",vertical:"top",wrapText:true};
+  ws.getRow(nRow).height=fb.notas.length>1?24:18;ws.getRow(nRow+1).height=fb.notas.length>1?24:12;
+  const off=fb.linhas.length+4;
   // declaração e assinatura: esquema fixo A-I
-  const decRow=totRow+6;
+  const decRow=totRow+6+off;
   ws.mergeCells(`A${decRow}:I${decRow+1}`);
   const dec=ws.getCell("A"+decRow);dec.value="Declaro que conferi os registros de ponto acima referentes ao período apurado e que estão de acordo com a jornada efetivamente cumprida.";
   dec.font={italic:true,size:9.5,color:{argb:BR.ink}};dec.alignment={horizontal:"left",vertical:"center",wrapText:true};
-  const sigDateRow=totRow+9;
+  const sigDateRow=totRow+9+off;
   ws.mergeCells(`A${sigDateRow}:I${sigDateRow}`);
   ws.getCell("A"+sigDateRow).value="Caraguatatuba - SP, ____ de ______________ de ________";ws.getCell("A"+sigDateRow).alignment={horizontal:"right"};
-  const sigRow=totRow+13,labRow=sigRow+1,nameRow=sigRow+2,docRow=sigRow+3;
+  const sigRow=totRow+13+off,labRow=sigRow+1,nameRow=sigRow+2,docRow=sigRow+3;
   ws.mergeCells(`A${sigRow}:D${sigRow}`);ws.mergeCells(`F${sigRow}:I${sigRow}`);
   ws.getCell("A"+sigRow).border=medBottom(BR.ink);ws.getCell("F"+sigRow).border=medBottom(BR.ink);
   ws.getRow(sigRow).height=30;

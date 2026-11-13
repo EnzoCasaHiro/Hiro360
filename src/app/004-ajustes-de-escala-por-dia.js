@@ -140,8 +140,17 @@ function fitWithOneMissing(ps,per){
 function applyDeviations(j,expS,expE,fin,lout,cfg){
   const inD=minutesBetween(expS,fin),outD=minutesBetween(expE,lout);
   const within=Math.abs(inD)<=cfg.tolPerPunchMin&&Math.abs(outD)<=cfg.tolPerPunchMin&&Math.abs(inD)+Math.abs(outD)<=cfg.tolDailyMin;
-  if(within){if(inD||outD)j.flags.push("tolerancia_art58");return}
+  // dentro da tolerância: esses minutos não contam nem como atraso nem como extra (nem no banco de horas)
+  if(within){if(inD||outD){j.flags.push("tolerancia_art58");j.tolMin=outD-inD}return}
   j.lateMin=Math.max(0,inD);j.earlyLeaveMin=Math.max(0,-outD);j.extraMin=Math.max(0,-inD)+Math.max(0,outD);
+}
+// saldo do dia para o banco de horas: trabalhado − previsto, tirando os minutos dentro da tolerância (CLT art. 58 §1º).
+// Dia com marcação faltando (pendência) fica fora até ser resolvido: a conta com metade das batidas não vale.
+function saldoDia(r){
+  if(r.status===PENDENCIA)return 0;
+  const d=(r.workedMin||0)-(r.expectedMin||0);
+  if(r.flags&&r.flags.includes("previsto_manual"))return Math.abs(d)<=10?0:d;
+  return r.status===OK?d-(r.tolMin||0):d;
 }
 // 60 min reais de trabalho noturno valem 68,57 min "computados" (hora de 52min30s). Em turno noturno (12x36 19h-7h, por exemplo)
 // o que passa das 5h continua noturno — prorrogação (Súmula 60, II, do TST). Estimativa gerencial; o contador confirma.
@@ -160,7 +169,7 @@ function nightMinutes(intervals,prorrog){
   return{real:real+pror,pror,ficta:Math.round((real+pror)*60/52.5)};
 }
 function newJourney(day,status,shiftNo,extra){
-  return Object.assign({day,status,shiftNo,intervals:[],workedMin:0,expectedMin:0,lateMin:0,earlyLeaveMin:0,extraMin:0,feriadoMin:0,turnoNoturno:false,endsOn:null,rawIds:[],dupIds:[],flags:[]},extra||{});
+  return Object.assign({day,status,shiftNo,intervals:[],workedMin:0,expectedMin:0,lateMin:0,earlyLeaveMin:0,extraMin:0,tolMin:0,feriadoMin:0,turnoNoturno:false,endsOn:null,rawIds:[],dupIds:[],flags:[]},extra||{});
 }
 const hm=t=>String(t.getHours()).padStart(2,"0")+":"+String(t.getMinutes()).padStart(2,"0");
 function pairPunches(punches,schedule,cfg,holidays,until){

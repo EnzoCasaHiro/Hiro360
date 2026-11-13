@@ -68,22 +68,45 @@ function bhSaldos(ym){
     if(fimCalc(m)<m+"-01")return;
     const r=calcSilencioso(m+"-01",fimCalc(m));
     if(!r||r.erro){erros.push(r&&r.erro);return}
-    r.users.forEach(u=>{if(!u.ig||!u.ig.id)return;const x=por.get(u.ig.id)||{ig:u.ig,mes:0,trab:0,esp:0,acum:0};
-      const s=u.t.worked-u.t.expected;x.acum+=s;if(m===ym){x.mes=s;x.trab=u.t.worked;x.esp=u.t.expected}por.set(u.ig.id,x)});
+    r.users.forEach(u=>{if(!u.ig||!u.ig.id)return;const x=por.get(u.ig.id)||{ig:u.ig,mes:0,mais:0,menos:0,trab:0,esp:0,ant:0,lanc:0,acum:0};
+      const s=u.t.saldo;x.acum+=s;if(m===ym){x.mes=s;x.mais=u.t.mais;x.menos=u.t.menos;x.trab=u.t.worked;x.esp=u.t.expected}else x.ant+=s;por.set(u.ig.id,x)});
   });
-  xs("bh").forEach(l=>{if(l.data&&typeof l.data==="string"&&l.data.slice(0,7)<=ym&&l.data.slice(0,7)>=c.inicio){const x=por.get(l.integ);if(x)x.acum+=Math.round((+l.h||0)*60)}});
+  xs("bh").forEach(l=>{if(l.data&&typeof l.data==="string"&&l.data.slice(0,7)<=ym&&l.data.slice(0,7)>=c.inicio){const x=por.get(l.integ);if(!x)return;const h=Math.round((+l.h||0)*60);x.acum+=h;if(l.data.slice(0,7)===ym)x.lanc+=h;else x.ant+=h}});
   return{por,erros};
+}
+// banco de horas de um mês para a folha de ponto: cálculo único por geração (cache curto)
+const BHMEMO={k:"",v:null};
+function bhSaldosMemo(ym){const k=ym+"|"+(Date.now()/15000|0);if(BHMEMO.k!==k){BHMEMO.k=k;BHMEMO.v=bhSaldos(ym)}return BHMEMO.v}
+// com sinal + ou - (hífen comum: o "−" tipográfico não existe na fonte do PDF)
+const hhmmS=min=>{const r=Math.round(min);return(r>0?"+":r<0?"-":"")+hhmm(Math.abs(r))};
+// quadro "horas a mais e banco de horas" da folha individual (Excel e PDF)
+function folhaBanco(u,R){
+  const ym=R.start.slice(0,7),c=bhCfg(),x=u.ig&&u.ig.id?bhSaldosMemo(ym).por.get(u.ig.id):null;
+  const ant=x?x.ant:0,lanc=x?x.lanc:0,saldo=u.t.saldo||0,fim=ant+saldo+lanc,mm=ym.slice(5)+"/"+ym.slice(0,4);
+  const pend=u.rows.filter(r=>r.status===PENDENCIA).length,mesCheio=R.start===ym+"-01"&&R.end.slice(0,7)===ym;
+  const notas=["Horas a mais e a menos já descontam a tolerância de até 5 min por marcação e 10 min por dia (CLT art. 58 §1º). Atestados e justificativas contam como cumpridos."];
+  if(pend)notas.push(`${pend} dia(s) com marcação faltando ficaram fora do banco até serem resolvidos.`);
+  if(!mesCheio)notas.push(`O período desta folha não é o mês inteiro: o banco anterior vai até o fim de ${brDate(addMesesIso(ym+"-01",-1)).slice(3)}.`);
+  if(ym<c.inicio)notas.push("Este mês é anterior ao início do controle do banco de horas.");
+  if(Math.abs(fim)>c.limiteH*60)notas.push(fim>0?`Saldo acima de ${c.limiteH}h: programe folgas para compensar dentro do prazo do acordo.`:`Saldo negativo acima de ${c.limiteH}h.`);
+  return{mm,linhas:[
+    ["Horas trabalhadas a mais que o previsto",hhmmS(u.t.mais||0)],
+    ["Horas trabalhadas a menos que o previsto",hhmmS(u.t.menos||0)],
+    ["Saldo do mês",hhmmS(saldo)],
+    [`Banco de horas antes de ${mm}`,hhmmS(ant)],
+    ["Folgas compensadas e horas pagas no mês",hhmmS(lanc)],
+    ["Banco de horas para o próximo mês",hhmmS(fim)]],fim,notas};
 }
 const hhmm=min=>{const s=min<0?"−":"",a=Math.abs(Math.round(min));return s+Math.floor(a/60)+"h"+String(a%60).padStart(2,"0")};
 const BHST={ym:hojeIso().slice(0,7)};
 function bhHtml(){
   const c=bhCfg(),{por,erros}=bhSaldos(BHST.ym),L=[...por.values()].sort((a,b)=>nomeInteg(a.ig).localeCompare(nomeInteg(b.ig),"pt"));
   const meses=mesesEntre(addMesesIso(hojeIso(),-11).slice(0,7),hojeIso().slice(0,7)).reverse();
-  return `<div class="card"><h2>Saldo do banco de horas</h2><p class="sub" style="margin:0 0 10px">Saldo = horas trabalhadas − horas esperadas pela escala (atestados e justificativas contam como cumpridos), somado desde o início do controle, mais as compensações e pagamentos lançados abaixo.</p>
+  return `<div class="card"><h2>Saldo do banco de horas</h2><p class="sub" style="margin:0 0 10px">Saldo = horas trabalhadas − horas esperadas pela escala, sem contar os minutos dentro da tolerância da CLT (até 5 min por marcação e 10 min por dia). Atestados e justificativas contam como cumpridos; dias com marcação faltando só entram depois de resolvidos. O saldo é somado desde o início do controle, junto com as compensações e pagamentos lançados abaixo.</p>
    <div class="row" style="align-items:flex-end"><div style="flex:0 0 180px"><label>Mês</label><select id="bhmes">${meses.map(m=>`<option value="${m}" ${m===BHST.ym?"selected":""}>${m.slice(5)}/${m.slice(0,4)}</option>`).join("")}</select></div>
     <div style="flex:0 0 190px"><label>Início do controle</label><input type="month" id="bhini" value="${c.inicio}" ${podeEd("gp")?"":"disabled"}></div><div style="flex:0 0 190px"><label>Alerta acima de (horas)</label><input type="number" id="bhlim" value="${c.limiteH}" min="1" ${podeEd("gp")?"":"disabled"}></div></div>
    ${erros.length&&!L.length?`<div class="callout sand" style="margin-top:12px">Não foi possível calcular: ${esc(erros[0]||"importe o arquivo do relógio na aba Ponto")}.</div>`:""}
-   ${L.length?`<div class="wrap" style="margin-top:12px"><table><thead><tr><th>Integrante</th><th>Trabalhado</th><th>Esperado</th><th>Saldo do mês</th><th>Saldo acumulado</th><th></th></tr></thead><tbody>${L.map(x=>{const al=Math.abs(x.acum)>c.limiteH*60;return `<tr><td><b>${esc(nomeInteg(x.ig))}</b></td><td>${hhmm(x.trab)}</td><td>${hhmm(x.esp)}</td><td>${hhmm(x.mes)}</td><td><b>${hhmm(x.acum)}</b></td><td>${al?xPill(x.acum>0?2:1,x.acum>0?"saldo alto: programar folga":"saldo negativo"):""}</td></tr>`}).join("")}</tbody></table></div>`:""}</div>`;
+   ${L.length?`<div class="wrap" style="margin-top:12px"><table><thead><tr><th>Integrante</th><th>Trabalhado</th><th>Esperado</th><th>A mais</th><th>A menos</th><th>Banco anterior</th><th>Saldo do mês</th><th>Compensado / pago</th><th>Banco final</th><th></th></tr></thead><tbody>${L.map(x=>{const al=Math.abs(x.acum)>c.limiteH*60;return `<tr><td><b>${esc(nomeInteg(x.ig))}</b></td><td>${hhmm(x.trab)}</td><td>${hhmm(x.esp)}</td><td>${hhmmS(x.mais)}</td><td>${hhmmS(x.menos)}</td><td>${hhmmS(x.ant)}</td><td>${hhmmS(x.mes)}</td><td>${hhmmS(x.lanc)}</td><td><b>${hhmmS(x.acum)}</b></td><td>${al?xPill(x.acum>0?2:1,x.acum>0?"saldo alto: programar folga":"saldo negativo"):""}</td></tr>`}).join("")}</tbody></table></div>`:""}</div>`;
 }
 const bhCrud={id:"bh",col:"bh",mod:"gp",novoLabel:"Lançar compensação ou pagamento",novoTit:"Lançamento no banco de horas",
   campos:[{k:"integ",l:"Integrante",t:"integ",req:true},{k:"data",l:"Data",t:"date",req:true,def:()=>hojeIso()},{k:"tipo",l:"Tipo",t:"sel",opts:["Compensação (folga)","Pagamento em folha","Ajuste"],req:true},{k:"h",l:"Horas (positivo = usadas ou pagas; no ajuste, − tira do saldo)",t:"num",neg:true,step:0.25,req:true},{k:"obs",l:"Observação",full:true}],
@@ -542,8 +565,8 @@ REPORTS.push(
    cols:[{h:"Integrante",w:28},{h:"Item",w:28},{h:"Qtd",t:"num",w:7},{h:"Entrega",t:"date",w:12},{h:"Troca prevista",t:"date",w:14},{h:"CA",w:12},{h:"Assinado",w:10,c:true}],
    rows:xs("epi").sort((a,b)=>b.entrega.localeCompare(a.entrega)).map(e=>[xNomeInteg(e.integ),e.item,+e.qtd||1,e.entrega,e.troca||"",e.ca||"",e.assin?"Sim":"Não"])})},
  {id:"gp_banco",g:"Departamento pessoal",t:"Banco de horas (mês selecionado)",d:"Trabalhado, esperado e saldo acumulado por integrante.",pii:false,b:()=>({titulo:"Banco de horas — "+BHST.ym.slice(5)+"/"+BHST.ym.slice(0,4),sub:relSub({},false),
-   cols:[{h:"Integrante",w:30},{h:"Trabalhado (h)",t:"num",w:14},{h:"Esperado (h)",t:"num",w:14},{h:"Saldo do mês (h)",t:"num",w:16},{h:"Saldo acumulado (h)",t:"num",w:18}],
-   rows:[...bhSaldos(BHST.ym).por.values()].map(x=>[nomeInteg(x.ig),+(x.trab/60).toFixed(2),+(x.esp/60).toFixed(2),+(x.mes/60).toFixed(2),+(x.acum/60).toFixed(2)])})},
+   cols:[{h:"Integrante",w:26},{h:"Trabalhado (h)",t:"num",w:11},{h:"Esperado (h)",t:"num",w:11},{h:"A mais (h)",t:"num",w:10},{h:"A menos (h)",t:"num",w:10},{h:"Banco anterior (h)",t:"num",w:13},{h:"Saldo do mês (h)",t:"num",w:12},{h:"Compensado / pago (h)",t:"num",w:14},{h:"Banco final (h)",t:"num",w:12}],
+   rows:[...bhSaldos(BHST.ym).por.values()].map(x=>[nomeInteg(x.ig),...[x.trab,x.esp,x.mais,x.menos,x.ant,x.mes,x.lanc,x.acum].map(v=>+(v/60).toFixed(2))])})},
  {id:"gp_aniv",g:"Departamento pessoal",t:"Aniversariantes do ano",d:"Integrantes em atividade na data do pedido, por mês e dia (o calendário em PDF fica em Gestão de pessoas → Benefícios e aniversários).",pii:true,b:()=>{const L=anivLista();return{titulo:"Aniversariantes — integrantes em atividade",sub:`em atividade em ${brDate(L.ref)} · `+relSub({},false),
    cols:[{h:"Mês",w:14},{h:"Dia",t:"num",w:7},{h:"Integrante",w:38},{h:"Cargo",w:26},{h:"De férias no dia",w:14,c:true}],
    rows:L.ok.slice().sort((a,b)=>a.m-b.m||a.d-b.d||nomeInteg(a.i).localeCompare(nomeInteg(b.i),"pt")).map(x=>{const y=+L.ref.slice(0,4),d=Math.min(x.d,new Date(y,x.m,0).getDate());return[MESES_PT[x.m-1],d,nomeInteg(x.i),x.i.cargo||"",anivFerias(x.i,y+"-"+String(x.m).padStart(2,"0")+"-"+String(d).padStart(2,"0"))?"Sim":""]})}}},

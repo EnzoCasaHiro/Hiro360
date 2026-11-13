@@ -94,7 +94,7 @@ function calcular(show){
         const r={day:j.day,wd:WD[pyWeekday(j.day)],status:j.status,shift:j.shiftNo,
           intervals:j.intervals.map(([a,b])=>hm(a)+"–"+hm(b)+(isoDate(b)!==isoDate(a)?" (+1)":"")),
           rawIntervals:j.intervals,
-          workedMin:j.workedMin,expectedMin:j.expectedMin,late:j.lateMin,early:j.earlyLeaveMin,extra:j.extraMin,feriadoMin:j.feriadoMin||0,
+          workedMin:j.workedMin,expectedMin:j.expectedMin,late:j.lateMin,early:j.earlyLeaveMin,extra:j.extraMin,tolMin:j.tolMin||0,feriadoMin:j.feriadoMin||0,
           night:j.turnoNoturno,endsOn:j.endsOn,flags:[...j.flags],oc:null};
         {const nm=nightMinutes(j.intervals,j.turnoNoturno&&cfg.prorrogNoturna!==false);r.nightReal=nm.real;r.nightPror=nm.pror;r.nightFicta=nm.ficta}
         const ajd=ig.id?ajusteDe(ig.id,r.day):null;
@@ -108,13 +108,15 @@ function calcular(show){
           else if(r.status===PENDENCIA&&(o.tipo==="esquecimento"||o.tipo==="falta_justificada")){r.status="esquecido";if(credita){r.workedMin=r.expectedMin;r.late=0;r.early=0;r.extra=0}}
           else r.flags.push(o.tipo==="atestado"?"atestado":"justificativa");
         }
+        r.saldo=saldoDia(r);
         return r;
       });
       const okDays=new Set(rows.filter(r=>["atestado","justificada","esquecido"].includes(r.status)).map(r=>r.day));
       const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!okDays.has(p.day));
       const sum=k=>rows.reduce((s,r)=>s+r[k],0),cnt=s=>rows.filter(r=>r.status===s).length;
       users.push({uid,ig,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
-        t:{worked:sum("workedMin"),expected:sum("expectedMin"),late:sum("late"),early:sum("early"),extra:sum("extra"),nightReal:sum("nightReal"),nightFicta:sum("nightFicta"),
+        t:{worked:sum("workedMin"),expected:sum("expectedMin"),late:sum("late"),early:sum("early"),extra:sum("extra"),
+           saldo:sum("saldo"),mais:rows.reduce((s,r)=>s+Math.max(0,r.saldo),0),menos:rows.reduce((s,r)=>s+Math.min(0,r.saldo),0),nightReal:sum("nightReal"),nightFicta:sum("nightFicta"),
            escalados:rows.filter(r=>r.expectedMin>0).length,trab:rows.filter(r=>r.workedMin>0).length,
            faltas:cnt("falta"),atestados:cnt("atestado"),justificadas:cnt("justificada"),esquecidos:cnt("esquecido")}});
     }
