@@ -96,7 +96,10 @@ async function xqCep(inp){
 const xqDraftKey=ov=>"hiro_rasc|"+(typeof ROUTE!=="undefined"?ROUTE:"")+"|"+(((ov.querySelector("h3")||{}).textContent)||"").slice(0,60);
 new MutationObserver(ms=>{ms.forEach(m=>m.addedNodes.forEach(n=>{
   if(!(n instanceof HTMLElement)||!n.classList.contains("ov"))return;
-  setTimeout(()=>{const ov=n;if(!ov.isConnected)return;const campos=[...ov.querySelectorAll("input,textarea,select")].filter(x=>x.id&&!/^(password|file|hidden)$/.test(x.type));if(campos.length<2)return;
+  setTimeout(()=>{const ov=n;if(!ov.isConnected)return;
+    // a planilha do ponto não é formulário: as horas ficam na grade e as datas recuperadas sozinhas confundiam
+    if(ov.querySelector("#plgrid"))return;
+    const campos=[...ov.querySelectorAll("input,textarea,select")].filter(x=>x.id&&!/^(password|file|hidden)$/.test(x.type));if(campos.length<2)return;
     const key=xqDraftKey(ov);let dr=null;try{dr=JSON.parse(localStorage.getItem(key)||"null")}catch(e){}
     if(dr&&Date.now()-dr.t<864e5&&!campos.some(c=>c.value&&c.type!=="checkbox"&&c.type!=="date"&&c.type!=="time"&&c.type!=="number"&&c.tagName!=="SELECT")){
       campos.forEach(c=>{if(dr.v[c.id]!==undefined){if(c.type==="checkbox")c.checked=!!dr.v[c.id];else c.value=dr.v[c.id]}});

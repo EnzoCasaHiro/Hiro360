@@ -13953,7 +13953,10 @@ async function xqCep(inp){
 const xqDraftKey=ov=>"hiro_rasc|"+(typeof ROUTE!=="undefined"?ROUTE:"")+"|"+(((ov.querySelector("h3")||{}).textContent)||"").slice(0,60);
 new MutationObserver(ms=>{ms.forEach(m=>m.addedNodes.forEach(n=>{
   if(!(n instanceof HTMLElement)||!n.classList.contains("ov"))return;
-  setTimeout(()=>{const ov=n;if(!ov.isConnected)return;const campos=[...ov.querySelectorAll("input,textarea,select")].filter(x=>x.id&&!/^(password|file|hidden)$/.test(x.type));if(campos.length<2)return;
+  setTimeout(()=>{const ov=n;if(!ov.isConnected)return;
+    // a planilha do ponto não é formulário: as horas ficam na grade e as datas recuperadas sozinhas confundiam
+    if(ov.querySelector("#plgrid"))return;
+    const campos=[...ov.querySelectorAll("input,textarea,select")].filter(x=>x.id&&!/^(password|file|hidden)$/.test(x.type));if(campos.length<2)return;
     const key=xqDraftKey(ov);let dr=null;try{dr=JSON.parse(localStorage.getItem(key)||"null")}catch(e){}
     if(dr&&Date.now()-dr.t<864e5&&!campos.some(c=>c.value&&c.type!=="checkbox"&&c.type!=="date"&&c.type!=="time"&&c.type!=="number"&&c.tagName!=="SELECT")){
       campos.forEach(c=>{if(dr.v[c.id]!==undefined){if(c.type==="checkbox")c.checked=!!dr.v[c.id];else c.value=dr.v[c.id]}});
@@ -15320,14 +15323,20 @@ function ppdRecebeArquivo(uid,f,D){
 /* turno 12x36 com a escala em "dias fixos da semana": a grade não alterna e gera faltas e "dia de folga" falsos.
    Pelas batidas, acha os dias em que a pessoa começou plantão (perto da hora de entrada do turno) e sugere o início do ciclo. */
 function ppd1236(ig,uid,D){
-  if(!ig||!ig.id||typeof xfoTurno12!=="function"||!xfoTurno12(ig)||(ig.escalaModo||"semana")!=="semana")return null;
+  if(!ig||!ig.id||typeof xfoTurno12!=="function"||!xfoTurno12(ig))return null;
+  const modo=ig.escalaModo||"semana";
   const t=turnosList().find(x=>String(x.no)===String(ig.turno)),m=/(\d{1,2}):(\d{2})/.exec((t&&t.texto)||"");
   const ent=m?+m[1]*60+ +m[2]:null,cont=[0,0],dias=[[],[]];
   if(ent!=null)for(const x of marcasOf(uid,D.ini,D.fim)){const min=x.ts.getHours()*60+x.ts.getMinutes(),dif=Math.abs(min-ent);
     if(Math.min(dif,1440-dif)>180)continue;const d=isoDate(x.ts),par=Math.round((parseLocalIso(d+"T12:00:00")-parseLocalIso(D.ini+"T12:00:00"))/864e5)%2;
     if(!dias[par].includes(d)){dias[par].push(d);cont[par]++}}
-  const par=cont[1]>cont[0]?1:0,ok=cont[par]>=3&&cont[par]>=3*cont[1-par];
-  return{inicio:ok?dias[par].sort()[0]:null,n:cont[par],outros:cont[1-par]};
+  const par=cont[1]>cont[0]?1:0,ok=cont[par]>=3&&cont[par]>=3*cont[1-par],inicio=ok?dias[par].sort()[0]:null;
+  // dias fixos da semana nunca servem para 12x36; dias pares/ímpares erram depois de todo dia 31; ciclo pode estar com o início trocado.
+  // Fora dos dias fixos, só avisa quando os plantões batidos caem em dia que a escala diz que é folga.
+  if(modo==="semana")return{inicio,n:cont[par],outros:cont[1-par],modo};
+  if(!inicio)return null;
+  const errados=dias[par].filter(d=>{try{return !escalaDia(ig,d).on}catch(e){return false}}).length;
+  return errados>=3?{inicio,n:cont[par],outros:cont[1-par],modo,errados}:null;
 }
 function ppdBotoes(u,p){
   const b=(attr,txt,sec)=>`<button type="button" class="b ${sec?"sec ":""}sm" ${attr} style="flex:none">${txt}</button>`;
@@ -15355,7 +15364,7 @@ function ppdPessoaHtml(D,u,lista){
     ${prox?`<button type="button" class="b sec sm" data-ppdsel="${prox.uid}" style="flex:none" title="${esc(prox.nome)}">Próximo ▶</button>`:""}</div>
    <h2 style="margin:8px 0 2px">${esc(u.nome)}</h2>
    <p class="sub" style="margin:0 0 6px">${esc(ig.cargo||"—")} · nº ${esc(u.uid)} no relógio · ${refRotulo(D.ym)}</p>
-   ${(()=>{const e=ppd1236(ig,u.uid,D);return e?`<div class="callout sand" style="margin:8px 0"><b>Escala errada:</b> o turno é 12x36, mas a escala está em “dias fixos da semana”: ${esc(escalasTexto(ig,D.ini,D.fim))}. Por isso aparecem faltas e “bateu ponto em dia de folga” que não existiram. ${e.inicio?`Pelas batidas, os plantões começam em ${brDate(e.inicio)} e seguem dia sim, dia não (${e.n} plantões${e.outros?`, ${e.outros} fora desse padrão`:""}).`:"Não deu para descobrir pelas batidas em que dias são os plantões."} ${ed?(e.inicio?`<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="b sm" data-ppd1236="${ig.id}" data-ini="${e.inicio}" style="flex:none">Mudar para 12x36 alternado a partir de ${brDate(e.inicio).slice(0,5)}</button><button type="button" class="b sec sm" data-ppdescala="1" style="flex:none">Arrumar em Escalas</button></div>`:`<button type="button" class="b sm" data-ppdescala="1" style="flex:none;margin-top:6px">Arrumar em Escalas</button>`):""}</div>`:""})()}
+   ${(()=>{const e=ppd1236(ig,u.uid,D);return e?`<div class="callout sand" style="margin:8px 0"><b>Escala errada:</b> o turno é 12x36, mas ${e.modo==="semana"?`a escala está em “dias fixos da semana”: ${esc(escalasTexto(ig,D.ini,D.fim))}`:`a escala cadastrada (${esc(typeof xfoLabel==="function"?xfoLabel(ig):escalasTexto(ig,D.ini,D.fim))}) não bate com os dias em que a pessoa fez plantão: ${e.errados} plantão(ões) caíram em dia que a escala diz que é folga${e.modo==="par"||e.modo==="impar"?" (dias pares/ímpares se desencontram depois de todo dia 31)":""}`}. Por isso aparecem faltas e “bateu ponto em dia de folga” que não existiram. ${e.inicio?`Pelas batidas, os plantões começam em ${brDate(e.inicio)} e seguem dia sim, dia não (${e.n} plantões${e.outros?`, ${e.outros} fora desse padrão`:""}).`:"Não deu para descobrir pelas batidas em que dias são os plantões."} ${ed?(e.inicio?`<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="b sm" data-ppd1236="${ig.id}" data-ini="${e.inicio}" style="flex:none">Mudar para 12x36 alternado a partir de ${brDate(e.inicio).slice(0,5)}</button><button type="button" class="b sec sm" data-ppdescala="1" style="flex:none">Arrumar em Escalas</button></div>`:`<button type="button" class="b sm" data-ppdescala="1" style="flex:none;margin-top:6px">Arrumar em Escalas</button>`):""}</div>`:""})()}
    ${cadRelogio(ig)?`<div class="callout sand" style="margin:8px 0">Este cadastro foi <b>criado sozinho pelo relógio</b> (só com o nome “${esc(ig.nome||"")}”, sem escala), por isso as batidas aparecem como dia de folga. Se é alguém que já está em Integrantes, junte os dois cadastros. ${ed?`<button type="button" class="b sm" data-ppdjunta="${ig.id}" style="flex:none;margin-top:6px">Juntar com o cadastro da pessoa</button>`:""}</div>`:""}
    ${ppdPasso(1,!pend.length,`Resolver as pendências ${pend.length?`<span style="color:var(--bad)">(${pend.length})</span>`:""}`,
      (pend.length?`<p class="sub" style="margin:0 0 10px">Cada linha diz o que aconteceu e tem o botão que resolve. Resolvida, a linha sai da lista.</p>
@@ -15417,7 +15426,7 @@ function ppdBind(){
   document.querySelectorAll("[data-ppdmk]").forEach(b=>b.onclick=()=>openMarcas(+b.dataset.ppdmk,b.dataset.day,{suggest:b.dataset.sug}));
   document.querySelectorAll("[data-ppd1236]").forEach(b=>b.onclick=async()=>{const ig=S.integrantes[b.dataset.ppd1236];if(!ig)return;
     if(!await askConfirm(`Mudar a escala de ${nomeInteg(ig)} para 12x36 (trabalha um dia, folga no outro), com plantão em ${brDate(b.dataset.ini)}? Vale para todos os dias. Se antes de alguma data a escala era outra, lance depois em Escalas → “Mudou de escala? Lançar a escala que valia antes”.`,"Mudar a escala"))return;
-    put("integrantes",ig.id,{...strip(ig),escalaModo:"ciclo",cicloTrab:1,cicloFolga:1,cicloInicio:b.dataset.ini,hist:[...(ig.hist||[]),{em:new Date().toISOString(),campo:"Escala",de:"Dias fixos da semana",para:"12x36 a partir de "+brDate(b.dataset.ini)}]});
+    put("integrantes",ig.id,{...strip(ig),escalaModo:"ciclo",cicloTrab:1,cicloFolga:1,cicloInicio:b.dataset.ini,hist:[...(ig.hist||[]),{em:new Date().toISOString(),campo:"Escala",de:(typeof xfoLabel==="function"?xfoLabel(ig):"")||"—",para:"12x36 a partir de "+brDate(b.dataset.ini)}]});
     toast("Escala mudada para 12x36.");afterOc()});
   document.querySelectorAll("[data-ppdescala]").forEach(b=>b.onclick=()=>go("turnos"));
   document.querySelectorAll("[data-ppdfolga]").forEach(b=>b.onclick=()=>openEscalaAjuste(b.dataset.ppdfolga,b.dataset.day,{tipo:"folga"}));
@@ -16614,18 +16623,44 @@ const plnGet=(r,c)=>c===PLN.ncol?PLN.prev[r]:PLN.grid[r][c];
 const plnSet=(r,c,v)=>{if(c===PLN.ncol)PLN.prev[r]=v;else PLN.grid[r][c]=v};
 const plnBase=(r,c)=>c===PLN.ncol?PLN.prevBase[r]:((PLN.orig[r][c]||{}).h||"");
 function plnLargura(n){n+=n%2;if(n<=PLN.ncol)return;PLN.ncol=n;PLN.grid.forEach(l=>{while(l.length<n)l.push("")})}
+/* Cada linha é um plantão, não um dia do calendário: o plantão das 19h às 7h fica inteiro na linha do dia em que
+   começou, e a saída da manhã seguinte aparece com "+1". Quem é dono de cada batida é o cálculo do ponto (que conhece
+   a escala); sem cálculo (hoje, futuro), a batida da noite sem par puxa a da manhã seguinte (até 16 h depois). */
+function plnLinhas(dias){
+  const ini=addDaysIso(dias[0],-1),fim=addDaysIso(dias[dias.length-1],1);
+  const M=dayMarcas(PLN.uid,ini,fim),chave=t=>isoDate(t)+"T"+hm(t),dono=new Map();
+  if(PLN.calc)PLN.calc.forEach((cr,d)=>(cr.marcas&&cr.marcas.length?cr.marcas:(cr.rawIntervals||[]).flat()).forEach(t=>{if(t instanceof Date&&!dono.has(chave(t)))dono.set(chave(t),d)}));
+  const porDia=new Map(),add=(d,m)=>{if(!porDia.has(d))porDia.set(d,[]);porDia.get(d).push(m)};
+  const soltas=[];M.forEach(m=>{const d=dono.get(m.ts.slice(0,16));if(d)add(d,m);else soltas.push(m)});
+  // sem dono: fica no dia da batida, mas a da manhã completa o plantão da véspera que ficou sem saída
+  const sd=new Map();soltas.forEach(m=>{const d=m.ts.slice(0,10);if(!sd.has(d))sd.set(d,[]);sd.get(d).push(m)});
+  [...sd.keys()].sort().forEach(d=>{const l=sd.get(d)||[];if(!l.length)return;
+    const v=addDaysIso(d,-1),lv=[...(porDia.get(v)||[]),...((sd.get(v))||[])].sort((a,b)=>a.ts.localeCompare(b.ts)),ult=lv[lv.length-1],pri=l[0];
+    if(ult&&lv.length%2&&+ult.ts.slice(11,13)>=12&&+pri.ts.slice(11,13)<12&&(parseLocalIso(pri.ts)-parseLocalIso(ult.ts))<=16*3600e3){add(v,l.shift())}
+    l.forEach(m=>add(d,m))});
+  return dias.map(d=>(porDia.get(d)||[]).sort((a,b)=>a.ts.localeCompare(b.ts)).map(m=>({id:m.id,h:m.ts.slice(11,16),k:m.ts.slice(0,16),manual:m.origem==="manual"})));
+}
+// em cada coluna, se a hora já é do dia seguinte: na ordem das colunas, a hora que volta para trás passou da meia-noite
+function plnVira(r){
+  // plantão da véspera que só começou depois da meia-noite (ex.: entrou 00:30): a 1ª hora já é do dia seguinte
+  const o=(PLN.orig[r]||[])[0],h0=PLN.grid[r].map(plnHora).find(Boolean);
+  let ant=null,vira=!!(o&&o.k&&o.h===h0&&o.k.slice(0,10)>PLN.dias[r]);
+  return PLN.grid[r].map(v=>{const h=plnHora(v);if(!h)return false;if(ant&&h<ant)vira=true;ant=h;return vira});
+}
+// data e hora completas de cada célula preenchida da linha (na ordem das colunas)
+function plnTsLinha(r){const d=PLN.dias[r],vz=plnVira(r);return PLN.grid[r].map((v,c)=>{const h=plnHora(v);return h?(vz[c]?addDaysIso(d,1):d)+"T"+h:null}).filter(Boolean)}
 function plnCarrega(){
   const dias=[];for(let d=PLN.de;d<=PLN.ate&&dias.length<93;d=addDaysIso(d,1))dias.push(d);
   PLN.dias=dias;
-  PLN.orig=dias.map(d=>dayMarcas(PLN.uid,d).map(m=>({id:m.id,h:m.ts.slice(11,16),manual:m.origem==="manual"})));
-  PLN.ncol=Math.max(6,...PLN.orig.map(o=>o.length+(o.length%2?1:2)));
-  PLN.grid=PLN.orig.map(o=>{const l=o.map(x=>x.h);while(l.length<PLN.ncol)l.push("");return l});
-  PLN.undo=[];PLN.sel={r0:0,c0:0,r1:0,c1:0};
   const ig=integByUid(PLN.uid);PLN.igId=ig?ig.id:null;
   BHCACHE.clear();
   const ontem=addDaysIso(hojeIso(),-1),ate=PLN.ate<ontem?PLN.ate:ontem;
   const R=PLN.de<=ate?calcSilencioso(PLN.de,ate):null,u=R&&R.users&&R.users.find(x=>+x.uid===+PLN.uid);
   PLN.calc=u?new Map(u.rows.map(x=>[x.day,x])):null;PLN.calcErro=(R&&R.erro)||"";
+  PLN.orig=plnLinhas(dias);
+  PLN.ncol=Math.max(6,...PLN.orig.map(o=>o.length+(o.length%2?1:2)));
+  PLN.grid=PLN.orig.map(o=>{const l=o.map(x=>x.h);while(l.length<PLN.ncol)l.push("");return l});
+  PLN.undo=[];PLN.sel={r0:0,c0:0,r1:0,c1:0};
   PLN.prevMan=dias.map(d=>PLN.igId?prevManual(PLN.igId,d):null);
   PLN.prevBase=dias.map((d,r)=>{const pm=PLN.prevMan[r];if(pm!=null)return fmtHHMM(pm);const cr=PLN.calc&&PLN.calc.get(d);return cr?fmtHHMM(cr.expectedMin):""});
   PLN.prev=PLN.prevBase.slice();
@@ -16639,6 +16674,7 @@ function plnClasses(r,c){
   else if(prv?plnPrevMudou(r):h!==plnBase(r,c))cl.push("mud");
   else if(prv?PLN.prevMan[r]!=null:(PLN.orig[r][c]||{}).manual)cl.push("man");
   if(plnNaSel(r,c))cl.push("sel");
+  if(!prv&&h&&plnVira(r)[c])cl.push("d1");
   return cl;
 }
 const plnMudancas=()=>PLN.grid.reduce((s,l,r)=>s+l.reduce((t,v,c)=>t+((plnHora(v)??v)!==plnBase(r,c)?1:0),0)+(plnPrevMudou(r)?1:0),0);
@@ -16647,7 +16683,7 @@ function plnConta(){const b=$("plsv"),n=plnMudancas();if(b){b.disabled=!n;b.inne
 function plnTrab(r){
   const cr=PLN.calc&&PLN.calc.get(PLN.dias[r]);
   if(cr&&!plnMudouLinha(r))return cr.workedMin;
-  const t=PLN.grid[r].map(plnHora).filter(Boolean).map(plnMin).sort((a,b)=>a-b);let s=0;
+  const vz=plnVira(r),t=PLN.grid[r].map((v,c)=>{const h=plnHora(v);return h?plnMin(h)+(vz[c]?1440:0):null}).filter(x=>x!=null);let s=0;
   for(let i=0;i+1<t.length;i+=2)s+=t[i+1]-t[i];
   return s;
 }
@@ -16726,16 +16762,22 @@ async function plnSalva(){
   if(!plnPode())return toast("Seu perfil não permite alterar o ponto.",true);
   const inval=PLN.grid.reduce((s,l)=>s+l.filter(v=>plnHora(v)===null).length,0)+PLN.prev.filter(v=>plnDur(v)===null).length;
   if(inval)return toast(`${inval} célula(s) com hora inválida (em vermelho). Use o formato 07:30.`,true);
+  // a linha é lida na ordem das colunas; só pode passar da meia-noite uma vez e o plantão não passa de 24 h
+  // virar a meia-noite só vale saindo da tarde/noite (12:00 ou mais) para a madrugada/manhã (antes das 12:00)
+  const viraMal=r=>{let ant=null;return PLN.grid[r].map(plnHora).filter(Boolean).some(h=>{const m=ant&&h<ant&&(ant<"12:00"||h>="12:00");ant=h;return m})};
+  const fora=PLN.dias.filter((d,r)=>{if(plnTrava(r)||!plnMudouLinha(r))return false;const k=plnTsLinha(r);return viraMal(r)||(k.length>1&&parseLocalIso(k[k.length-1]+":00")-parseLocalIso(k[0]+":00")>=864e5)});
+  if(fora.length)return toast(`Horas fora de ordem em ${fora.map(d=>brDate(d).slice(0,5)).join(", ")}: digite na ordem em que aconteceram (entrada, saída, entrada, saída). Uma hora menor que a anterior é do dia seguinte (plantão noturno).`,true);
   const ops=[],prevOps=[];let dias=0;
   PLN.dias.forEach((d,r)=>{
     if(plnTrava(r))return;
     if(plnPrevMudou(r)){const h=plnDur(PLN.prev[r]);prevOps.push({d,min:h===""?null:plnMin(h)})}
-    const novo=PLN.grid[r].map(plnHora).filter(Boolean).sort(),restO=[...PLN.orig[r]],restN=[];
-    novo.forEach(h=>{const i=restO.findIndex(o=>o.h===h);if(i>=0)restO.splice(i,1);else restN.push(h)});
+    if(!plnMudouLinha(r))return;
+    const novo=plnTsLinha(r),restO=[...PLN.orig[r]],restN=[];
+    novo.forEach(k=>{const i=restO.findIndex(o=>o.k===k);if(i>=0)restO.splice(i,1);else restN.push(k)});
     if(!restO.length&&!restN.length)return;dias++;
     for(let i=0;i<Math.max(restO.length,restN.length);i++){
-      const o=restO[i],h=restN[i];
-      if(o&&h)ops.push({t:"alt",id:o.id,ts:d+"T"+h+":00"});else if(o)ops.push({t:"rem",id:o.id});else ops.push({t:"add",ts:d+"T"+h+":00"});
+      const o=restO[i],k=restN[i];
+      if(o&&k)ops.push({t:"alt",id:o.id,ts:k+":00"});else if(o)ops.push({t:"rem",id:o.id});else ops.push({t:"add",ts:k+":00"});
     }
   });
   if(!ops.length&&!prevOps.length)return toast("Nada para salvar.");
@@ -16790,28 +16832,15 @@ async function plnImporta(f){
     const cols=A[hi].map((h,i)=>/^(entrada|sa[ií]da|batida)/i.test(String(h).trim())?i:-1).filter(i=>i>=0),cp=A[hi].findIndex(h=>/^previst/i.test(String(h).trim()));
     if(!cols.length&&cp<0)throw new Error("não achei as colunas de Entrada, Saída ou Previsto.");
     plnSnap();let n=0,fora=0,trav=0;
-    const lin=A.slice(hi+1).map(l=>({d:plnData(l[0]),l})).filter(x=>x.d),temLinha=new Set(lin.map(x=>x.d)),porDia=new Map(),extra=new Map(),add=(M,d,v)=>{if(!M.has(d))M.set(d,[]);M.get(d).push(v)};
-    lin.forEach(({d,l})=>{if(!porDia.has(d))porDia.set(d,[]);
-      cols.forEach((ci,k)=>{const v0=l[ci],v=v0===""||v0==null?"":(plnHora(v0)??String(v0).trim());if(v==="")return;
-        // par k: coluna par = entrada, ímpar = saída; saída antes da entrada do mesmo par passa da meia-noite
-        const ent=k%2?plnHora(l[cols[k-1]]):null,vira=k%2&&ent&&plnHora(v)&&plnHora(v)<ent;
-        if(vira){const d2=addDaysIso(d,1);add(temLinha.has(d2)?porDia:extra,d2,plnHora(v))}else add(porDia,d,v)})});
-    const ordena=L=>L.slice().sort((a,b)=>(plnHora(a)||"99")<(plnHora(b)||"99")?-1:1);
+    // cada linha do arquivo é um plantão (igual à planilha): as horas vão na ordem das colunas, e a que volta
+    // para trás é do dia seguinte. Linhas que não estão no arquivo ficam como estão.
+    const lin=A.slice(hi+1).map(l=>({d:plnData(l[0]),l})).filter(x=>x.d),temLinha=new Set(lin.map(x=>x.d));
     PLN.dias.forEach((d,r)=>{
-      if(!temLinha.has(d)&&!extra.has(d))return;
+      const li=lin.find(x=>x.d===d);if(!li)return;
       if(plnTrava(r)){trav++;return}
-      if(cols.length){
-        let L=temLinha.has(d)?(porDia.get(d)||[]).slice():PLN.grid[r].filter(v=>v!=="");
-        // dia sem linha no arquivo que recebe a saída do plantão da véspera: a saída antiga desse plantão sai, entra a do arquivo
-        if(!temLinha.has(d)){const v=addDaysIso(d,-1),cv=temLinha.has(v)&&PLN.calc&&PLN.calc.get(v),dono=new Set();
-          if(cv)(cv.marcas&&cv.marcas.length?cv.marcas:(cv.rawIntervals||[]).flat()).forEach(t=>{if(isoDate(t)===d)dono.add(hm(t))});
-          L=L.filter(v=>!dono.has(plnHora(v)));L.push(...extra.get(d))}
-        // 1º dia do arquivo: a saída do plantão que começou na véspera não está no arquivo e continua valendo
-        else if(!temLinha.has(addDaysIso(d,-1))&&dayMarcas(PLN.uid,addDaysIso(d,-1)).length%2){const pri=ordena(L).map(plnHora).find(Boolean)||"99";
-          PLN.orig[r].filter(o=>o.h<pri&&!L.some(v=>plnHora(v)===o.h)).forEach(o=>L.push(o.h))}
-        L=ordena([...new Set(L)]);plnLargura(L.length);PLN.grid[r]=PLN.grid[r].map((_,c)=>L[c]??"");
-      }
-      const li=lin.find(x=>x.d===d);if(cp>=0&&li)PLN.prev[r]=plnCel(PLN.ncol,li.l[cp]);n++});
+      if(cols.length){const L=cols.map(ci=>{const v0=li.l[ci];return v0===""||v0==null?"":(plnHora(v0)??String(v0).trim())}).filter(v=>v!=="");
+        plnLargura(L.length);PLN.grid[r]=PLN.grid[r].map((_,c)=>L[c]??"")}
+      if(cp>=0)PLN.prev[r]=plnCel(PLN.ncol,li.l[cp]);n++});
     fora=[...temLinha].filter(d=>!PLN.dias.includes(d)).length;
     plnPinta(false);
     toast(`${n} dia(s) lido(s) do Excel. Confira as células amarelas e clique em Salvar alterações.`+(fora?` ${fora} dia(s) fora do período ignorado(s).`:"")+(trav?` ${trav} em mês fechado ignorado(s).`:""));
@@ -16843,6 +16872,7 @@ function openPlanilha(uid,de,ate,opt){
    <div class="wrap" id="plgrid" style="margin-top:10px;max-height:58vh;overflow:auto"></div>
    <p class="sub" style="margin:8px 0 0">Clique na célula e digite <b>0730</b> ou <b>7:30</b> (substitui o valor; para corrigir só um pedaço, dê <b>duplo clique</b> ou aperte <b>F2</b>). Setas e Enter andam entre as células; arraste o mouse ou use Shift+setas para selecionar várias. <b>Ctrl+C</b> e <b>Ctrl+V</b> copiam e colam (inclusive do Excel); <b>Ctrl+D</b> repete a primeira linha da seleção para baixo; <b>Delete</b> limpa; <b>Ctrl+Z</b> desfaz; <b>Ctrl+S</b> salva.</p>
    <div class="legend" style="margin-top:6px"><span><i style="background:#fff1b8"></i>alterado, ainda não salvo</span><span><i style="background:rgba(46,125,50,.2)"></i>selecionado</span><span><i style="background:var(--azul-mar)"></i>lançado à mão (batida ou previsto)</span><span><i style="background:var(--line)"></i>mês fechado (só leitura)</span></div>
+   <p class="sub" style="margin:6px 0 0"><b>Plantão noturno:</b> cada linha é um plantão inteiro, na data em que ele começou. A saída depois da meia-noite fica na mesma linha, marcada com <b>+1</b> (dia seguinte). Digite as horas na ordem em que aconteceram.</p>
    <p class="sub" style="margin:6px 0 0"><b>Trabalhado</b> e <b>Saldo</b> recalculam na hora, enquanto você digita. O <b>Previsto</b> vem da escala; digite outro valor para trocar o daquele dia (apague para voltar à escala). A Situação é recalculada ao salvar. Turno da noite: a batida depois da meia-noite fica na linha do dia seguinte, como no relógio.</p>
    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px"><button class="b sec" id="plcx">Fechar</button>${plnPode()?`<button class="b" id="plsv">${ic("check")} Salvar alterações</button>`:""}</div>`);
   ov.querySelector(".modal").classList.add("largo","planilha");

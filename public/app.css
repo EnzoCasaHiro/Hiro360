@@ -185,6 +185,7 @@ details>summary{cursor:pointer;color:var(--verde-medio);font-weight:600;font-siz
 .pltab td{padding:0;border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
 .pltab input.plc{width:68px;min-width:68px;min-height:0;margin:0;border:0;border-radius:0;padding:6px 4px;text-align:center;background:transparent;font:inherit;font-variant-numeric:tabular-nums;box-shadow:none;cursor:cell}
 .pltab input.plc:focus{outline:2px solid var(--verde-medio);outline-offset:-2px}
+.pltab td.d1{position:relative}.pltab td.d1::after{content:"+1";position:absolute;top:2px;right:3px;font-size:9px;font-weight:700;color:var(--madeira);pointer-events:none}
 .pltab td.sel{background:rgba(46,125,50,.2)}
 .pltab td.mud{background:#fff1b8}.pltab td.mud input.plc{color:#3a2f00;font-weight:700}
 .pltab td.sel.mud{background:#e3dc8e}

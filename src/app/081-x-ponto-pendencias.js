@@ -86,14 +86,20 @@ function ppdRecebeArquivo(uid,f,D){
 /* turno 12x36 com a escala em "dias fixos da semana": a grade não alterna e gera faltas e "dia de folga" falsos.
    Pelas batidas, acha os dias em que a pessoa começou plantão (perto da hora de entrada do turno) e sugere o início do ciclo. */
 function ppd1236(ig,uid,D){
-  if(!ig||!ig.id||typeof xfoTurno12!=="function"||!xfoTurno12(ig)||(ig.escalaModo||"semana")!=="semana")return null;
+  if(!ig||!ig.id||typeof xfoTurno12!=="function"||!xfoTurno12(ig))return null;
+  const modo=ig.escalaModo||"semana";
   const t=turnosList().find(x=>String(x.no)===String(ig.turno)),m=/(\d{1,2}):(\d{2})/.exec((t&&t.texto)||"");
   const ent=m?+m[1]*60+ +m[2]:null,cont=[0,0],dias=[[],[]];
   if(ent!=null)for(const x of marcasOf(uid,D.ini,D.fim)){const min=x.ts.getHours()*60+x.ts.getMinutes(),dif=Math.abs(min-ent);
     if(Math.min(dif,1440-dif)>180)continue;const d=isoDate(x.ts),par=Math.round((parseLocalIso(d+"T12:00:00")-parseLocalIso(D.ini+"T12:00:00"))/864e5)%2;
     if(!dias[par].includes(d)){dias[par].push(d);cont[par]++}}
-  const par=cont[1]>cont[0]?1:0,ok=cont[par]>=3&&cont[par]>=3*cont[1-par];
-  return{inicio:ok?dias[par].sort()[0]:null,n:cont[par],outros:cont[1-par]};
+  const par=cont[1]>cont[0]?1:0,ok=cont[par]>=3&&cont[par]>=3*cont[1-par],inicio=ok?dias[par].sort()[0]:null;
+  // dias fixos da semana nunca servem para 12x36; dias pares/ímpares erram depois de todo dia 31; ciclo pode estar com o início trocado.
+  // Fora dos dias fixos, só avisa quando os plantões batidos caem em dia que a escala diz que é folga.
+  if(modo==="semana")return{inicio,n:cont[par],outros:cont[1-par],modo};
+  if(!inicio)return null;
+  const errados=dias[par].filter(d=>{try{return !escalaDia(ig,d).on}catch(e){return false}}).length;
+  return errados>=3?{inicio,n:cont[par],outros:cont[1-par],modo,errados}:null;
 }
 function ppdBotoes(u,p){
   const b=(attr,txt,sec)=>`<button type="button" class="b ${sec?"sec ":""}sm" ${attr} style="flex:none">${txt}</button>`;
@@ -121,7 +127,7 @@ function ppdPessoaHtml(D,u,lista){
     ${prox?`<button type="button" class="b sec sm" data-ppdsel="${prox.uid}" style="flex:none" title="${esc(prox.nome)}">Próximo ▶</button>`:""}</div>
    <h2 style="margin:8px 0 2px">${esc(u.nome)}</h2>
    <p class="sub" style="margin:0 0 6px">${esc(ig.cargo||"—")} · nº ${esc(u.uid)} no relógio · ${refRotulo(D.ym)}</p>
-   ${(()=>{const e=ppd1236(ig,u.uid,D);return e?`<div class="callout sand" style="margin:8px 0"><b>Escala errada:</b> o turno é 12x36, mas a escala está em “dias fixos da semana”: ${esc(escalasTexto(ig,D.ini,D.fim))}. Por isso aparecem faltas e “bateu ponto em dia de folga” que não existiram. ${e.inicio?`Pelas batidas, os plantões começam em ${brDate(e.inicio)} e seguem dia sim, dia não (${e.n} plantões${e.outros?`, ${e.outros} fora desse padrão`:""}).`:"Não deu para descobrir pelas batidas em que dias são os plantões."} ${ed?(e.inicio?`<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="b sm" data-ppd1236="${ig.id}" data-ini="${e.inicio}" style="flex:none">Mudar para 12x36 alternado a partir de ${brDate(e.inicio).slice(0,5)}</button><button type="button" class="b sec sm" data-ppdescala="1" style="flex:none">Arrumar em Escalas</button></div>`:`<button type="button" class="b sm" data-ppdescala="1" style="flex:none;margin-top:6px">Arrumar em Escalas</button>`):""}</div>`:""})()}
+   ${(()=>{const e=ppd1236(ig,u.uid,D);return e?`<div class="callout sand" style="margin:8px 0"><b>Escala errada:</b> o turno é 12x36, mas ${e.modo==="semana"?`a escala está em “dias fixos da semana”: ${esc(escalasTexto(ig,D.ini,D.fim))}`:`a escala cadastrada (${esc(typeof xfoLabel==="function"?xfoLabel(ig):escalasTexto(ig,D.ini,D.fim))}) não bate com os dias em que a pessoa fez plantão: ${e.errados} plantão(ões) caíram em dia que a escala diz que é folga${e.modo==="par"||e.modo==="impar"?" (dias pares/ímpares se desencontram depois de todo dia 31)":""}`}. Por isso aparecem faltas e “bateu ponto em dia de folga” que não existiram. ${e.inicio?`Pelas batidas, os plantões começam em ${brDate(e.inicio)} e seguem dia sim, dia não (${e.n} plantões${e.outros?`, ${e.outros} fora desse padrão`:""}).`:"Não deu para descobrir pelas batidas em que dias são os plantões."} ${ed?(e.inicio?`<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="b sm" data-ppd1236="${ig.id}" data-ini="${e.inicio}" style="flex:none">Mudar para 12x36 alternado a partir de ${brDate(e.inicio).slice(0,5)}</button><button type="button" class="b sec sm" data-ppdescala="1" style="flex:none">Arrumar em Escalas</button></div>`:`<button type="button" class="b sm" data-ppdescala="1" style="flex:none;margin-top:6px">Arrumar em Escalas</button>`):""}</div>`:""})()}
    ${cadRelogio(ig)?`<div class="callout sand" style="margin:8px 0">Este cadastro foi <b>criado sozinho pelo relógio</b> (só com o nome “${esc(ig.nome||"")}”, sem escala), por isso as batidas aparecem como dia de folga. Se é alguém que já está em Integrantes, junte os dois cadastros. ${ed?`<button type="button" class="b sm" data-ppdjunta="${ig.id}" style="flex:none;margin-top:6px">Juntar com o cadastro da pessoa</button>`:""}</div>`:""}
    ${ppdPasso(1,!pend.length,`Resolver as pendências ${pend.length?`<span style="color:var(--bad)">(${pend.length})</span>`:""}`,
      (pend.length?`<p class="sub" style="margin:0 0 10px">Cada linha diz o que aconteceu e tem o botão que resolve. Resolvida, a linha sai da lista.</p>
@@ -183,7 +189,7 @@ function ppdBind(){
   document.querySelectorAll("[data-ppdmk]").forEach(b=>b.onclick=()=>openMarcas(+b.dataset.ppdmk,b.dataset.day,{suggest:b.dataset.sug}));
   document.querySelectorAll("[data-ppd1236]").forEach(b=>b.onclick=async()=>{const ig=S.integrantes[b.dataset.ppd1236];if(!ig)return;
     if(!await askConfirm(`Mudar a escala de ${nomeInteg(ig)} para 12x36 (trabalha um dia, folga no outro), com plantão em ${brDate(b.dataset.ini)}? Vale para todos os dias. Se antes de alguma data a escala era outra, lance depois em Escalas → “Mudou de escala? Lançar a escala que valia antes”.`,"Mudar a escala"))return;
-    put("integrantes",ig.id,{...strip(ig),escalaModo:"ciclo",cicloTrab:1,cicloFolga:1,cicloInicio:b.dataset.ini,hist:[...(ig.hist||[]),{em:new Date().toISOString(),campo:"Escala",de:"Dias fixos da semana",para:"12x36 a partir de "+brDate(b.dataset.ini)}]});
+    put("integrantes",ig.id,{...strip(ig),escalaModo:"ciclo",cicloTrab:1,cicloFolga:1,cicloInicio:b.dataset.ini,hist:[...(ig.hist||[]),{em:new Date().toISOString(),campo:"Escala",de:(typeof xfoLabel==="function"?xfoLabel(ig):"")||"—",para:"12x36 a partir de "+brDate(b.dataset.ini)}]});
     toast("Escala mudada para 12x36.");afterOc()});
   document.querySelectorAll("[data-ppdescala]").forEach(b=>b.onclick=()=>go("turnos"));
   document.querySelectorAll("[data-ppdfolga]").forEach(b=>b.onclick=()=>openEscalaAjuste(b.dataset.ppdfolga,b.dataset.day,{tipo:"folga"}));
