@@ -9,6 +9,7 @@ const dbmod = require('./lib/db');
 const seg = require('./lib/seguranca');
 const ia = require('./lib/ia');
 const perm = require('./lib/permissoes');
+const periodo = require('./lib/periodo');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8','.css': 'text/css; charset=utf-8', '.json': 'application/json; charset=utf-8', '.png': 'image/png', '.jpg': 'image/jpeg', '.svg': 'image/svg+xml', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' };
 const TIPOS_ARQ = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp', 'image/gif', 'text/plain', 'text/csv', 'application/json', 'application/zip', 'application/xml', 'text/xml']);
@@ -112,13 +113,13 @@ async function criaApp(opts = {}) {
   /* versão anterior guardada na trilha (para provar O QUE mudou, não só quem mexeu); documentos grandes ficam só com a impressão digital */
   const antesTrilha = d => { if (d == null) return { antes: null }; const t = JSON.stringify(d); return t.length <= 32768 ? { antes: t } : { antesHash: crypto.createHash('sha256').update(t).digest('hex').slice(0, 32), antesBytes: t.length }; };
 
-  /* mês do ponto fechado (config/fech_AAAAMM): só a administração altera batidas e previsto desses dias */
-  const mesFechado = async dia => { const m = /^(\d{4})-(\d{2})/.exec(String(dia || '')); if (!m) return false; const f = await db.get('config/fech_' + m[1] + m[2]); return !!(f && f.fechado); };
+  /* mês do ponto fechado (config/fech_AAAAMM = período de 26 do mês anterior a 25 do mês): só a administração altera batidas e previsto desses dias */
+  const mesFechado = async dia => { const ym = periodo.refYm(dia); if (!ym) return false; const f = await db.get('config/fech_' + ym.replace('-', '')); return !!(f && f.fechado); };
   async function tocaMesFechado(dp, novo, antigo) {
-    if (dp.startsWith('marcacoes/')) { for (const x of [novo, antigo]) if (x && await mesFechado(x.ts)) return String(x.ts).slice(0, 7); return null; }
+    if (dp.startsWith('marcacoes/')) { for (const x of [novo, antigo]) if (x && await mesFechado(x.ts)) return periodo.refYm(x.ts); return null; }
     if (dp.startsWith('config/prevm_')) {
       const a = (antigo && antigo.dias) || {}, b = (novo && novo.dias) || {};
-      for (const dia of new Set([...Object.keys(a), ...Object.keys(b)])) if (a[dia] !== b[dia] && await mesFechado(dia)) return dia.slice(0, 7);
+      for (const dia of new Set([...Object.keys(a), ...Object.keys(b)])) if (a[dia] !== b[dia] && await mesFechado(dia)) return periodo.refYm(dia);
     }
     return null;
   }

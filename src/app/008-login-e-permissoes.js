@@ -45,7 +45,7 @@ const podeSal=()=>!!(perfilAtual()||{}).salario,podePii=()=>!!(perfilAtual()||{}
 const GRAVA_COL={integrantes:["pront","turnos","ponto"],ocorr:["ponto","pront","turnos"],marcacoes:["ponto"],docs:["docs"],nfarq:["nf","fin"]};
 const GRAVA_CFG=[[/^nf(_p\d+)?$/,["nf"]],[/^fin_cfg$/,["fin","contab"]],[/^fin_\d+$/,["fin","nf","prest","estoque","fin2"]],[/^recorrencias$/,["fin","prest"]],
  [/^(estoque|mov_\d+)$/,["estoque","nf","res","fin2"]],[/^(prestadores|contratos)$/,["prest"]],[/^contab$/,["contab","fin"]],[/^docs_val$/,["docs"]],
- [/^(residentes|evo_\d+)$/,["res","pres","cuid","admres"]],[/^tar_\d+$/,["agenda","cuid","infra"]],[/^(esc_\d+|escalaEx|escala_cfg)$/,["turnos","ponto"]],[/^prevm_/,["ponto"]],
+ [/^(residentes|evo_\d+)$/,["res","pres","cuid","admres"]],[/^tar_\d+$/,["agenda","cuid","infra"]],[/^(esc_\d+|escalaEx|escala_cfg)$/,["turnos","ponto"]],[/^prevm_/,["ponto"]],[/^pfolha_/,["ponto"]],
  [/^(x_gp|fech_\d+)$/,["gp"]],[/^x_cuid$/,["cuid"]],[/^x_infra$/,["infra"]],[/^x_ind$/,["ind"]],[/^x_fin2$/,["fin2"]],[/^x_fin4$/,["fin"]],[/^x_fin6$/,["fin"]],[/^x_fin7$/,["fin"]],[/^x_fin8$/,["fin"]],[/^x_fin9$/,["fin"]],[/^x_fin10$/,["fin"]],[/^x_fin11$/,["fin"]],[/^x_admres$/,["admres"]],
  [/^armazenamento$/,["docs","fin","nf","pront","res","pres","turnos","ponto"]],[/^geral$/,["pront","turnos","ponto","contador","docs","fin","prest"]]];
 function escritaOk(col,id){

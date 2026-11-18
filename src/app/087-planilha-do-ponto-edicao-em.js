@@ -3,7 +3,7 @@
 const PLN={uid:null,igId:null,de:"",ate:"",dias:[],orig:[],grid:[],prev:[],prevBase:[],prevMan:[],ncol:6,sel:{r0:0,c0:0,r1:0,c1:0},undo:[],snap:"",snapUsado:false,calc:null,calcErro:"",arr:false};
 // "7", "730", "07:30", "7h30", "7.30", 0.3125 (hora do Excel) -> "07:30"; vazio -> ""; inválido -> null
 function plnHora(v){
-  if(typeof v==="number"&&isFinite(v)&&v>=0&&v<1){const m=Math.round(v*1440)%1440;return String(m/60|0).padStart(2,"0")+":"+String(m%60).padStart(2,"0")}
+  if(typeof v==="number"&&isFinite(v)&&v>=0){const m=Math.round((v%1)*1440)%1440;return String(m/60|0).padStart(2,"0")+":"+String(m%60).padStart(2,"0")}
   const s=String(v??"").trim().toLowerCase().replace(/\s+/g,"");if(!s)return "";
   const m=s.match(/^(\d{1,2})[:h.,](\d{2})(?::\d{2})?$/)||s.match(/^(\d{1,2})(\d{2})$/)||s.match(/^(\d{1,2})h?()$/);
   if(!m)return null;const h=+m[1],mi=+(m[2]||0);if(h>23||mi>59)return null;
@@ -11,7 +11,7 @@ function plnHora(v){
 }
 // duração do previsto: "8", "8:00", "0800", "7h20", 0.333 (Excel) -> "08:00"; aceita até 99:59 (plantão)
 function plnDur(v){
-  if(typeof v==="number"&&isFinite(v)&&v>=0&&v<1)return fmtHHMM(Math.round(v*1440));
+  if(typeof v==="number"&&isFinite(v)&&v>=0&&v*1440<6000)return fmtHHMM(Math.round(v*1440));
   const s=String(v??"").trim().toLowerCase().replace(/\s+/g,"");if(!s)return "";
   const m=s.match(/^(\d{1,2})[:h.,](\d{2})(?::\d{2})?$/)||s.match(/^(\d{1,2})(\d{2})$/)||s.match(/^(\d{1,2})h?()$/);
   if(!m)return null;const mi=+(m[2]||0);if(mi>59)return null;
@@ -192,6 +192,7 @@ async function plnSalva(){
     put("config",id,{...strip(doc),dias:dd});
   }
   afterOc();plnCarrega();plnPinta(false);toast(`Ponto salvo: ${ops.length+prevOps.length} alteração(ões).`);
+  if(typeof PLN.aoSalvar==="function")try{PLN.aoSalvar(ops.length+prevOps.length)}catch(e){console.error(e)}
 }
 function plnExcel(){
   if(typeof XLSX==="undefined")return toast("A biblioteca de Excel não carregou. Recarregue a página e tente de novo.",true);
@@ -225,28 +226,50 @@ async function plnImporta(f){
     const cols=A[hi].map((h,i)=>/^(entrada|sa[ií]da|batida)/i.test(String(h).trim())?i:-1).filter(i=>i>=0),cp=A[hi].findIndex(h=>/^previst/i.test(String(h).trim()));
     if(!cols.length&&cp<0)throw new Error("não achei as colunas de Entrada, Saída ou Previsto.");
     plnSnap();let n=0,fora=0,trav=0;
-    A.slice(hi+1).forEach(l=>{const d=plnData(l[0]);if(!d)return;const r=PLN.dias.indexOf(d);if(r<0){fora++;return}if(plnTrava(r)){trav++;return}
-      if(cols.length){plnLargura(cols.length);PLN.grid[r]=PLN.grid[r].map((_,c)=>plnCel(c,c<cols.length?l[cols[c]]:""))}
-      if(cp>=0)PLN.prev[r]=plnCel(PLN.ncol,l[cp]);n++});
+    const lin=A.slice(hi+1).map(l=>({d:plnData(l[0]),l})).filter(x=>x.d),temLinha=new Set(lin.map(x=>x.d)),porDia=new Map(),extra=new Map(),add=(M,d,v)=>{if(!M.has(d))M.set(d,[]);M.get(d).push(v)};
+    lin.forEach(({d,l})=>{if(!porDia.has(d))porDia.set(d,[]);
+      cols.forEach((ci,k)=>{const v0=l[ci],v=v0===""||v0==null?"":(plnHora(v0)??String(v0).trim());if(v==="")return;
+        // par k: coluna par = entrada, ímpar = saída; saída antes da entrada do mesmo par passa da meia-noite
+        const ent=k%2?plnHora(l[cols[k-1]]):null,vira=k%2&&ent&&plnHora(v)&&plnHora(v)<ent;
+        if(vira){const d2=addDaysIso(d,1);add(temLinha.has(d2)?porDia:extra,d2,plnHora(v))}else add(porDia,d,v)})});
+    const ordena=L=>L.slice().sort((a,b)=>(plnHora(a)||"99")<(plnHora(b)||"99")?-1:1);
+    PLN.dias.forEach((d,r)=>{
+      if(!temLinha.has(d)&&!extra.has(d))return;
+      if(plnTrava(r)){trav++;return}
+      if(cols.length){
+        let L=temLinha.has(d)?(porDia.get(d)||[]).slice():PLN.grid[r].filter(v=>v!=="");
+        // dia sem linha no arquivo que recebe a saída do plantão da véspera: a saída antiga desse plantão sai, entra a do arquivo
+        if(!temLinha.has(d)){const v=addDaysIso(d,-1),cv=temLinha.has(v)&&PLN.calc&&PLN.calc.get(v),dono=new Set();
+          if(cv)(cv.marcas&&cv.marcas.length?cv.marcas:(cv.rawIntervals||[]).flat()).forEach(t=>{if(isoDate(t)===d)dono.add(hm(t))});
+          L=L.filter(v=>!dono.has(plnHora(v)));L.push(...extra.get(d))}
+        // 1º dia do arquivo: a saída do plantão que começou na véspera não está no arquivo e continua valendo
+        else if(!temLinha.has(addDaysIso(d,-1))&&dayMarcas(PLN.uid,addDaysIso(d,-1)).length%2){const pri=ordena(L).map(plnHora).find(Boolean)||"99";
+          PLN.orig[r].filter(o=>o.h<pri&&!L.some(v=>plnHora(v)===o.h)).forEach(o=>L.push(o.h))}
+        L=ordena([...new Set(L)]);plnLargura(L.length);PLN.grid[r]=PLN.grid[r].map((_,c)=>L[c]??"");
+      }
+      const li=lin.find(x=>x.d===d);if(cp>=0&&li)PLN.prev[r]=plnCel(PLN.ncol,li.l[cp]);n++});
+    fora=[...temLinha].filter(d=>!PLN.dias.includes(d)).length;
     plnPinta(false);
     toast(`${n} dia(s) lido(s) do Excel. Confira as células amarelas e clique em Salvar alterações.`+(fora?` ${fora} dia(s) fora do período ignorado(s).`:"")+(trav?` ${trav} em mês fechado ignorado(s).`:""));
+    return true;
   }catch(e){toast("Não foi possível ler a planilha: "+e.message,true)}
 }
 document.addEventListener("mouseup",()=>{PLN.arr=false});
 xmReg("ponto","planilha","Ajustes e justificativas","Planilha do ponto (como no Excel)",()=>`<div class="card"><h2>Planilha do ponto</h2>
   <p class="sub" style="margin:0 0 12px">Veja e corrija as batidas de um integrante num período inteiro, numa grade igual à do Excel: um dia por linha, entradas e saídas nas colunas. Dá para editar vários dias de uma vez, colar direto do Excel, baixar a planilha e importar de volta. Nada é gravado até você clicar em <b>Salvar alterações</b>, e a hora original de cada batida alterada fica no histórico.</p>
   <button class="b" id="plabre" style="flex:none">${ic("sheet")} Abrir a planilha do ponto</button></div>`,()=>{const b=$("plabre");if(b)b.onclick=()=>openPlanilha()});
-function openPlanilha(uid,de,ate){
+function openPlanilha(uid,de,ate,opt){
+  opt=opt||{};PLN.aoSalvar=opt.aoSalvar||null;
   const pes=plnPessoas();if(!pes.length)return toast("Nenhum integrante com número no relógio. Cadastre no Prontuário.",true);
   PLN.uid=uid!=null&&pes.some(i=>+i.uid===+uid)?+uid:(PLN.uid!=null&&pes.some(i=>+i.uid===+PLN.uid)?+PLN.uid:+pes[0].uid);
   const R=POINT.result,hoje=hojeIso();
-  PLN.de=de||(R&&R.start)||hoje.slice(0,8)+"01";PLN.ate=ate||(R&&R.end)||hoje;
+  PLN.de=de||(R&&R.start)||refIni(refPadrao());PLN.ate=ate||(R&&R.end)||refFim(refPadrao());
   const ov=openModal(`<h3>Planilha do ponto</h3><div class="sub" style="margin-bottom:10px">Edite vários dias de uma vez, como no Excel. Nada muda até você clicar em <b>Salvar alterações</b>.</div>
    <div class="row" style="align-items:flex-end;flex-wrap:wrap">
     <div style="flex:2 1 220px"><label>Integrante</label><select id="plp">${pes.map(i=>`<option value="${esc(i.uid)}" ${+i.uid===+PLN.uid?"selected":""}>${esc(nomeInteg(i))} (nº ${esc(i.uid)})</option>`).join("")}</select></div>
     <div style="flex:1 1 140px"><label>De</label><input type="date" id="plde" value="${PLN.de}"></div>
     <div style="flex:1 1 140px"><label>Até</label><input type="date" id="plate" value="${PLN.ate}"></div>
-    <button class="b sec sm" id="plmes" style="flex:none">Este mês</button><button class="b sec sm" id="plant" style="flex:none">Mês passado</button></div>
+    <button class="b sec sm" id="plmes" style="flex:none" title="De 26 do mês anterior a 25 deste mês">Período atual (26 a 25)</button><button class="b sec sm" id="plant" style="flex:none">Período anterior</button></div>
    <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px">
     ${plnPode()?`<button class="b sec sm" id="plrep" style="flex:none">Repetir para baixo</button><button class="b sec sm" id="pllim" style="flex:none">${ic("trash")} Limpar seleção</button><button class="b sec sm" id="pldes" style="flex:none">${ic("undo")} Desfazer</button>`:""}
     <span style="flex:1"></span>
@@ -261,7 +284,7 @@ function openPlanilha(uid,de,ate){
   ov.querySelector(".modal").classList.add("largo","planilha");
   const $o=s=>ov.querySelector(s),g=$o("#plgrid");
   const descarta=async()=>!plnMudancas()||await askConfirm("Há alterações não salvas nesta planilha. Descartar?","Descartar");
-  const fecha=async()=>{if(await descarta())ov.remove()};
+  const fecha=async()=>{if(await descarta()){ov.remove();PLN.aoSalvar=null}};
   // clique fora da janela não pode jogar fora o que foi digitado
   ov.addEventListener("mousedown",e=>{if(e.target===ov&&plnMudancas()){e.stopImmediatePropagation();fecha()}},{capture:true});
   const recarrega=()=>{plnCarrega();plnPinta(false)};
@@ -274,8 +297,8 @@ function openPlanilha(uid,de,ate){
   $o("#plp").onchange=async e=>{if(!await descarta()){e.target.value=PLN.uid;return}PLN.uid=+e.target.value;recarrega()};
   $o("#plde").onchange=()=>periodo($o("#plde").value,$o("#plate").value);
   $o("#plate").onchange=()=>periodo($o("#plde").value,$o("#plate").value);
-  $o("#plmes").onclick=()=>periodo(hojeIso().slice(0,8)+"01",hojeIso());
-  $o("#plant").onclick=()=>{const ym=addDaysIso(hojeIso().slice(0,8)+"01",-1).slice(0,7);periodo(ym+"-01",mesFimIso(ym))};
+  $o("#plmes").onclick=()=>{const ym=refYm(hojeIso());periodo(refIni(ym),refFim(ym))};
+  $o("#plant").onclick=()=>{const ym=refYmAdd(refYm(hojeIso()),-1);periodo(refIni(ym),refFim(ym))};
   $o("#plcx").onclick=fecha;
   $o("#plxls").onclick=plnExcel;
   if(plnPode()){
@@ -325,5 +348,6 @@ function openPlanilha(uid,de,ate){
     e.preventDefault();if(k==="Enter")t.dispatchEvent(new Event("change",{bubbles:true}));plnMove(dr,dc,e.shiftKey&&k!=="Enter");
   });
   recarrega();
+  if(opt.arquivo)plnImporta(opt.arquivo).then(ok=>{if(ok&&opt.depoisImportar)opt.depoisImportar(ov)});
 }
 

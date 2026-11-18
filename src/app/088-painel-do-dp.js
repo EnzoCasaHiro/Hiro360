@@ -1,5 +1,5 @@
 /* ================= painel do departamento pessoal: gráficos e ponto explicado ================= */
-const DPP={ym:hojeIso().slice(0,7)};
+const DPP={ym:null};
 // cores dos gráficos (validadas para daltonismo e contraste, claro e escuro): 1 verde, 2 azul, 3 âmbar.
 // "a mais" = azul, "a menos" = âmbar (par divergente); séries únicas = verde.
 const DPC={c1:[63,143,69],c2:[47,116,181],c3:[201,137,46]};
@@ -24,7 +24,7 @@ const dpHabs=m=>hhmm(Math.abs(m||0));
 
 /* ---------- dados ---------- */
 function dpDados(ym){
-  const ini=ym+"-01",f=fimCalc(ym);
+  const ini=refIni(ym),f=fimCalc(ym);
   if(f<ini)return{erro:"Este mês ainda não começou: escolha um mês que já teve dias trabalhados."};
   const r=calcSilencioso(ini,f);
   if(!r||r.erro)return{erro:(r&&r.erro)||"Importe o arquivo do relógio na aba Ponto."};
@@ -37,20 +37,20 @@ function dpDados(ym){
   const soma=k=>L.reduce((s,x)=>s+(typeof k==="function"?k(x):x.t[k]||0),0);
   const tot={prev:soma("expected"),trab:soma("worked"),mais:soma("mais"),menos:soma("menos"),faltas:soma("faltas"),atest:soma("atestados"),
     bhPos:soma(x=>Math.max(0,x.fim)),bhNeg:soma(x=>Math.min(0,x.fim))};
-  return{L,tot,ini,fim:f,parcial:f<mesFimIso(ym)};
+  return{L,tot,ini,fim:f,parcial:f<refFim(ym)};
 }
 function dpSerie(ym,n){
-  return mesesEntre(addMesesIso(ym+"-01",-(n-1)).slice(0,7),ym).map(m=>{
+  return mesesEntre(refYmAdd(ym,-(n-1)),ym).map(m=>{
     const f=fimCalc(m),o={m,mais:0,menos:0,banco:null};
-    if(f<m+"-01")return o;
-    const r=calcSilencioso(m+"-01",f);if(!r||r.erro)return o;
+    if(f<refIni(m))return o;
+    const r=calcSilencioso(refIni(m),f);if(!r||r.erro)return o;
     r.users.forEach(u=>{if(u.ig&&u.ig.id){o.mais+=u.t.mais||0;o.menos+=u.t.menos||0}});
     let b=0;bhSaldos(m).por.forEach(x=>b+=x.acum);o.banco=b;
     return o;
   });
 }
 function dpQuadro(ym){
-  const ref=mesFimIso(ym)<hojeIso()?mesFimIso(ym):hojeIso(),todos=integList();
+  const ref=refFim(ym)<hojeIso()?refFim(ym):hojeIso(),todos=integList();
   const ativos=todos.filter(i=>anivEmAtividade(i,ref)),porCargo={};
   ativos.forEach(i=>{const c=(i.cargo||"").trim()||"Sem cargo";porCargo[c]=(porCargo[c]||0)+1});
   let cargos=Object.entries(porCargo).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],"pt"));
@@ -158,9 +158,10 @@ const dpTab=(head,rows)=>`<table><thead><tr>${head.map((h,i)=>`<th${i?' class="n
 
 /* ---------- tela ---------- */
 function dpHtml(){
+  if(!DPP.ym)DPP.ym=refPadrao();
   const ym=DPP.ym,D=dpDados(ym),Q=dpQuadro(ym),ser6=dpSerie(ym,6),mm=MESES_PT[+ym.slice(5)-1]+" de "+ym.slice(0,4);
-  const meses=mesesEntre(addMesesIso(hojeIso(),-23).slice(0,7),hojeIso().slice(0,7)).reverse();
-  const topo=`<div class="card"><div class="row" style="align-items:flex-end"><div style="flex:0 0 200px"><label>Mês</label><select id="dpmes">${meses.map(m=>`<option value="${m}" ${m===ym?"selected":""}>${MESES_PT[+m.slice(5)-1]} de ${m.slice(0,4)}</option>`).join("")}</select></div>
+  const meses=mesesEntre(refYmAdd(refYm(hojeIso()),-23),refYm(hojeIso())).reverse();
+  const topo=`<div class="card"><div class="row" style="align-items:flex-end"><div style="flex:0 0 300px"><label>Período de referência</label><select id="dpmes">${meses.map(m=>`<option value="${m}" ${m===ym?"selected":""}>${MESES_PT[+m.slice(5)-1]} de ${m.slice(0,4)} · ${refRotulo(m)}</option>`).join("")}</select></div>
     <button class="b sec" id="dppdf" style="flex:none">${ic("down")} Baixar relatório em PDF</button></div>
     ${D.parcial&&!D.erro?`<p class="sub" style="margin:8px 0 0">Mês em andamento: os números vão até ${brDate(D.fim)} (ontem).</p>`:""}</div>`;
   const C1={nome:"Horas a mais",cor:"var(--dv2)"},C2={nome:"Horas a menos",cor:"var(--dv3)"};

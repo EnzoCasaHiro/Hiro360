@@ -3,10 +3,14 @@
    - Cartões da própria tela viram abas (os que se parecem são juntados).
    - Os "Mais recursos" de cada tela viram abas por assunto, com os itens do assunto logo abaixo.
    Nada muda nas funções: só a organização. Telas que já têm abas próprias ficam como estão. */
-const XAB={sub:{},tab:{}};
+const XAB={sub:{},tab:{},mais:{}};
+/* telas com muitas abas: só estas ficam à vista; o resto abre em "Mais ferramentas" */
+const XAB_MAIS={ponto:["Pendências","Fechamento do mês"]};
+/* número ao lado do nome da aba (ex.: quantas pendências faltam) */
+const XAB_CONTA={"ponto|Pendências":()=>typeof ppdConta==="function"?ppdConta():0};
 const XAB_PULA=["fin","fin2","gp","cuid","admres","infra","ind","contab","acesso","pend"];
-const XAB_PRI={pront:"Integrantes",ponto:"Calcular jornadas",res:"Residentes",pres:"Prontuário",nf:"Notas fiscais",prest:"Prestadores",docs:"Documentos",estoque:"Estoque"};
-const XAB_ABRE={ponto:"fechamento"};
+const XAB_PRI={pront:"Integrantes",ponto:"Ponto do período",res:"Residentes",pres:"Prontuário",nf:"Notas fiscais",prest:"Prestadores",docs:"Documentos",estoque:"Estoque"};
+const XAB_ABRE={};
 const XAB_FIXO={rel:/per[ií]odo e formatos/i};
 const XAB_GRUPOS={
   home:[["Hoje",/urgente|aten[cç][aã]o|resumo de hoje/i],["Semana",/semana|acompanhar/i],["Caixa",/fluxo/i]],
@@ -16,7 +20,7 @@ const XAB_GRUPOS={
   estoque:[["Movimentar",/lan[cç]ar|[úu]ltimas mov/i],["Itens e áreas",/[áa]reas|^itens/i],["Consumo",/consumo/i]]
 };
 const XAB_ORDEM_G={
-  ponto:["Fechamento do mês","Relógio","Cadastro e conferência","Ajustes e justificativas","Horas e custo","Espelho e consulta","Folha e contador","Fiscalização da jornada","Segurança"],
+  ponto:["Pendências","Fechamento do mês","Relógio","Cadastro e conferência","Ajustes e justificativas","Horas e custo","Espelho e consulta","Folha e contador","Fiscalização da jornada","Segurança"],
   turnos:["Montar a escala","Trocas e extras","Feriados e rodízio","Publicar a escala","Escala por pessoa","Escalas de outras áreas"]
 };
 (function(){const st=document.createElement("style");st.id="xabcss";st.textContent=`
@@ -76,7 +80,17 @@ function xabShell(){
   depois.forEach(e=>{e.style.display=ativa.startsWith("g:")?"":"none"});
   // barra de abas
   const bar=document.createElement("div");bar.className="tabs xabbar";bar.id="xabbar";
-  bar.innerHTML=abas.map(a=>`<button type="button" data-xabt="${esc(a.k)}" class="${a.k===ativa?"on":""}">${esc(a.l)}</button>`).join("")+G.map(g=>`<button type="button" class="g ${g.k===ativa?"on":""}" data-xabt="${esc(g.k)}">${esc(g.l)}<span class="n">${g.secs.length>1?g.secs.length:""}</span></button>`).join("");
+  bar.innerHTML=abas.map(a=>`<button type="button" data-xabt="${esc(a.k)}" class="${a.k===ativa?"on":""}">${esc(a.l)}</button>`).join("")+G.map(g=>`<button type="button" class="g ${g.k===ativa?"on":""}" data-xabt="${esc(g.k)}">${esc(g.l)}${XAB_CONTA[r+"|"+g.g]?(n=>n?`<span class="n" style="background:var(--bad);color:#fff;border-radius:9px;padding:0 6px;font-weight:700">${n}</span>`:"")(XAB_CONTA[r+"|"+g.g]()):`<span class="n">${g.secs.length>1?g.secs.length:""}</span>`}</button>`).join("");
+  if(XAB_MAIS[r]){
+    const extras=[...bar.querySelectorAll("button.g")].filter(b=>!XAB_MAIS[r].includes(b.dataset.xabt.slice(2)));
+    if(extras.length){
+      const aberto=XAB.mais[r]||extras.some(b=>b.classList.contains("on"));
+      const mb=document.createElement("button");mb.type="button";mb.className="g";mb.textContent=aberto?"Menos ▴":"Mais ferramentas ▾";
+      bar.appendChild(mb);extras.forEach(b=>{b.style.display=aberto?"":"none";bar.appendChild(b)});
+      mb.onclick=()=>{const abre=extras[0].style.display==="none";XAB.mais[r]=abre;extras.forEach(b=>b.style.display=abre?"":"none");mb.textContent=abre?"Menos ▴":"Mais ferramentas ▾"};
+      bar.style.flexWrap="wrap";
+    }
+  }
     v.insertBefore(bar,ancora||antes.find(e=>cards.some(c=>c.e===e))||pn||null);
   const gAt=G.find(x=>x.k===ativa);
   if(gAt&&gAt.secs.length>1){

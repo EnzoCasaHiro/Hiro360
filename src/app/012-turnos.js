@@ -12,7 +12,7 @@ function pgTurnos(){
   ${pgEscalaCalendario()}
   ${pgAlertasEscala()}
   ${pgSugestoes()}
-  <div class="card"><h2>Escala dos integrantes</h2>
+  <div class="card" id="escint"><h2>Escala dos integrantes</h2>
    <p class="sub" style="margin:0 0 10px">Marque os dias em que cada integrante trabalha. Para plantão 12x36 (ou qualquer ciclo "trabalha X, folga Y"), use o modo Ciclo — funciona certo mesmo virando o mês. Pares/ímpares é um atalho rápido, mas falha em meses de 31 dias.</p>
    ${integList().filter(i=>!semPonto(i)).length?`<div class="wrap"><table><thead><tr><th style="width:200px">Integrante</th><th style="width:150px">Turno</th><th>Quando trabalha</th></tr></thead><tbody>
    ${integList().filter(i=>!semPonto(i)).map(i=>`<tr data-id="${i.id}"><td><b>${esc(nomeInteg(i))}</b><div class="sub">${esc(i.depto||"Outro")}${i.uid!=null?" · ID "+i.uid:""}</div></td>

@@ -92,38 +92,21 @@ function valueCell(ws,addr,val,opts){
   c.border={bottom:{style:"thin",color:{argb:"FFB9DCB9"}}};
   if(opts&&opts.numFmt)c.numFmt=opts.numFmt;
 }
+// título de aba sem células mescladas (mesclar atrapalha editar no Google Planilhas e no Excel)
 function bandTitle(ws,fromCol,toCol,rows){
-  // banner de topo reaproveitado em toda aba: linha 1-2 CASA HIRO, linha3 tagline, linha4 título da aba
-  const r1=colLetter(fromCol)+"1",r1b=colLetter(toCol)+"2";
-  ws.mergeCells(`${r1}:${r1b}`);
-  const c1=ws.getCell(r1);c1.value="CASA HIRO";c1.font={name:"Georgia",size:24,bold:true,color:{argb:BR.branco}};
-  c1.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c1.alignment={horizontal:"center",vertical:"center"};
-  for(let c=fromCol;c<=toCol;c++)ws.getRow(1).getCell(c).fill=ws.getRow(2).getCell(c).fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};
-  ws.mergeCells(`${colLetter(fromCol)}3:${colLetter(toCol)}3`);
-  const c3=ws.getCell(`${colLetter(fromCol)}3`);c3.value="A ciência do cuidado com o acolhimento de casa.";
-  c3.font={italic:true,size:11,color:{argb:BR.verdeClaroBg}};c3.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c3.alignment={horizontal:"center",vertical:"center"};
-  ws.mergeCells(`${colLetter(fromCol)}4:${colLetter(toCol)}4`);
-  const c4=ws.getCell(`${colLetter(fromCol)}4`);c4.value=rows;
-  c4.font={bold:true,size:12,color:{argb:BR.branco}};c4.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeMedio}};c4.alignment={horizontal:"center",vertical:"center"};
-  ws.getRow(1).height=17;ws.getRow(2).height=17;ws.getRow(4).height=24;
+  const c1=ws.getCell(1,fromCol);c1.value="Casa Hiro — "+rows;c1.font={name:"Calibri",size:14,bold:true,color:{argb:BR.verdeEsc}};
+  const c2=ws.getCell(2,fromCol);c2.value="A ciência do cuidado com o acolhimento de casa.";c2.font={italic:true,size:9.5,color:{argb:BR.mute}};
 }
 
 function buildCapa(wb,e,R){
   const ws=wb.addWorksheet("Capa");pageBox(ws,"portrait");
-  ws.columns=[{width:3},{width:24},{width:60},{width:3}];
-  ws.mergeCells("A1:D2");const c1=ws.getCell("A1");c1.value="CASA HIRO";c1.font={name:"Georgia",size:28,bold:true,color:{argb:BR.branco}};
-  c1.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c1.alignment={horizontal:"center",vertical:"center"};
-  for(const col of["A","B","C","D"]){ws.getCell(col+"1").fill=ws.getCell(col+"2").fill=c1.fill}
-  ws.mergeCells("A3:D3");const c3=ws.getCell("A3");c3.value="A ciência do cuidado com o acolhimento de casa.";
-  c3.font={italic:true,size:11,color:{argb:BR.verdeClaroBg}};c3.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c3.alignment={horizontal:"center",vertical:"center"};
-  ws.mergeCells("A4:D4");const c4=ws.getCell("A4");c4.value="Relatório de integrantes e apuração de ponto";
-  c4.font={bold:true,size:13,color:{argb:BR.branco}};c4.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeMedio}};c4.alignment={horizontal:"center",vertical:"center"};
-  ws.getRow(4).height=26;
+  ws.columns=[{width:24},{width:70}];
+  bandTitle(ws,1,2,"Relatório de integrantes e apuração de ponto");
   const info=[["Razão social",e.razao],["CNPJ",e.cnpj||"—"],["Endereço",e.endereco],["Telefone",e.telefone],["E-mail",e.email],["Site",e.site],
-    ["Período apurado",R?`${brDate(R.start)} a ${brDate(R.end)}`:"Ponto ainda não calculado"],["Emitido em",new Date().toLocaleString("pt-BR")]];
-  let r=6;
-  info.forEach(([k,v])=>{labelCell(ws,"B"+r,k);valueCell(ws,"C"+r,v);ws.getRow(r).height=22;r++});
-  ws.mergeCells(`B${r+1}:C${r+1}`);const note=ws.getCell(`B${r+1}`);
+    ["Período apurado",R?`${brDate(R.start)} a ${brDate(R.end)}${R.end<=refFim(refYm(R.end))&&R.start===refIni(refYm(R.end))?" (referência "+refYm(R.end).slice(5)+"/"+refYm(R.end).slice(0,4)+": dia 26 a dia 25)":""}`:"Ponto ainda não calculado"],["Emitido em",new Date().toLocaleString("pt-BR")]];
+  let r=4;
+  info.forEach(([k,v])=>{labelCell(ws,"A"+r,k);valueCell(ws,"B"+r,v);r++});
+  const note=ws.getCell(`A${r+1}`);
   note.value="Abas: Integrantes · Jornadas diárias · uma folha de ponto por integrante (com campo de assinatura).";
   note.font={italic:true,size:9.5,color:{argb:BR.mute}};
 }
@@ -147,151 +130,128 @@ function buildIntegrantesSheet(wb,L){
   ws.views=[{state:"frozen",xSplit:2,ySplit:1,showGridLines:false}];
   ws.autoFilter={from:"A1",to:colLetter(head.length)+"1"};
 }
-// escreve uma linha de jornada (Data/Dia/Entrada-Saída.../Trabalhado/Previsto/Observação) a partir da coluna startCol
+const SALDO_FMT="+0;-0;0";
+const xlHorasTxt=ref=>`IF(${ref}<0,"-",IF(${ref}>0,"+",""))&TEXT(ABS(${ref})/1440,"[h]:mm")&" h"`;
+// o mesmo texto que a fórmula acima produz (Excel e Google Planilhas), para o arquivo abrir já igual ao recalculado
+const xlHorasRes=min=>{const r=Math.round(min||0),a=Math.abs(r);return(r<0?"-":r>0?"+":"")+Math.floor(a/60)+":"+String(a%60).padStart(2,"0")+" h"};
+// escreve uma linha de jornada a partir da coluna startCol:
+// Data | Dia | Entrada/Saída… | Ajuste (min) | Trabalhado | Previsto | Saldo (min) | Observação
+// Tudo é valor de verdade ou fórmula visível: mexendo nas batidas, o trabalhado e o saldo recalculam (Excel e Google Planilhas).
+const xlParesDia=r=>{const M=r.marcas||[],I=r.rawIntervals||[];
+  if(!M.length||M.length===2*I.length)return I.map(([a,b])=>[a,b]);
+  const L=[];for(let i=0;i<M.length;i+=2)L.push([M[i],M[i+1]||null]);return L};
+const xlMaxPares=rows=>Math.max(1,...rows.map(r=>Math.max(r.intervals.length,xlParesDia(r).length)));
 function writeJourneyRow(ws,rowIdx,startCol,r,maxP,zebra){
   let c=startCol;
   const put=(v,fmt,formula,align)=>{
     const cell=ws.getCell(rowIdx,c);
-    if(formula)cell.value={formula,result:v};else cell.value=v;
+    cell.value=formula?{formula,result:v}:v;
     if(fmt)cell.numFmt=fmt;
     cell.font={size:10,color:{argb:BR.ink}};cell.border=thinBorder(BR.areiaEsc);
-    cell.alignment={horizontal:align||"center",vertical:"middle",wrapText:align==="left"};
+    cell.alignment={horizontal:align||"center",vertical:"middle"};
     if(zebra)cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.areia}};
-    c++;
+    return c++;
   };
+  const L=n=>colLetter(n)+rowIdx;
   put(xlDateOnly(r.day),"dd/mm/yyyy");
   put(WD3[pyWeekday(r.day)]);
-  const entC=[],saiC=[];
+  const entC=[],saiC=[],pares=xlParesDia(r);
   for(let k=0;k<maxP;k++){
-    const iv=r.rawIntervals&&r.rawIntervals[k];
-    entC.push(c);put(iv?xlSerial(iv[0]):null,"hh:mm");
-    saiC.push(c);put(iv?xlSerial(iv[1]):null,"hh:mm");
+    const iv=pares[k];
+    entC.push(put(iv&&iv[0]?xlSerial(iv[0]):null,"hh:mm"));
+    saiC.push(put(iv&&iv[1]?xlSerial(iv[1]):null,"hh:mm"));
   }
-  const workFormula=entC.map((ec,i)=>`${colLetter(saiC[i])}${rowIdx}-${colLetter(ec)}${rowIdx}`).join("+")||"0";
-  // se o dia teve desconto de intervalo ou crédito (atestado, esquecimento), o ajuste em minutos aparece na própria fórmula
-  const parMin=(r.rawIntervals||[]).reduce((sum,[a,b])=>sum+minutesBetween(a,b),0),adj=Math.round(r.workedMin-parMin);
-  put(r.workedMin/1440,"hh:mm",`ROUND((${workFormula})*1440${adj?(adj>0?"+":"")+adj:""},0)/1440`);
-  put(xlDur(r.expectedMin),"hh:mm");
-  put(obsText(r),null,null,"left");
-  return c-1; // última coluna escrita
+  // ajuste em minutos: intervalo descontado (negativo) ou dia abonado por atestado/esquecimento (positivo)
+  const parMin=pares.filter(([a,b])=>a&&b).reduce((sum,[a,b])=>sum+minutesBetween(a,b),0),adj=Math.round(r.workedMin-parMin);
+  const ajC=put(adj||null,"0");
+  // cada par só conta com entrada e saída preenchidas; MOD aceita plantão que passa da meia-noite
+  const fP=entC.map((ec,i)=>`IF(AND(${L(ec)}<>"",${L(saiC[i])}<>""),MOD(${L(saiC[i])}-${L(ec)},1),0)`).join("+")||"0";
+  const wC=put(r.workedMin/1440,"[h]:mm",`ROUND((${fP})*1440+N(${L(ajC)}),0)/1440`);
+  const pC=put(xlDur(r.expectedMin),"[h]:mm");
+  // saldo do dia em minutos; até 10 min de diferença no dia não conta (CLT art. 58 §1º); dia com pendência fica fora (0)
+  const dm=Math.round(r.workedMin-r.expectedMin),dif=`ROUND((${L(wC)}-${L(pC)})*1440,0)`;
+  let sF=null;
+  if(r.status!==PENDENCIA){if(r.saldo===0&&dm!==0&&Math.abs(dm)<=10)sF=`IF(ABS(${dif})<=10,0,${dif})`;else if(r.saldo===dm)sF=dif}
+  // dia com batida faltando: saldo 0 enquanto o número de batidas for ímpar; completou na planilha, passa a calcular
+  else if(!r.saldo&&maxP)sF=`IF(MOD(COUNT(${L(entC[0])}:${L(saiC[maxP-1])}),2)=1,0,IF(ABS(${dif})<=10,0,${dif}))`;
+  const sC=put(r.saldo||0,SALDO_FMT,sF);
+  const oC=put(obsText(r),null,null,"left");
+  return{wC,pC,sC,oC};
 }
 function buildJornadasSheet(wb,R,maxP){
   const ws=wb.addWorksheet("Jornadas diárias");pageBox(ws,"landscape");
-  bandTitle(ws,1,4+2*maxP+3,"Jornadas diárias — consolidado");
-  const head=["ID","Integrante","Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Trabalhado","Previsto do dia","Observação");
-  head.forEach((h,i)=>headerCell(ws,colLetter(i+1)+"6",h));ws.getRow(6).height=26;
-  const widths=[6,26,10,5];for(let k=0;k<maxP;k++)widths.push(9,9);widths.push(11,13,34);
+  const head=["ID","Integrante","Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Ajuste (min)","Trabalhado","Previsto","Saldo (min)","Observação");
+  bandTitle(ws,1,head.length,"Jornadas diárias de "+brDate(R.start)+" a "+brDate(R.end));
+  const hr=4;head.forEach((h,i)=>headerCell(ws,colLetter(i+1)+hr,h));ws.getRow(hr).height=30;
+  const widths=[6,26,11,6];for(let k=0;k<maxP;k++)widths.push(8,8);widths.push(9,11,10,10,38);
   ws.columns=widths.map(w=>({width:w}));
-  let rr=7,zebra=false,uidx=0;
+  let rr=hr+1,zebra=false;
   R.users.forEach(u=>{
     u.rows.forEach(r=>{
-      ws.getCell(rr,1).value=u.uid;ws.getCell(rr,1).font={size:10,color:{argb:BR.ink}};ws.getCell(rr,1).border=thinBorder(BR.areiaEsc);
-      ws.getCell(rr,1).alignment={horizontal:"center",vertical:"middle"};if(zebra)ws.getCell(rr,1).fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.areia}};
-      ws.getCell(rr,2).value=u.nome;ws.getCell(rr,2).font={size:10,color:{argb:BR.ink}};ws.getCell(rr,2).border=thinBorder(BR.areiaEsc);
-      ws.getCell(rr,2).alignment={horizontal:"left",vertical:"middle"};if(zebra)ws.getCell(rr,2).fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.areia}};
+      [[1,u.uid,"center"],[2,u.nome,"left"]].forEach(([col,v,al])=>{const cell=ws.getCell(rr,col);cell.value=v;cell.font={size:10,color:{argb:BR.ink}};cell.border=thinBorder(BR.areiaEsc);
+        cell.alignment={horizontal:al,vertical:"middle"};if(zebra)cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.areia}}});
       writeJourneyRow(ws,rr,3,r,maxP,zebra);
       rr++;
     });
-    zebra=!zebra;uidx++;
+    zebra=!zebra;
   });
-  ws.views=[{state:"frozen",xSplit:2,ySplit:6,showGridLines:false}];
-  ws.autoFilter={from:"A6",to:colLetter(head.length)+"6"};
+  ws.views=[{state:"frozen",xSplit:2,ySplit:hr,showGridLines:false}];
+  ws.autoFilter={from:"A"+hr,to:colLetter(head.length)+hr};
 }
+// folha de ponto de uma pessoa: sem células mescladas, com fórmulas visíveis, pronta para editar no Excel ou no Google Planilhas
 function buildPersonSheet(wb,e,ig,u){
   const name=nomeInteg(ig).slice(0,31)||("ID "+u.uid);
   let sheetName=name,n=1;while(wb.getWorksheet(sheetName)){sheetName=(name.slice(0,28)+" "+(++n)).slice(0,31)}
   const ws=wb.addWorksheet(sheetName);pageBox(ws,"portrait");
-  const maxP=Math.max(1,...u.rows.map(r=>r.intervals.length));
-  const tableLastCol=2+2*maxP+3; // Data,Dia,(Entrada/Saída)xN,Trabalhado,Previsto,Observação
-  const bannerLastCol=Math.max(9,tableLastCol);
-  ws.mergeCells(`A1:${colLetter(bannerLastCol)}2`);const c1=ws.getCell("A1");c1.value="CASA HIRO";c1.font={name:"Georgia",size:24,bold:true,color:{argb:BR.branco}};
-  c1.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c1.alignment={horizontal:"center",vertical:"center"};
-  for(let c=1;c<=bannerLastCol;c++){ws.getRow(1).getCell(c).fill=ws.getRow(2).getCell(c).fill=c1.fill}
-  ws.mergeCells(`A3:${colLetter(bannerLastCol)}3`);const c3=ws.getCell("A3");c3.value="A ciência do cuidado com o acolhimento de casa.";
-  c3.font={italic:true,size:11,color:{argb:BR.verdeClaroBg}};c3.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c3.alignment={horizontal:"center",vertical:"center"};
-  ws.mergeCells(`A4:${colLetter(bannerLastCol)}4`);const c4=ws.getCell("A4");c4.value="Folha de apuração de ponto";
-  c4.font={bold:true,size:12,color:{argb:BR.branco}};c4.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeMedio}};c4.alignment={horizontal:"center",vertical:"center"};
-  ws.getRow(1).height=17;ws.getRow(2).height=17;ws.getRow(4).height=24;
-  // bloco de identificação: esquema fixo A-I (label A, valor B:F, label2 G, valor2 H:I)
-  const idBlock=[["Integrante",nomeInteg(ig),"ID relógio",u.uid??""],["CPF",ig.cpf||"","RG",ig.rg||""],
-    ["Cargo",ig.cargo||"","Departamento",ig.depto||"Outro"],["Admissão",ig.admissao?brDate(ig.admissao):"","Turno",ig.turno||"—"],
-    ["Período",`${brDate(POINT.result.start)} a ${brDate(POINT.result.end)}`,"Situação",ig.situacao||"Ativo"]];
-  idBlock.forEach((row,ri)=>{
-    const r=6+ri;
-    ws.mergeCells(`B${r}:F${r}`);ws.mergeCells(`H${r}:I${r}`);
-    labelCell(ws,"A"+r,row[0]);valueCell(ws,"B"+r,row[1]);
-    labelCell(ws,"G"+r,row[2]);valueCell(ws,"H"+r,row[3]);
-    ws.getRow(r).height=21;
-  });
-  ws.mergeCells("B11:I11");labelCell(ws,"A11","Escala");valueCell(ws,"B11",ig.id?escalasTexto(ig,POINT.result.start,POINT.result.end):"—");ws.getRow(11).height=21;
-  const headRowNo=12;
-  const head=["Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Trabalhado","Previsto","Observação");
-  head.forEach((h,i)=>headerCell(ws,colLetter(i+1)+headRowNo,h));ws.getRow(headRowNo).height=24;
-  const widths=[13,7];for(let k=0;k<maxP;k++)widths.push(10,10);widths.push(12,11,34);
+  const R=POINT.result,ym=refYm(R.end),maxP=xlMaxPares(u.rows);
+  const widths=[11,6];for(let k=0;k<maxP;k++)widths.push(8,8);widths.push(9,11,10,10,38);
   ws.columns=widths.map(w=>({width:w}));
-  let r=headRowNo+1;
-  u.rows.forEach((row,ri)=>{ws.getRow(r).height=18;writeJourneyRow(ws,r,1,row,maxP,ri%2===1);r++});
-  const lastData=r-1,totRow=lastData+1;
-  const workCol=3+2*maxP,prevCol=workCol+1,obsCol=prevCol+1;
-  ws.mergeCells(`A${totRow}:${colLetter(workCol-1)}${totRow}`);
-  const totLabel=ws.getCell(`A${totRow}`);totLabel.value="TOTAIS";totLabel.font={bold:true,size:10.5,color:{argb:BR.branco}};
-  totLabel.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};totLabel.alignment={horizontal:"right",vertical:"middle"};totLabel.border=thinBorder(BR.verdeEsc);
-  for(let c=2;c<workCol;c++){const cc=ws.getCell(totRow,c);cc.fill=totLabel.fill;cc.border=thinBorder(BR.verdeEsc)}
-  const wc=ws.getCell(totRow,workCol);wc.value={formula:`ROUND(SUM(${colLetter(workCol)}${headRowNo+1}:${colLetter(workCol)}${lastData})*1440,0)/1440`,result:u.t.worked/1440};
-  wc.numFmt="[h]:mm";wc.font={bold:true,size:10.5,color:{argb:BR.branco}};wc.fill=totLabel.fill;wc.alignment={horizontal:"center",vertical:"middle"};wc.border=thinBorder(BR.verdeEsc);
-  const pc=ws.getCell(totRow,prevCol);pc.value={formula:`ROUND(SUM(${colLetter(prevCol)}${headRowNo+1}:${colLetter(prevCol)}${lastData})*1440,0)/1440`,result:u.t.expected/1440};
-  pc.numFmt="[h]:mm";pc.font=wc.font;pc.fill=totLabel.fill;pc.alignment=wc.alignment;pc.border=thinBorder(BR.verdeEsc);
-  const ocCell=ws.getCell(totRow,obsCol);
-  // saldo com a tolerância da CLT (art. 58 §1º) — não é a diferença simples das duas colunas
-  ocCell.value="Saldo do mês: "+hhmmS(u.t.saldo||0);
-  ocCell.font=wc.font;ocCell.fill=totLabel.fill;ocCell.alignment={horizontal:"left",vertical:"middle"};ocCell.border=thinBorder(BR.verdeEsc);
-  ws.getRow(totRow).height=22;
-  // contadores: esquema fixo A-I (label A:D, valor E, label2 F:H, valor2 I)
-  const cRow1=totRow+2,cRow2=totRow+3;
-  labelCell(ws,"A"+cRow1,"Dias apurados");ws.mergeCells(`A${cRow1}:D${cRow1}`);
-  const d1=ws.getCell("E"+cRow1);d1.value={formula:`COUNTA(A${headRowNo+1}:A${lastData})`,result:u.rows.length};d1.font={bold:true,size:10,color:{argb:BR.ink}};d1.alignment={horizontal:"center"};
-  labelCell(ws,"F"+cRow1,"Dias com registro de ponto");ws.mergeCells(`F${cRow1}:H${cRow1}`);
-  const d2=ws.getCell("I"+cRow1);
-  d2.value={formula:`COUNTIF(${colLetter(workCol)}${headRowNo+1}:${colLetter(workCol)}${lastData},">0")`,result:u.rows.filter(rr=>rr.workedMin>0).length};
-  d2.font={bold:true,size:10,color:{argb:BR.ink}};d2.alignment={horizontal:"center"};
-  labelCell(ws,"A"+cRow2,"Faltas");ws.mergeCells(`A${cRow2}:D${cRow2}`);
-  const f1=ws.getCell("E"+cRow2);f1.value={formula:`COUNTIF(${colLetter(obsCol)}${headRowNo+1}:${colLetter(obsCol)}${lastData},"Falta*")`,result:u.t.faltas};f1.font={bold:true,size:10,color:{argb:BR.ink}};f1.alignment={horizontal:"center"};
-  labelCell(ws,"F"+cRow2,"Atestados");ws.mergeCells(`F${cRow2}:H${cRow2}`);
-  const a1=ws.getCell("I"+cRow2);a1.value={formula:`COUNTIF(${colLetter(obsCol)}${headRowNo+1}:${colLetter(obsCol)}${lastData},"Atestado*")`,result:u.t.atestados};a1.font={bold:true,size:10,color:{argb:BR.ink}};a1.alignment={horizontal:"center"};
-  ws.getRow(cRow1).height=20;ws.getRow(cRow2).height=20;
-  // horas a mais e banco de horas: esquema fixo A-I (label A:F, valor G:I)
-  const fb=folhaBanco(u,POINT.result),bRow=totRow+5;
-  ws.mergeCells(`A${bRow}:I${bRow}`);headerCell(ws,"A"+bRow,"Horas a mais e banco de horas — "+fb.mm,{h:"left"});ws.getRow(bRow).height=20;
-  fb.linhas.forEach(([k,v],i)=>{const rr=bRow+1+i,forte=i===2||i===fb.linhas.length-1;
-    ws.mergeCells(`A${rr}:F${rr}`);ws.mergeCells(`G${rr}:I${rr}`);labelCell(ws,"A"+rr,k);valueCell(ws,"G"+rr,v);
-    const vc=ws.getCell("G"+rr);vc.alignment={horizontal:"right",vertical:"middle"};if(forte)vc.font={name:"Calibri",size:10.5,bold:true,color:{argb:BR.verdeEsc}};ws.getRow(rr).height=19});
-  const nRow=bRow+1+fb.linhas.length;ws.mergeCells(`A${nRow}:I${nRow+1}`);
-  const nc=ws.getCell("A"+nRow);nc.value=fb.notas.join(" ");nc.font={italic:true,size:8.5,color:{argb:BR.mute}};nc.alignment={horizontal:"left",vertical:"top",wrapText:true};
-  ws.getRow(nRow).height=fb.notas.length>1?24:18;ws.getRow(nRow+1).height=fb.notas.length>1?24:12;
-  const off=fb.linhas.length+4;
-  // declaração e assinatura: esquema fixo A-I
-  const decRow=totRow+6+off;
-  ws.mergeCells(`A${decRow}:I${decRow+1}`);
-  const dec=ws.getCell("A"+decRow);dec.value="Declaro que conferi os registros de ponto acima referentes ao período apurado e que estão de acordo com a jornada efetivamente cumprida.";
-  dec.font={italic:true,size:9.5,color:{argb:BR.ink}};dec.alignment={horizontal:"left",vertical:"center",wrapText:true};
-  const sigDateRow=totRow+9+off;
-  ws.mergeCells(`A${sigDateRow}:I${sigDateRow}`);
-  ws.getCell("A"+sigDateRow).value="Caraguatatuba - SP, ____ de ______________ de ________";ws.getCell("A"+sigDateRow).alignment={horizontal:"right"};
-  const sigRow=totRow+13+off,labRow=sigRow+1,nameRow=sigRow+2,docRow=sigRow+3;
-  ws.mergeCells(`A${sigRow}:D${sigRow}`);ws.mergeCells(`F${sigRow}:I${sigRow}`);
-  ws.getCell("A"+sigRow).border=medBottom(BR.ink);ws.getCell("F"+sigRow).border=medBottom(BR.ink);
-  ws.getRow(sigRow).height=30;
-  ws.mergeCells(`A${labRow}:D${labRow}`);ws.mergeCells(`F${labRow}:I${labRow}`);
-  ws.getCell("A"+labRow).value="INTEGRANTE";ws.getCell("F"+labRow).value="CASA HIRO";
-  [ws.getCell("A"+labRow),ws.getCell("F"+labRow)].forEach(c=>{c.font={bold:true,size:10.5,color:{argb:BR.verdeEsc}};c.alignment={horizontal:"center",vertical:"center"}});
-  ws.mergeCells(`A${nameRow}:D${nameRow}`);ws.mergeCells(`F${nameRow}:I${nameRow}`);
-  ws.getCell("A"+nameRow).value=nomeInteg(ig);ws.getCell("F"+nameRow).value=e.razao;
-  [ws.getCell("A"+nameRow),ws.getCell("F"+nameRow)].forEach(c=>{c.font={size:9.5,color:{argb:BR.ink}};c.alignment={horizontal:"center",vertical:"center",wrapText:true}});
-  ws.getRow(nameRow).height=28;
-  ws.mergeCells(`A${docRow}:D${docRow}`);ws.mergeCells(`F${docRow}:I${docRow}`);
-  ws.getCell("A"+docRow).value="CPF "+(ig.cpf||"—");ws.getCell("F"+docRow).value="CNPJ "+(e.cnpj||"—");
-  [ws.getCell("A"+docRow),ws.getCell("F"+docRow)].forEach(c=>{c.font={size:8.5,italic:true,color:{argb:BR.mute}};c.alignment={horizontal:"center",vertical:"center"}});
-  ws.views=[{state:"frozen",ySplit:headRowNo,showGridLines:false}];
+  const ink={size:10,color:{argb:BR.ink}},forte={size:10.5,bold:true,color:{argb:BR.verdeEsc}};
+  const cel=(addr,v,font,fmt)=>{const c=ws.getCell(addr);c.value=v;c.font=font||ink;c.alignment={vertical:"middle"};if(fmt)c.numFmt=fmt;return c};
+  cel("A1","Folha de apuração de ponto",{size:15,bold:true,color:{argb:BR.verdeEsc}});
+  cel("A2",(e.razao||"Casa Hiro")+(e.cnpj?" · CNPJ "+e.cnpj:""),{size:9.5,italic:true,color:{argb:BR.mute}});
+  const per=`${brDate(R.start)} a ${brDate(R.end)}`+(R.start===refIni(ym)?` (referência ${ym.slice(5)}/${ym.slice(0,4)}: do dia 26 ao dia 25)`:"");
+  const ident=[["Integrante",nomeInteg(ig)],["CPF",ig.cpf||"—"],["Cargo",ig.cargo||"—"],["Departamento",ig.depto||"Outro"],["Admissão",ig.admissao?brDate(ig.admissao):"—"],["Nº no relógio",u.uid!=null?String(u.uid):"—"],["Escala",ig.id?escalasTexto(ig,R.start,R.end):"—"],["Período",per]];
+  let r=4;ident.forEach(([k,v])=>{labelCell(ws,"A"+r,k);cel("B"+r,v);r++});
+  const hr=r+1,head=["Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Ajuste (min)","Trabalhado","Previsto","Saldo (min)","Observação");
+  head.forEach((h,i)=>headerCell(ws,colLetter(i+1)+hr,h));ws.getRow(hr).height=30;
+  let rr=hr+1,cols=null;
+  u.rows.forEach((row,ri)=>{cols=writeJourneyRow(ws,rr,1,row,maxP,ri%2===1);rr++});
+  const ini=hr+1,fim=Math.max(ini,rr-1),wC=3+2*maxP+1,pC=wC+1,sC=pC+1,oC=sC+1;
+  const faixa=col=>`${colLetter(col)}${ini}:${colLetter(col)}${fim}`;
+  // totais
+  const tr=rr,tot=(col,formula,res,fmt)=>{const c=ws.getCell(tr,col);c.value={formula,result:res};c.numFmt=fmt;c.font={bold:true,size:10.5,color:{argb:BR.branco}}};
+  for(let c=1;c<=oC;c++){const cc=ws.getCell(tr,c);cc.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};cc.border=thinBorder(BR.verdeEsc);cc.alignment={horizontal:c===oC?"left":"center",vertical:"middle"}}
+  const tl=ws.getCell(tr,1);tl.value="TOTAIS";tl.font={bold:true,size:10.5,color:{argb:BR.branco}};
+  tot(wC,`ROUND(SUM(${faixa(wC)})*1440,0)/1440`,u.t.worked/1440,"[h]:mm");
+  tot(pC,`ROUND(SUM(${faixa(pC)})*1440,0)/1440`,u.t.expected/1440,"[h]:mm");
+  tot(sC,`SUM(${faixa(sC)})`,u.t.saldo||0,SALDO_FMT);
+  const S=colLetter(sC)+tr;ws.getCell(tr,oC).value={formula:`"Saldo do período: "&${xlHorasTxt(S)}`,result:"Saldo do período: "+xlHorasRes(u.t.saldo)};ws.getCell(tr,oC).font={bold:true,size:10.5,color:{argb:BR.branco}};
+  // resumo: rótulo na coluna A, número na coluna "Previsto"
+  r=tr+2;cel("A"+r,"Resumo do período",forte);r++;
+  [["Dias apurados",`COUNT(${faixa(1)})`,u.rows.length],["Dias com registro de ponto",`COUNTIF(${faixa(wC)},">0")`,u.rows.filter(x=>x.workedMin>0).length],
+   ["Faltas",`COUNTIFS(${faixa(oC)},"Falta*",${faixa(wC)},0)`,u.t.faltas],["Atestados",`COUNTIF(${faixa(oC)},"Atestado*")`,u.t.atestados]].forEach(([k,f,v])=>{cel("A"+r,k);const c=ws.getCell(r,pC);c.value={formula:f,result:v};c.font=forte;c.alignment={horizontal:"center"};r++});
+  // banco de horas: minutos na coluna "Saldo", em horas na "Observação"
+  const fb=folhaBanco(u,R);r++;
+  cel("A"+r,"Horas a mais e banco de horas — referência "+fb.mm,forte);r++;
+  const linhaB=(k,valor,formula,negrito)=>{cel("A"+r,k,negrito?forte:ink);const c=ws.getCell(r,sC);c.value=formula?{formula,result:valor}:valor;c.numFmt=SALDO_FMT;c.font=negrito?forte:ink;c.alignment={horizontal:"center"};
+    const h=ws.getCell(r,oC);h.value={formula:xlHorasTxt(colLetter(sC)+r),result:xlHorasRes(valor)};h.font=negrito?forte:ink;const ref=colLetter(sC)+r;r++;return ref};
+  linhaB("Horas trabalhadas a mais que o previsto (min)",u.t.mais||0,`SUMIF(${faixa(sC)},">0")`);
+  linhaB("Horas trabalhadas a menos que o previsto (min)",u.t.menos||0,`SUMIF(${faixa(sC)},"<0")`);
+  const rS=linhaB("Saldo do período (min)",u.t.saldo||0,`${S}`,true);
+  const rA=linhaB(`Banco de horas antes de ${brDate(refIni(ym))} (min)`,fb.ant,null);
+  const rL=linhaB("Folgas compensadas e horas pagas no período (min)",fb.lanc,null);
+  linhaB("Banco de horas para o próximo período (min)",fb.fim,`${rA}+${rS}+${rL}`,true);
+  fb.notas.forEach(t=>{cel("A"+r,t,{italic:true,size:8.5,color:{argb:BR.mute}});r++});
+  // declaração e assinaturas
+  r++;cel("A"+r,"Declaro que conferi os registros de ponto acima referentes ao período apurado e que estão de acordo com a jornada efetivamente cumprida.",{italic:true,size:9.5,color:{argb:BR.ink}});
+  r+=2;cel("A"+r,"Caraguatatuba - SP, ____ de ______________ de ________");
+  r+=2;const meio=Math.max(3,Math.floor(oC/2));
+  for(let c=1;c<=oC;c++)if(c<meio||c>meio)ws.getCell(r,c).border=medBottom(BR.ink);
+  r++;cel("A"+r,"INTEGRANTE",forte);cel(colLetter(meio+1)+r,"CASA HIRO",forte);
+  r++;cel("A"+r,nomeInteg(ig)+" · CPF "+(ig.cpf||"—"));cel(colLetter(meio+1)+r,(e.razao||"")+(e.cnpj?" · CNPJ "+e.cnpj:""));
+  // sem linhas congeladas: o Google Planilhas repete as linhas congeladas no topo de cada página impressa
+  ws.views=[{showGridLines:false}];
 }
 function buildNoturnoSheet(wb,R){
   const ws=wb.addWorksheet("Adicional noturno");pageBox(ws,"landscape");
@@ -319,7 +279,7 @@ function buildWorkbook(opt){
   if(abas.capa)buildCapa(wb,e,R);
   if(abas.integrantes)buildIntegrantesSheet(wb,L);
   if(R){
-    const maxP=Math.max(1,...R.users.flatMap(u=>u.rows.map(r=>r.intervals.length)));
+    const maxP=xlMaxPares(R.users.flatMap(u=>u.rows));
     if(abas.jornadas)buildJornadasSheet(wb,R,maxP);
     if(abas.jornadas&&R.users.some(u=>(u.t.nightReal||0)>0))buildNoturnoSheet(wb,R);
     if(abas.individual)R.users.forEach(u=>buildPersonSheet(wb,e,u.ig||{},u));

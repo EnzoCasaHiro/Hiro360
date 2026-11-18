@@ -45,3 +45,30 @@ const FLAG_LABEL={tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trab
 const FLAG_OCULTA=new Set(["escala_lancada","previsto_manual"]);
 const flagsVisiveis=r=>((r&&r.flags)||[]).filter(f=>!FLAG_OCULTA.has(f));
 
+/* >>> periodo-ref */
+/* Período de referência do ponto: do dia 26 do mês anterior ao dia 25 do mês.
+   "2026-11" = 26/10/2026 a 25/11/2026. O dia 26 em diante já pertence ao mês seguinte. */
+const PONTO_CORTE=25;
+const refYmAdd=(ym,n)=>{const d=new Date(+ym.slice(0,4),+ym.slice(5,7)-1+n,1);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")};
+const refIni=ym=>refYmAdd(ym,-1)+"-"+String(PONTO_CORTE+1).padStart(2,"0");
+const refFim=ym=>ym+"-"+String(PONTO_CORTE).padStart(2,"0");
+const refYm=iso=>{const s=String(iso||"").slice(0,10);return +s.slice(8,10)>PONTO_CORTE?refYmAdd(s.slice(0,7),1):s.slice(0,7)};
+const refRotulo=ym=>{const a=refIni(ym),b=refFim(ym);return a.slice(8)+"/"+a.slice(5,7)+" a "+b.slice(8)+"/"+b.slice(5,7)+"/"+b.slice(0,4)};
+/* ao abrir a tela: o período que está correndo; nos 5 primeiros dias depois do corte, ainda o que acabou de fechar */
+const refPadrao=()=>{const h=hojeIso(),ym=refYm(h),dias=Math.round((new Date(h+"T12:00:00")-new Date(refIni(ym)+"T12:00:00"))/864e5);return dias<5?refYmAdd(ym,-1):ym};
+/* <<< periodo-ref */
+/* período escolhido nas telas do ponto (Ponto, Pendências, Fechamento): o mesmo em todas */
+const PREF={ym:null};
+const pontoRef=()=>PREF.ym||(PREF.ym=refPadrao());
+function pontoPeriodoSel(){
+  const ym=pontoRef(),hj=refYm(hojeIso()),meses=[];for(let k=1;k>=-12;k--)meses.push(refYmAdd(hj,k));if(!meses.includes(ym))meses.push(ym);
+  return `<div class="row" style="align-items:flex-end;gap:8px;flex-wrap:wrap">
+   <button type="button" class="b sec sm" data-prefmv="-1" title="Período anterior" style="flex:none">◀</button>
+   <div style="flex:0 1 340px"><label>Período de referência</label><select data-prefsel>${meses.map(m=>`<option value="${m}" ${m===ym?"selected":""}>${MESES_PT[+m.slice(5)-1]} de ${m.slice(0,4)} · ${refRotulo(m)}</option>`).join("")}</select></div>
+   <button type="button" class="b sec sm" data-prefmv="1" title="Próximo período" style="flex:none">▶</button></div>`;
+}
+function bindPontoPeriodo(depois){
+  const muda=ym=>{PREF.ym=ym;POINT.custom=false;POINT.result=null;BHCACHE.clear();if(depois)depois();else go(ROUTE,true)};
+  document.querySelectorAll("[data-prefsel]").forEach(s=>s.onchange=()=>muda(s.value));
+  document.querySelectorAll("[data-prefmv]").forEach(b=>b.onclick=()=>muda(refYmAdd(pontoRef(),+b.dataset.prefmv)));
+}

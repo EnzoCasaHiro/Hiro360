@@ -146,6 +146,8 @@ function pgEscalaCalendario(){
   const gcargos=[...new Set(lista.map(x=>cargoDe(x.ig)))];
   const cobs=xmdCobertura(gcargos,days),cfgc=xmdCobCfg();
   const todosElegiveis=xmdTodos(),incons=lista.filter(x=>xfoTurno12(x.ig)&&xfoModoDe(x.ig)==="semana").map(x=>x.ig);
+  /* quem foi cadastrado e ainda não tem turno não entra na grade nem no teste de escala: avisa e leva ao campo */
+  const semTurno=integList().filter(i=>!semPonto(i)&&(i.situacao||"Ativo")!=="Desligado"&&!todosElegiveis.includes(i));
   const turnos=turnosList(),cont={abaixo:0,acima:0,ok:0,sem:0};lista.forEach(x=>cont[x.sit.k]++);
   const nomeMes=MESES_PT[+ym.slice(5,7)-1];
   const simN=Object.keys(XMD.set).length,imp=XMD.sim&&simN?xmdImpacto(gcargos,days):[];
@@ -181,6 +183,7 @@ function pgEscalaCalendario(){
    <details id="xfopessoas" ${ESCUI.selAberto?"open":""} style="margin-bottom:10px"><summary style="cursor:pointer;font-weight:700">Ou marque na lista completa: ${ESCUI.sel.length?ESCUI.sel.length+" selecionada(s)":"todas"}</summary>
     <div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px;margin-top:6px;columns:2 220px">${todosElegiveis.map(i=>`<label style="display:block;break-inside:avoid;font-weight:400;padding:2px 0"><input type="checkbox" data-xfosel="${i.id}" ${ESCUI.sel.includes(i.id)?"checked":""}> ${esc(nomeInteg(i))} <span class="sub">${esc(cargoDe(i))}</span></label>`).join("")||'<span class="sub">Ninguém com turno definido.</span>'}</div>
     <div class="chips" style="margin-top:6px"><button type="button" class="b sec sm" id="xfoselnada">Mostrar todas as pessoas</button><button type="button" class="b sec sm" id="xfoselfiltro">Marcar quem está nos filtros acima</button></div></details>
+   ${semTurno.length?`<div class="callout sand" style="margin-bottom:10px"><b>${semTurno.length===1?"1 integrante não aparece":semTurno.length+" integrantes não aparecem"} na escala nem no teste de escala</b> porque ainda não ${semTurno.length===1?"tem":"têm"} turno: ${semTurno.slice(0,8).map(i=>`<button type="button" class="b sec sm" data-xmdturno="${i.id}" title="Ir para o turno de ${esc(nomeInteg(i))}" style="margin:2px 2px 0 0">${esc(nomeInteg(i))} <span class="sub">${esc(cargoDe(i))}</span></button>`).join("")}${semTurno.length>8?" …":""}<div class="sub" style="margin-top:4px">Clique no nome para escolher o turno em <b>Escala dos integrantes</b>, mais abaixo nesta página. Se a pessoa não bate ponto, marque isso no cadastro.</div></div>`:""}
    ${simBox}
    ${incons.length?`<div class="callout sand" style="margin-bottom:10px"><b>Atenção:</b> ${incons.length} pessoa(s) estão com turno 12×36, mas a escala está em “dias fixos da semana”, por isso a grade não alterna: ${incons.slice(0,6).map(i=>esc(nomeInteg(i))).join(", ")}${incons.length>6?"…":""}. No <b>Resumo do mês</b>, coluna <b>Escala</b>, escolha <b>12×36 · alterna</b> (informe um dia em que a pessoa trabalha).</div>`:""}
    <div class="chips" style="margin-bottom:10px">
@@ -221,6 +224,11 @@ bindTurnos=function(){
   const add=document.getElementById("xmdsadd");if(add)add.onclick=()=>{const id=document.getElementById("xmdsp").value,d=document.getElementById("xmdsd").value;if(!id||!d)return toast("Escolha a pessoa e o dia.",true);toggle(id,d)};
   document.querySelectorAll("[data-xmdsdel]").forEach(b=>b.onclick=()=>{delete XMD.set[b.dataset.xmdsdel];R()});
   const lim=document.getElementById("xmdslimpa");if(lim)lim.onclick=()=>{XMD.set={};R()};
+  document.querySelectorAll("[data-xmdturno]").forEach(b=>b.onclick=()=>{
+    const tr=document.querySelector(`#escint tr[data-id="${b.dataset.xmdturno}"]`);if(!tr)return;
+    tr.scrollIntoView({behavior:"smooth",block:"center"});tr.style.outline="2px solid var(--madeira,#8C4A1F)";
+    const s=tr.querySelector('[data-e="turno"]');if(s)setTimeout(()=>s.focus(),400);
+  });
   const apl=document.getElementById("xmdsapl");if(apl)apl.onclick=async()=>{
     if(!podeEd("turnos"))return toast("Você só pode consultar esta tela.",true);
     const ks=Object.keys(XMD.set);if(!ks.length)return;

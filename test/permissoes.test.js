@@ -125,3 +125,12 @@ test('endereço, telefone, e-mail, contato de emergência e estado civil são da
   const salvo = perm.preserva(est, 'integrantes/i1', { nomeCompleto: 'X', endereco: 'Novo' }, antigo);
   assert.equal(salvo.endereco, 'Antigo'); // quem não vê não apaga nem troca
 });
+
+test('folha de ponto enviada (config/pfolha_): grava quem edita o ponto; contador e gestão de pessoas leem', async () => {
+  const mat = { custom: { pto: { mods: { ponto: 2 } }, cont: { mods: { contador: 1 } }, fin: { mods: { fin: 2 } } } };
+  const c = async p => ctx({ 'acessos/u_ana': { perfil: p, ativo: true }, 'perfis/matriz': mat }, ana);
+  assert.equal(perm.podeGravar(await c('pto'), 'config/pfolha_2026-11'), true);
+  assert.equal(perm.podeLer(await c('cont'), 'config/pfolha_2026-11', {}), true);
+  assert.equal(perm.podeGravar(await c('cont'), 'config/pfolha_2026-11'), false);
+  assert.equal(perm.podeLer(await c('fin'), 'config/pfolha_2026-11', {}), false);
+});

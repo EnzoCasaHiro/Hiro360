@@ -85,6 +85,8 @@ async function xdcRelerDados(i){
     const vs=[...e.vals.values()].sort((a,b)=>b.fontes.length-a.fontes.length),top=vs[0],empate=vs[1]&&vs[1].fontes.length===top.fontes.length;
     const p={...top.p,valor:top.valor,fontes:top.fontes,outros:vs.slice(1)};
     if(empate)p.on=false;props.push(p)});
+  /* leitura sem IA erra muito: só CPF e PIS (conferidos pelo dígito verificador) vêm marcados */
+  if(lidos.some(x=>x.leu.ocr))props.forEach(p=>{if(p.k!=="cpf"&&p.k!=="pis")p.on=false});
   const fam=lidos.filter(x=>x.t.quem==="familiar"&&x.t.parent==="filho(a)").map(x=>({quem:"familiar",parent:"filho(a)",pessoa:x.t.pessoa,dados:x.leu.dados||{}}));
   const deps=xdcDepsDe(fam);
   const novosDeps=deps.filter(n=>{const a=(atual.dependentes||[]).find(x=>xdcMesmoNome(x.nome,n.nome));return !a||["nascimento","cpf"].some(k=>n[k]&&!a[k])});

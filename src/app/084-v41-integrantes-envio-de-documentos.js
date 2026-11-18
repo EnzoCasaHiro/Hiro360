@@ -76,6 +76,10 @@ Como preencher:
 - "dados": copie TUDO o que estiver legível neste arquivo sobre a pessoa do campo "nome" (não deixe em branco o que dá para ler). Datas sempre no formato AAAA-MM-DD (ex.: 10/MAR/1977 vira 1977-03-10). Números como impressos (pode manter pontos e traços). RG: o "Registro Geral". CPF: 11 dígitos (no verso do RG aparece como "CPF"). PIS/NIT/NIS/PASEP vão em "pis" (o Cartão do Cidadão e o comprovante de inscrição NIT trazem esse número). CTPS: número e série. Título: número de inscrição, zona e seção. Estado civil: só se o documento disser (certidão de casamento com averbação de divórcio = "divorciado(a)").
 - "lado": "frente e verso" se o arquivo mostra os dois lados (um RG aberto, ou um lado em cada página/foto); "frente" ou "verso" se só um lado; null se o documento não tem lados (digital, conta, certidão).
 - Cartão do Cidadão da Caixa: tipo "Cartão do Cidadão (NIS)". Comprovante de cadastramento do NIT/PIS: tipo "PIS/NIS".
+- Como reconhecer o "tipo" (olhe o título impresso, não só os campos — quase todo documento traz CPF, RG e filiação):
+  RG = "Carteira de Identidade"/"Registro Geral"/"Cédula de Identidade", inclusive a nova Carteira de Identidade Nacional (CIN), em que o número é o CPF; CNH = "Carteira Nacional de Habilitação" (física ou digital), mesmo trazendo CPF e RG; CTPS = "Carteira de Trabalho" (livreto azul ou digital); CPF = só o cartão ou comprovante da Receita Federal; título = "Justiça Eleitoral"/e-Título;
+  ASO = "Atestado de Saúde Ocupacional" (exame admissional, periódico, demissional; apto/inapto); Atestado médico = afastamento/repouso por doença; Comprovante de residência = conta de luz, água, gás, telefone ou internet com endereço; Comprovante bancário = comprovante de PIX/transferência, cartão ou dados da conta;
+  Registro profissional = carteira do COREN, CRM, CREFITO etc.; Diploma ou certificado = conclusão de curso; Contrato = contrato de trabalho/experiência assinado; Foto 3x4 = só o rosto, sem texto de documento.
 - Não invente. Se não tiver certeza do tipo, use "Outro". Se a imagem estiver ilegível, "legivel": false.`;
 /* recorta as margens brancas (um RG pequeno no canto de uma folha A4 fica legível para a leitura) */
 function xdcRecorta(cv){
@@ -220,7 +224,22 @@ async function xocrGira(blob,graus){
   return blobDe(cv,"image/jpeg",.9);
 }
 /* lê uma imagem; se o texto vier fraco, tenta a foto girada (documento de lado ou de cabeça para baixo) */
+/* cinza + contraste esticado + tamanho mínimo: o leitor simples erra bem menos em foto de celular */
+async function xocrPrep(blob){
+  try{
+    const bmp=await createImageBitmap(blob),L=Math.max(bmp.width,bmp.height),k=L<1600?Math.min(2,1600/L):L>2600?2600/L:1,cv=document.createElement("canvas");
+    cv.width=Math.round(bmp.width*k);cv.height=Math.round(bmp.height*k);
+    const cx=cv.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,cv.width,cv.height);cx.drawImage(bmp,0,0,cv.width,cv.height);
+    const im=cx.getImageData(0,0,cv.width,cv.height),d=im.data,h=new Uint32Array(256),tot=d.length/4;
+    for(let p=0;p<d.length;p+=4){const g=(d[p]*299+d[p+1]*587+d[p+2]*114)/1000|0;d[p]=g;h[g]++}
+    let a=0,b=255,c=0;while(a<255&&(c+=h[a])<tot*.02)a++;c=0;while(b>0&&(c+=h[b])<tot*.02)b--;
+    const f=b>a+20?255/(b-a):1;
+    for(let p=0;p<d.length;p+=4){const g=Math.max(0,Math.min(255,(d[p]-a)*f));d[p]=d[p+1]=d[p+2]=g}
+    cx.putImageData(im,0,0);return (await blobDe(cv,"image/png"))||blob;
+  }catch(e){return blob}
+}
 async function xocrImagem(blob){
+  blob=await xocrPrep(blob);
   const w=await xocrCarrega(),nota=d=>(d.confidence||0)*Math.min(1,(String(d.text||"").replace(/[^A-Za-z0-9]/g,"").length)/120);
   let melhor=(await w.recognize(blob)).data;
   if(nota(melhor)<45)for(const g of[90,270,180]){const d=(await w.recognize(await xocrGira(blob,g))).data;if(nota(d)>nota(melhor))melhor=d;if(nota(melhor)>=60)break}
@@ -235,15 +254,55 @@ async function xocrTextoArquivo(file,imgs){
   }
   let t="";for(const b of imgs)t+=await xocrImagem(b)+"\n";return t;
 }
-const XOCR_TIPOS=[[/CARTEIRA NACIONAL DE HABILITA|PERMISSAO PARA DIRIGIR/,"CNH"],[/CARTEIRA DE TRABALHO/,"CTPS"],[/TITULO ELEITORAL|TITULO DE ELEITOR|JUSTICA ELEITORAL/,"Título de eleitor"],[/CARTAO DO CIDADAO/,"Cartão do Cidadão (NIS)"],
-  [/CERTIDAO DE NASCIMENTO/,"Certidão de nascimento"],[/CERTIDAO DE CASAMENTO/,"Certidão de casamento"],[/CARTEIRA DE IDENTIDADE|REGISTRO GERAL|CEDULA DE IDENTIDADE|IDENTIDADE NACIONAL/,"RG"],
-  [/CADASTRO DE PESSOAS? FISICAS?|COMPROVANTE DE INSCRICAO NO CPF|CARTAO CPF/,"CPF"],[/\b(NIT|PIS|PASEP|NIS)\b.{0,40}(INSCRICAO|CADASTRO|COMPROVANTE)|(INSCRICAO|CADASTRO|COMPROVANTE).{0,40}\b(NIT|PIS|PASEP|NIS)\b/,"PIS/NIS"],
-  [/RESERVISTA|CERTIFICADO DE DISPENSA/,"Reservista"],[/VACINA/,"Cartão de vacinação"],[/ATESTADO DE SAUDE OCUPACIONAL|\bA\.?S\.?O\b/,"ASO"],[/ATESTADO/,"Atestado médico"],
-  [/CONTA DE (LUZ|AGUA|ENERGIA)|SABESP|ELEKTRO|ENEL|CONSUMO.{0,30}(KWH|M3)|FATURA|2A VIA/,"Comprovante de residência"]];
+/* tipo do documento pela leitura sem IA: cada tipo tem várias pistas com peso; a frase pode vir com letras trocadas
+   (o leitor erra "HABILITACAO" como "HABIL1TACA0"), então as pistas longas aceitam alguns erros. Pista curta só vale como palavra inteira. */
+const XOCR_PISTAS={
+  "RG":{CARTEIRADEIDENTIDADE:4,REGISTROGERAL:4,CEDULADEIDENTIDADE:3,IDENTIDADENACIONAL:3,SECRETARIADASEGURANCAPUBLICA:2,INSTITUTODEIDENTIFICACAO:2,VALIDAEMTODOOTERRITORIONACIONAL:2,DATADEEXPEDICAO:1,ASSINATURADOTITULAR:1,POLEGARDIREITO:1,DOCORIGEM:1,SSP:1},
+  "CNH":{CARTEIRANACIONALDEHABILITACAO:5,PERMISSAOPARADIRIGIR:4,DEPARTAMENTONACIONALDETRANSITO:3,PRIMEIRAHABILITACAO:3,DENATRAN:3,SENATRAN:3,DETRAN:2,CATHAB:2,ACC:1},
+  "CTPS":{CARTEIRADETRABALHO:5,PREVIDENCIASOCIAL:1,CARTEIRADETRABALHODIGITAL:2,CTPS:3,CONTRATOSDETRABALHO:1},
+  "CPF":{CADASTRODEPESSOASFISICAS:5,CADASTRODEPESSOAFISICA:5,COMPROVANTEDESITUACAOCADASTRAL:3,SITUACAOCADASTRAL:2,RECEITAFEDERAL:2,MINISTERIODAFAZENDA:1},
+  "PIS/NIS":{NUMERODEIDENTIFICACAODOTRABALHADOR:4,CADASTRONACIONALDEINFORMACOESSOCIAIS:4,CNIS:3,NIT:1,PIS:1,PASEP:1,NIS:1,INSS:1},
+  "Cartão do Cidadão (NIS)":{CARTAODOCIDADAO:5,CAIXA:1},
+  "Título de eleitor":{TITULOELEITORAL:5,TITULODEELEITOR:5,JUSTICAELEITORAL:4,TRIBUNALSUPERIORELEITORAL:3,TRIBUNALREGIONALELEITORAL:3,ZONA:1,SECAO:1},
+  "Reservista":{CERTIFICADODERESERVISTA:5,RESERVISTA:4,CERTIFICADODEDISPENSADEINCORPORACAO:5,SERVICOMILITAR:3,MINISTERIODADEFESA:2,JUNTADESERVICOMILITAR:2},
+  "Certidão de nascimento":{CERTIDAODENASCIMENTO:5,REGISTROCIVILDASPESSOASNATURAIS:2,AVOSMATERNOS:2,AVOSPATERNOS:2,DECLARANTE:1,MATRICULA:1},
+  "Certidão de casamento":{CERTIDAODECASAMENTO:5,REGIMEDEBENS:4,CONTRAENTES:2,REGISTROCIVILDASPESSOASNATURAIS:1,MATRICULA:1},
+  "Comprovante de residência":{CONTADEENERGIA:4,CONTADELUZ:4,CONTADEAGUA:4,UNIDADECONSUMIDORA:3,SABESP:3,ELEKTRO:3,ENEL:2,CPFL:2,EDP:2,KWH:2,CONSUMO:1,LEITURAATUAL:2,VENCIMENTO:1,FATURA:1,CODIGODEINSTALACAO:2},
+  "Cartão de vacinação":{CARTAODEVACINACAO:5,CARTEIRADEVACINACAO:5,CERTIFICADONACIONALDEVACINACAO:5,VACINA:3,IMUNIZACAO:2,DOSE:1,LOTE:1},
+  "ASO":{ATESTADODESAUDEOCUPACIONAL:6,EXAMEADMISSIONAL:3,EXAMEDEMISSIONAL:3,EXAMEPERIODICO:2,PCMSO:3,MEDICODOTRABALHO:2,RISCOSOCUPACIONAIS:2,APTO:1,INAPTO:1,ASO:2},
+  "Atestado médico":{ATESTADOMEDICO:4,ATESTOPARAOSDEVIDOSFINS:3,ATESTO:2,DIASDEREPOUSO:2,AFASTAMENTO:1,CID:1,CRM:1},
+  "Contrato":{CONTRATODEEXPERIENCIA:5,CONTRATODETRABALHO:2,CONTRATANTE:2,CONTRATADO:2,CLAUSULA:2,TESTEMUNHAS:1,EMPREGADOR:1},
+  "Diploma ou certificado":{DIPLOMA:4,CERTIFICAMOS:3,CERTIFICADODECONCLUSAO:3,CARGAHORARIA:2,CONCLUIU:2,CURSO:1},
+  "Registro profissional (conselho)":{CONSELHOREGIONAL:4,COREN:4,CREFITO:4,CONSELHOFEDERAL:2,INSCRICAOPROFISSIONAL:2,CRM:1,CRN:1,CRF:1},
+  "Comprovante bancário":{COMPROVANTEDETRANSFERENCIA:4,COMPROVANTEDEPAGAMENTO:2,DADOSBANCARIOS:3,CONTACORRENTE:2,CONTAPOUPANCA:2,FAVORECIDO:2,CHAVEPIX:3,PIX:2,AGENCIA:1,EXTRATO:2}
+};
+/* menor nº de erros (troca, falta ou sobra de letra) para achar P dentro de T */
+function xocrAprox(T,P){
+  if(T.includes(P))return 0;
+  const m=P.length;let prev=new Uint16Array(m+1),cur=new Uint16Array(m+1),best=m;
+  for(let k=0;k<=m;k++)prev[k]=k;
+  for(let j=0;j<T.length;j++){const c=T.charCodeAt(j);cur[0]=0;
+    for(let k=1;k<=m;k++){const a=prev[k]+1,b=cur[k-1]+1,d=prev[k-1]+(P.charCodeAt(k-1)===c?0:1);cur[k]=a<b?(a<d?a:d):(b<d?b:d)}
+    if(cur[m]<best)best=cur[m];const t=prev;prev=cur;cur=t}
+  return best;
+}
+function xocrTipo(TU,nomeArq){
+  const S=TU.replace(/[^A-Z0-9]/g,"").replace(/0/g,"O").replace(/1/g,"I").replace(/5/g,"S").replace(/8/g,"B"),W=" "+TU.replace(/[^A-Z0-9]+/g," ")+" ";
+  const pts={};
+  for(const[t,ps]of Object.entries(XOCR_PISTAS)){let s=0;
+    for(const[p,w]of Object.entries(ps)){
+      if(p.length<=6){if(W.includes(" "+p+" "))s+=w;continue}
+      const lim=p.length>=14?Math.floor(p.length*.15):1,e=xocrAprox(S,p);if(e<=lim)s+=w*(1-e/(lim+1)/2)}
+    pts[t]=s}
+  const h=xdcHeur(nomeArq||"");if(h)pts[h]=(pts[h]||0)+3;
+  const ord=Object.entries(pts).sort((a,b)=>b[1]-a[1]),[t1,s1]=ord[0]||["Outro",0],s2=(ord[1]||[0,0])[1];
+  /* na dúvida é melhor perguntar do que chutar: pouca pista ou empate técnico vira "Outro" para você escolher */
+  return s1>=3&&s1-s2>=1.5?t1:"Outro";
+}
 function xocrExtrai(texto,file){
   const L=String(texto).split(/\n+/).map(s=>s.replace(/\s+/g," ").trim()).filter(Boolean);
   const U=L.map(l=>l.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase()),TU=U.join("\n");
-  const tipo=(XOCR_TIPOS.find(([re])=>re.test(TU))||[])[1]||xdcHeur(file.name||"")||"Outro";
+  const tipo=xocrTipo(TU,file.name);
   // números: corrige letras que o leitor confunde com algarismos (O→0, I/l→1, S→5, B→8) só em trechos quase todos numéricos
   const limpaNum=s=>s.replace(/[0-9OoIlSB][0-9OoIlSB.\-\/ ]{6,20}[0-9OoIlSBX]/g,m=>((m.match(/\d/g)||[]).length>=m.replace(/[.\-\/ ]/g,"").length*.7)?m.replace(/[Oo]/g,"0").replace(/[Il]/g,"1").replace(/S/g,"5").replace(/B/g,"8"):m);
   const UN=U.map(limpaNum);
@@ -308,7 +367,7 @@ function xdcSelo(r){
   return`<span class="xdcb tipo">${esc(t)}${de}</span><span class="xdcb lado ${r.lado||"nenhum"}">${r.lado?xdcLadoNome[r.lado]:"Sem lados"}</span>${r.paginas>1?`<span class="xdcb pg">${r.paginas} páginas</span>`:""}`;
 }
 function xdcLinha(i,r){
-  const st=r.estado==="lendo"?`<span class="xdcst">Lendo…</span>`:r.estado==="erro"?`<span class="xdcst err">Não consegui ler (${esc(r.msg||"")}). Escolha o tipo.</span>`:r.estado==="ok"?`<span class="xdcst ok">Lido pelo sistema. Confira.</span>`:"";
+  const st=r.estado==="lendo"?`<span class="xdcst">Lendo…</span>`:r.estado==="erro"?`<span class="xdcst err">Não consegui ler (${esc(r.msg||"")}). Escolha o tipo.</span>`:r.estado==="ok"?`<span class="xdcst ok">Lido pelo sistema. Confira.</span>`:r.estado==="conf"?`<span class="xdcst err">Lido sem IA: confira o tipo e cada dado antes de salvar.</span>`:"";
   return `<div class="xdcrow" data-xr="${r.id}">
    <div class="xdcth">${xdcThumb(r)}</div>
    <div class="xdcf">
@@ -382,6 +441,8 @@ function xdcAbre(i,itens){
         const t=xdcTitular(i,leu);
         if(t.troca&&leu.dados){const d=leu.dados={...leu.dados};delete d.nomeCompleto;["mae","pai"].forEach(k=>{if(d[k]&&xdcMesmoNome(d[k],xdcNomeC(i)))delete d[k]})}
         r.quem=t.quem;r.pessoa=t.pessoa;r.parent=t.parent;r.props=xdcPropostas(S.integrantes[i.id]||i,leu.dados||{});r.dados=leu.dados||{};
+        /* leitura sem IA: nunca salva sozinha e só deixa marcados CPF e PIS (que passaram no dígito verificador) */
+        if(leu.ocr){r.estado="conf";r.props.forEach(p=>{if(p.k!=="cpf"&&p.k!=="pis")p.on=false})}
         if(!leu.legivel){r.estado="erro";r.msg="imagem difícil de ler"}
       }
       xdcRecompoe(i,r);
@@ -653,7 +714,7 @@ function xdcNovo(){
       const igual=ativos().find(x=>xdcMesmoNome(xdcNomeC(x),achou.nome));
       if(igual){existe=igual;ok.textContent="Enviar para "+xdcPrimeiro(nomeInteg(igual));
         info.innerHTML=`Nome lido: <b>${esc(achou.nome)}</b>. Já existe <b>${esc(nomeInteg(igual))}</b> no cadastro. Clique em "Enviar para ${esc(xdcPrimeiro(nomeInteg(igual)))}" para guardar os documentos na pasta dela(e), ou corrija o nome para criar outra pessoa.`;return}
-      info.innerHTML=`Nome lido em ${esc(achou.tipos.join(", "))}: <b>${esc(achou.nome)}</b>.${achou.outros?" Há documentos de outras pessoas também (filhos ou familiares); eles vão para a pasta como documentos de familiar.":""} Confira e clique em Criar integrante.`;
+      info.innerHTML=`Nome lido em ${esc(achou.tipos.join(", "))}: <b>${esc(achou.nome)}</b>.${res.some(x=>x&&x.ocr)?" <b>Lido sem IA: confira letra por letra.</b>":""}${achou.outros?" Há documentos de outras pessoas também (filhos ou familiares); eles vão para a pasta como documentos de familiar.":""} Confira e clique em Criar integrante.`;
       ok.textContent="Criar integrante";return;
     }
     if(nome.length<3)return toast("Informe o nome completo.",true);

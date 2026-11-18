@@ -58,20 +58,20 @@ function calcSilencioso(ini,fim){
 }
 const mesFimIso=ym=>isoDate(new Date(+ym.slice(0,4),+ym.slice(5,7),0));
 // só conta até ontem: dias que ainda não aconteceram não são falta
-const fimCalc=ym=>{const f=mesFimIso(ym),o=addDaysIso(hojeIso(),-1);return f<o?f:o};
+const fimCalc=ym=>{const f=refFim(ym),o=addDaysIso(hojeIso(),-1);return f<o?f:o};
 function mesesEntre(a,b){const out=[];let y=+a.slice(0,4),m=+a.slice(5,7);while(`${y}-${String(m).padStart(2,"0")}`<=b){out.push(`${y}-${String(m).padStart(2,"0")}`);m++;if(m>12){m=1;y++}}return out}
-const primeiraMarca=()=>{const l=Object.values(S.marcacoes).filter(m=>!m.removida).map(m=>m.ts.slice(0,7)).sort();return l[0]||hojeIso().slice(0,7)};
+const primeiraMarca=()=>{const l=Object.values(S.marcacoes).filter(m=>!m.removida).map(m=>refYm(m.ts)).sort();return l[0]||refYm(hojeIso())};
 const bhCfg=()=>({limiteH:40,inicio:primeiraMarca(),...(xcfg("gp").bh||{})});
 function bhSaldos(ym){
   const c=bhCfg(),meses=mesesEntre(c.inicio<=ym?c.inicio:ym,ym),por=new Map(),erros=[];
   meses.forEach(m=>{
-    if(fimCalc(m)<m+"-01")return;
-    const r=calcSilencioso(m+"-01",fimCalc(m));
+    if(fimCalc(m)<refIni(m))return;
+    const r=calcSilencioso(refIni(m),fimCalc(m));
     if(!r||r.erro){erros.push(r&&r.erro);return}
     r.users.forEach(u=>{if(!u.ig||!u.ig.id)return;const x=por.get(u.ig.id)||{ig:u.ig,mes:0,mais:0,menos:0,trab:0,esp:0,ant:0,lanc:0,acum:0};
       const s=u.t.saldo;x.acum+=s;if(m===ym){x.mes=s;x.mais=u.t.mais;x.menos=u.t.menos;x.trab=u.t.worked;x.esp=u.t.expected}else x.ant+=s;por.set(u.ig.id,x)});
   });
-  xs("bh").forEach(l=>{if(l.data&&typeof l.data==="string"&&l.data.slice(0,7)<=ym&&l.data.slice(0,7)>=c.inicio){const x=por.get(l.integ);if(!x)return;const h=Math.round((+l.h||0)*60);x.acum+=h;if(l.data.slice(0,7)===ym)x.lanc+=h;else x.ant+=h}});
+  xs("bh").forEach(l=>{if(l.data&&typeof l.data==="string"&&refYm(l.data)<=ym&&refYm(l.data)>=c.inicio){const x=por.get(l.integ);if(!x)return;const h=Math.round((+l.h||0)*60);x.acum+=h;if(refYm(l.data)===ym)x.lanc+=h;else x.ant+=h}});
   return{por,erros};
 }
 // banco de horas de um mês para a folha de ponto: cálculo único por geração (cache curto)
@@ -81,29 +81,30 @@ function bhSaldosMemo(ym){const k=ym+"|"+(Date.now()/15000|0);if(BHMEMO.k!==k){B
 const hhmmS=min=>{const r=Math.round(min);return(r>0?"+":r<0?"-":"")+hhmm(Math.abs(r))};
 // quadro "horas a mais e banco de horas" da folha individual (Excel e PDF)
 function folhaBanco(u,R){
-  const ym=R.start.slice(0,7),c=bhCfg(),x=u.ig&&u.ig.id?bhSaldosMemo(ym).por.get(u.ig.id):null;
+  const ym=refYm(R.end),c=bhCfg(),x=u.ig&&u.ig.id?bhSaldosMemo(ym).por.get(u.ig.id):null;
   const ant=x?x.ant:0,lanc=x?x.lanc:0,saldo=u.t.saldo||0,fim=ant+saldo+lanc,mm=ym.slice(5)+"/"+ym.slice(0,4);
-  const pend=u.rows.filter(r=>r.status===PENDENCIA).length,mesCheio=R.start===ym+"-01"&&R.end.slice(0,7)===ym;
+  const pend=u.rows.filter(r=>r.status===PENDENCIA).length,mesCheio=R.start===refIni(ym)&&R.end<=refFim(ym);
   const notas=["Horas a mais e a menos já descontam a tolerância de até 5 min por marcação e 10 min por dia (CLT art. 58 §1º). Atestados e justificativas contam como cumpridos."];
   if(pend)notas.push(`${pend} dia(s) com marcação faltando ficaram fora do banco até serem resolvidos.`);
-  if(!mesCheio)notas.push(`O período desta folha não é o mês inteiro: o banco anterior vai até o fim de ${brDate(addMesesIso(ym+"-01",-1)).slice(3)}.`);
+  if(!mesCheio)notas.push(`O período desta folha não é o período de referência inteiro (${refRotulo(ym)}): o banco anterior vai até ${brDate(addDaysIso(refIni(ym),-1))}.`);
   if(ym<c.inicio)notas.push("Este mês é anterior ao início do controle do banco de horas.");
   if(Math.abs(fim)>c.limiteH*60)notas.push(fim>0?`Saldo acima de ${c.limiteH}h: programe folgas para compensar dentro do prazo do acordo.`:`Saldo negativo acima de ${c.limiteH}h.`);
-  return{mm,linhas:[
+  return{mm,ant,lanc,saldo,linhas:[
     ["Horas trabalhadas a mais que o previsto",hhmmS(u.t.mais||0)],
     ["Horas trabalhadas a menos que o previsto",hhmmS(u.t.menos||0)],
-    ["Saldo do mês",hhmmS(saldo)],
-    [`Banco de horas antes de ${mm}`,hhmmS(ant)],
-    ["Folgas compensadas e horas pagas no mês",hhmmS(lanc)],
-    ["Banco de horas para o próximo mês",hhmmS(fim)]],fim,notas};
+    ["Saldo do período",hhmmS(saldo)],
+    [`Banco de horas antes de ${brDate(refIni(ym))}`,hhmmS(ant)],
+    ["Folgas compensadas e horas pagas no período",hhmmS(lanc)],
+    ["Banco de horas para o próximo período",hhmmS(fim)]],fim,notas};
 }
 const hhmm=min=>{const s=min<0?"−":"",a=Math.abs(Math.round(min));return s+Math.floor(a/60)+"h"+String(a%60).padStart(2,"0")};
-const BHST={ym:hojeIso().slice(0,7)};
+const BHST={ym:null};
 function bhHtml(){
+  if(!BHST.ym)BHST.ym=refPadrao();
   const c=bhCfg(),{por,erros}=bhSaldos(BHST.ym),L=[...por.values()].sort((a,b)=>nomeInteg(a.ig).localeCompare(nomeInteg(b.ig),"pt"));
-  const meses=mesesEntre(addMesesIso(hojeIso(),-11).slice(0,7),hojeIso().slice(0,7)).reverse();
+  const meses=mesesEntre(refYmAdd(refYm(hojeIso()),-11),refYm(hojeIso())).reverse();
   return `<div class="card"><h2>Saldo do banco de horas</h2><p class="sub" style="margin:0 0 10px">Saldo = horas trabalhadas − horas esperadas pela escala, sem contar os minutos dentro da tolerância da CLT (até 5 min por marcação e 10 min por dia). Atestados e justificativas contam como cumpridos; dias com marcação faltando só entram depois de resolvidos. O saldo é somado desde o início do controle, junto com as compensações e pagamentos lançados abaixo.</p>
-   <div class="row" style="align-items:flex-end"><div style="flex:0 0 180px"><label>Mês</label><select id="bhmes">${meses.map(m=>`<option value="${m}" ${m===BHST.ym?"selected":""}>${m.slice(5)}/${m.slice(0,4)}</option>`).join("")}</select></div>
+   <div class="row" style="align-items:flex-end"><div style="flex:0 0 250px"><label>Período de referência</label><select id="bhmes">${meses.map(m=>`<option value="${m}" ${m===BHST.ym?"selected":""}>${m.slice(5)}/${m.slice(0,4)} · ${refRotulo(m)}</option>`).join("")}</select></div>
     <div style="flex:0 0 190px"><label>Início do controle</label><input type="month" id="bhini" value="${c.inicio}" ${podeEd("gp")?"":"disabled"}></div><div style="flex:0 0 190px"><label>Alerta acima de (horas)</label><input type="number" id="bhlim" value="${c.limiteH}" min="1" ${podeEd("gp")?"":"disabled"}></div></div>
    ${erros.length&&!L.length?`<div class="callout sand" style="margin-top:12px">Não foi possível calcular: ${esc(erros[0]||"importe o arquivo do relógio na aba Ponto")}.</div>`:""}
    ${L.length?`<div class="wrap" style="margin-top:12px"><table><thead><tr><th>Integrante</th><th>Trabalhado</th><th>Esperado</th><th>A mais</th><th>A menos</th><th>Banco anterior</th><th>Saldo do mês</th><th>Compensado / pago</th><th>Banco final</th><th></th></tr></thead><tbody>${L.map(x=>{const al=Math.abs(x.acum)>c.limiteH*60;return `<tr><td><b>${esc(nomeInteg(x.ig))}</b></td><td>${hhmm(x.trab)}</td><td>${hhmm(x.esp)}</td><td>${hhmmS(x.mais)}</td><td>${hhmmS(x.menos)}</td><td>${hhmmS(x.ant)}</td><td>${hhmmS(x.mes)}</td><td>${hhmmS(x.lanc)}</td><td><b>${hhmmS(x.acum)}</b></td><td>${al?xPill(x.acum>0?2:1,x.acum>0?"saldo alto: programar folga":"saldo negativo"):""}</td></tr>`}).join("")}</tbody></table></div>`:""}</div>`;
@@ -117,7 +118,7 @@ const bhCrud={id:"bh",col:"bh",mod:"gp",novoLabel:"Lançar compensação ou paga
 
 /* ---------- fechamento do ponto ---------- */
 const fechDoc=ym=>S.config["fech_"+ym.replace("-","")];
-const mesFechado=iso=>{const d=iso&&fechDoc(String(iso).slice(0,7));return d&&d.fechado};
+const mesFechado=iso=>{const d=iso&&fechDoc(refYm(iso));return d&&d.fechado};
 XGUARD.push((col,id,obj,antes)=>{
   const msg=m=>`${m} está fechado para o contador. Reabra o mês na aba Fechamento do ponto (Gestão de pessoas) para ajustar.`;
   if(col==="marcacoes"){const d=(obj||antes||{}).ts;if(d&&mesFechado(d))return msg("O mês de "+brDate(d.slice(0,10)).slice(3))}
@@ -129,11 +130,11 @@ XGUARD.push((col,id,obj,antes)=>{
   }
 });
 function fechHtml(){
-  const meses=mesesEntre(addMesesIso(hojeIso(),-11).slice(0,7),hojeIso().slice(0,7)).reverse();
+  const meses=mesesEntre(refYmAdd(refYm(hojeIso()),-11),refYm(hojeIso())).reverse();
   return `<div class="card"><h2>Fechamento do ponto por mês</h2><p class="sub" style="margin:0 0 10px">Depois de fechado, o mês não aceita novas marcações, ocorrências nem mudanças de escala: o que foi para o contador não muda sem você saber. Só o gestor reabre, e fica registrado.</p>
    <div class="wrap"><table><thead><tr><th>Mês</th><th>Situação</th><th>Pendências</th><th></th></tr></thead><tbody>${meses.map(m=>{
-     const f=fechDoc(m),r=f&&f.fechado||fimCalc(m)<m+"-01"?null:calcSilencioso(m+"-01",fimCalc(m)),pend=r&&r.users?r.users.reduce((s,u)=>s+u.pendencies.length,0):null;
-     return `<tr><td><b>${m.slice(5)}/${m.slice(0,4)}</b></td><td>${f&&f.fechado?xPill(0,"fechado em "+brDate(f.em.slice(0,10)))+` <span class="sub">${esc(f.nome||"")}</span>`:xPill(1,"aberto")}</td><td>${f&&f.fechado?(f.pend?f.pend+" no fechamento":"nenhuma"):(pend==null?"—":pend?`<b>${pend}</b> a resolver`:"nenhuma")}</td>
+     const f=fechDoc(m),r=f&&f.fechado||fimCalc(m)<refIni(m)?null:calcSilencioso(refIni(m),fimCalc(m)),pend=r&&r.users?r.users.reduce((s,u)=>s+u.pendencies.length,0):null;
+     return `<tr><td><b>${m.slice(5)}/${m.slice(0,4)}</b><div class="sub">${refRotulo(m)}</div></td><td>${f&&f.fechado?xPill(0,"fechado em "+brDate(f.em.slice(0,10)))+` <span class="sub">${esc(f.nome||"")}</span>`:xPill(1,"aberto")}</td><td>${f&&f.fechado?(f.pend?f.pend+" no fechamento":"nenhuma"):(pend==null?"—":pend?`<b>${pend}</b> a resolver`:"nenhuma")}</td>
      <td style="white-space:nowrap">${f&&f.fechado?(ACC.gestor||!RT.db?`<button class="b sec sm" data-freab="${m}">Reabrir</button>`:""):(podeEd("gp")?`<button class="b sm" data-ffecha="${m}" data-fp="${pend||0}">Fechar o mês</button>`:"")}</td></tr>`}).join("")}</tbody></table></div></div>`;
 }
 function bindFech(){
@@ -263,7 +264,7 @@ const epiCrud={id:"epi",col:"epi",mod:"gp",novoLabel:"Registrar entrega",novoTit
 const bfCfg=()=>({vtDia:0,vtDescPct:6,vrDia:0,fgtsPct:8,patronalPct:0,diaPag:5,...(xcfg("gp").benef||{})});
 const BFST={ym:hojeIso().slice(0,7),detalhar:false};
 function bfLinhas(ym){
-  const c=bfCfg(),r=fimCalc(ym)<ym+"-01"?null:calcSilencioso(ym+"-01",fimCalc(ym)),us=new Map(((r&&r.users)||[]).filter(u=>u.ig&&u.ig.id).map(u=>[u.ig.id,u]));
+  const c=bfCfg(),r=fimCalc(ym)<refIni(ym)?null:calcSilencioso(refIni(ym),fimCalc(ym)),us=new Map(((r&&r.users)||[]).filter(u=>u.ig&&u.ig.id).map(u=>[u.ig.id,u]));
   return gpAtivos().filter(i=>+i.salario>0).map(i=>{
     const sal=+i.salario,u=us.get(i.id),dias=u?u.t.trab:0,ov=S.benef[i.id]||{};
     const vtD=ov.vtDia!==undefined&&ov.vtDia!==""?+ov.vtDia:c.vtDia,vrD=ov.vrDia!==undefined&&ov.vrDia!==""?+ov.vrDia:c.vrDia,optaVT=ov.vtOpta!==false;
@@ -542,8 +543,8 @@ XURG.push((L,h,fim)=>{
   if(M.length)L.push({nivel:M.some(x=>x.s.n===3)?2:1,tipo:"Treinamentos",titulo:`${M.length} treinamento(s) obrigatório(s) vencido(s), vencendo ou nunca feitos`,detalhe:M.slice(0,2).map(x=>`${nomeInteg(x.i)} — ${x.t.curso}`).join("; "),quando:null,rota:"gp",res:{k:"gptrein"},resLabel:"Ver treinamentos"});
   xs("epi").filter(e=>e.troca&&e.troca<=addDaysIso(h,15)).forEach(e=>L.push({nivel:e.troca<h?2:1,tipo:"EPI",titulo:`Trocar ${e.item} — ${xNomeInteg(e.integ)}`,detalhe:`troca prevista para ${brDate(e.troca)}`,quando:e.troca,rota:"gp",res:{k:"gpepi"},resLabel:"Abrir EPI"}));
   xs("movgp").filter(m=>m.status!=="concluído"&&daysBetweenIso(m.data,h)>=7).forEach(m=>L.push({nivel:1,tipo:m.tipo==="desligamento"?"Desligamento":"Admissão",titulo:`Checklist incompleto — ${xNomeInteg(m.integ)}`,detalhe:`${m.tipo==="desligamento"?"último dia":"início"} em ${brDate(m.data)}`,quando:m.data,rota:"gp",res:{k:"gpmov",id:m.id},resLabel:"Abrir checklist"}));
-  const ant=addMesesIso(h,-1).slice(0,7);
-  if(+h.slice(8)>=6&&gpAtivos().some(i=>i.uid!=null&&!semPonto(i))&&!mesFechado(ant+"-01"))L.push({nivel:1,tipo:"Ponto",titulo:`O ponto de ${ant.slice(5)}/${ant.slice(0,4)} ainda não foi fechado`,detalhe:"Feche o mês para travar as marcações antes de enviar ao contador",quando:null,rota:"gp",res:{k:"gpfech"},resLabel:"Fechar o mês"});
+  const ant=refYmAdd(refYm(h),-1);
+  if(h>addDaysIso(refFim(ant),5)&&gpAtivos().some(i=>i.uid!=null&&!semPonto(i))&&!mesFechado(refFim(ant)))L.push({nivel:1,tipo:"Ponto",titulo:`O ponto de ${ant.slice(5)}/${ant.slice(0,4)} (${refRotulo(ant)}) ainda não foi fechado`,detalhe:"Feche o mês para travar as marcações antes de enviar ao contador",quando:null,rota:"gp",res:{k:"gpfech"},resLabel:"Fechar o mês"});
 });
 XRES.gpferias=(id)=>{PGX.gp.st.tab="ferias";go("gp");setTimeout(()=>xForm(feriasCrud,{integ:id,status:"programada",abono:0},f=>xcrudSalvar(feriasCrud,f,null)),60)};
 XRES.gptrein=()=>{PGX.gp.st.tab="trein";go("gp")};XRES.gpepi=()=>{PGX.gp.st.tab="epi";go("gp")};XRES.gpfech=()=>{PGX.gp.st.tab="fech";go("gp")};
@@ -564,9 +565,9 @@ REPORTS.push(
  {id:"gp_epi",g:"Departamento pessoal",t:"Entregas de EPI e uniformes",d:"Quem recebeu o quê, CA, troca prevista e assinatura.",pii:false,b:()=>({titulo:"Entregas de EPI e uniformes",sub:relSub({},false),
    cols:[{h:"Integrante",w:28},{h:"Item",w:28},{h:"Qtd",t:"num",w:7},{h:"Entrega",t:"date",w:12},{h:"Troca prevista",t:"date",w:14},{h:"CA",w:12},{h:"Assinado",w:10,c:true}],
    rows:xs("epi").sort((a,b)=>b.entrega.localeCompare(a.entrega)).map(e=>[xNomeInteg(e.integ),e.item,+e.qtd||1,e.entrega,e.troca||"",e.ca||"",e.assin?"Sim":"Não"])})},
- {id:"gp_banco",g:"Departamento pessoal",t:"Banco de horas (mês selecionado)",d:"Trabalhado, esperado e saldo acumulado por integrante.",pii:false,b:()=>({titulo:"Banco de horas — "+BHST.ym.slice(5)+"/"+BHST.ym.slice(0,4),sub:relSub({},false),
-   cols:[{h:"Integrante",w:26},{h:"Trabalhado (h)",t:"num",w:11},{h:"Esperado (h)",t:"num",w:11},{h:"A mais (h)",t:"num",w:10},{h:"A menos (h)",t:"num",w:10},{h:"Banco anterior (h)",t:"num",w:13},{h:"Saldo do mês (h)",t:"num",w:12},{h:"Compensado / pago (h)",t:"num",w:14},{h:"Banco final (h)",t:"num",w:12}],
-   rows:[...bhSaldos(BHST.ym).por.values()].map(x=>[nomeInteg(x.ig),...[x.trab,x.esp,x.mais,x.menos,x.ant,x.mes,x.lanc,x.acum].map(v=>+(v/60).toFixed(2))])})},
+ {id:"gp_banco",g:"Departamento pessoal",t:"Banco de horas (mês selecionado)",d:"Trabalhado, esperado e saldo acumulado por integrante.",pii:false,b:()=>{if(!BHST.ym)BHST.ym=refPadrao();return{titulo:"Banco de horas — "+BHST.ym.slice(5)+"/"+BHST.ym.slice(0,4)+" ("+refRotulo(BHST.ym)+")",sub:relSub({},false),
+   cols:[{h:"Integrante",w:26},{h:"Trabalhado (h)",t:"num",w:11},{h:"Esperado (h)",t:"num",w:11},{h:"A mais (h)",t:"num",w:10},{h:"A menos (h)",t:"num",w:10},{h:"Banco anterior (h)",t:"num",w:13},{h:"Saldo do período (h)",t:"num",w:12},{h:"Compensado / pago (h)",t:"num",w:14},{h:"Banco final (h)",t:"num",w:12}],
+   rows:[...bhSaldos(BHST.ym).por.values()].map(x=>[nomeInteg(x.ig),...[x.trab,x.esp,x.mais,x.menos,x.ant,x.mes,x.lanc,x.acum].map(v=>+(v/60).toFixed(2))])}}},
  {id:"gp_aniv",g:"Departamento pessoal",t:"Aniversariantes do ano",d:"Integrantes em atividade na data do pedido, por mês e dia (o calendário em PDF fica em Gestão de pessoas → Benefícios e aniversários).",pii:true,b:()=>{const L=anivLista();return{titulo:"Aniversariantes — integrantes em atividade",sub:`em atividade em ${brDate(L.ref)} · `+relSub({},false),
    cols:[{h:"Mês",w:14},{h:"Dia",t:"num",w:7},{h:"Integrante",w:38},{h:"Cargo",w:26},{h:"De férias no dia",w:14,c:true}],
    rows:L.ok.slice().sort((a,b)=>a.m-b.m||a.d-b.d||nomeInteg(a.i).localeCompare(nomeInteg(b.i),"pt")).map(x=>{const y=+L.ref.slice(0,4),d=Math.min(x.d,new Date(y,x.m,0).getDate());return[MESES_PT[x.m-1],d,nomeInteg(x.i),x.i.cargo||"",anivFerias(x.i,y+"-"+String(x.m).padStart(2,"0")+"-"+String(d).padStart(2,"0"))?"Sim":""]})}}},

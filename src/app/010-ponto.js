@@ -1,27 +1,50 @@
 /* ================= PONTO ================= */
 const POINT={punches:[],file:"",div:[],start:"",end:"",hol:"",dup:3,keep:"first",wb:240,wa:240,brk:true,result:null,err:""};
+/* ponto do período: período de referência de 26 a 25; as datas só mudam à mão em "Regras do cálculo" */
+function pontoSyncRef(){const P=POINT;if(P.custom)return;const ym=pontoRef(),f=fimCalc(ym);P.start=refIni(ym);P.end=f<refIni(ym)?refIni(ym):f}
+const PEND_TIPO={falta:"Faltou sem justificativa",falta_pontual:"Esqueceu de bater o ponto",falta_entrada:"Falta a batida de entrada",falta_saida:"Falta a batida de saída",marcacao_sem_escala:"Bateu ponto em dia de folga"};
 function pgPonto(){
-  const P=POINT;
-  return banner("","Ponto eletrônico","Conferência das marcações do relógio, com tolerância da CLT, hora noturna, atestados e justificativas.","clock")+noStore()+`
-  <div class="grid g3" style="margin-bottom:16px">
-    <div class="card" style="margin:0"><h2>1 · Arquivo do relógio</h2>
-      <div class="drop" id="drop" tabindex="0">${ic("up")}<div>${P.file?esc(P.file):"Clique ou solte o AllGLog001.txt"}</div></div>
-      <input type="file" id="file" accept=".txt,.log" hidden>
-      <div class="sub" id="info" style="margin-top:8px">${P.punches.length?infoText():""}</div></div>
-    <div class="card" style="margin:0"><h2>2 · Período</h2>
-      <div class="row"><div><label>De</label><input type="date" id="start" value="${P.start}"></div><div><label>Até</label><input type="date" id="end" value="${P.end}"></div></div>
-      <label>Feriados (AAAA-MM-DD, separados por vírgula)</label><input id="hol" value="${esc(P.hol)}" placeholder="2026-09-07"></div>
-    <div class="card" style="margin:0"><h2>3 · Regras do pareamento</h2>
-      <div class="row"><div><label>Duplicata (min)</label><input type="number" id="dup" value="${P.dup}"></div>
-      <div><label>Vale a</label><select id="keep"><option value="first" ${P.keep==="first"?"selected":""}>primeira</option><option value="last" ${P.keep==="last"?"selected":""}>última</option></select></div></div>
-      <div class="row"><div><label>Janela antes (min)</label><input type="number" id="wb" value="${P.wb}"></div><div><label>Janela depois (min)</label><input type="number" id="wa" value="${P.wa}"></div></div>
-      <label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="brk" ${P.brk?"checked":""}> Descontar intervalo pré-assinalado</label></div>
+  const P=POINT;pontoSyncRef();
+  const ym=pontoRef(),R=P.result,futuro=fimCalc(ym)<refIni(ym);
+  const nPend=R?R.users.reduce((s,u)=>s+u.pendencies.length,0):0,nFal=R?R.users.reduce((s,u)=>s+u.t.faltas,0):0;
+  const ult=Object.values(S.marcacoes).reduce((a,m)=>!m.removida&&m.ts>a?m.ts:a,"");
+  const passo=(n,ok,t,d)=>`<div class="doc" style="align-items:flex-start;gap:10px"><div style="width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:800;background:${ok?"var(--verde-medio)":"var(--areia-esc,#e8dfcc)"};color:${ok?"#fff":"var(--ink)"}">${ok?"✓":n}</div><div class="grow"><div class="nm">${t}</div><div class="sub">${d}</div></div></div>`;
+  return banner("","Ponto eletrônico","Batidas do relógio, pendências, banco de horas e folha de ponto — sempre do dia 26 do mês anterior ao dia 25.","clock")+noStore()+`
+  <div class="pontomain">
+  <div class="card"><h2>Ponto do período</h2>
+   <p class="sub" style="margin:0 0 10px">O ponto da Casa Hiro vai do <b>dia 26 do mês anterior ao dia 25</b>. Escolha o período abaixo e siga os passos. Dias que ainda não chegaram não entram na conta.</p>
+   ${pontoPeriodoSel()}
+   ${P.custom?`<div class="callout sand" style="margin-top:8px">Usando datas escolhidas à mão: <b>${brDate(P.start)} a ${brDate(P.end)}</b>. <button type="button" class="lnk" id="pcustx">Voltar ao período de 26 a 25</button></div>`:""}
+   ${futuro?`<div class="callout sand" style="margin-top:8px">Esse período ainda não começou (começa em ${brDate(refIni(ym))}).</div>`:""}
+   <div style="margin-top:12px;display:grid;gap:6px">
+    ${passo(1,!!ult&&ult.slice(0,10)>=addDaysIso(P.end,-1),"Importar as batidas do relógio",ult?`Última batida importada: <b>${brDate(ult.slice(0,10))}</b>${ult.slice(0,10)<addDaysIso(P.end,-1)?` — faltam batidas até ${brDate(P.end)}: solte o arquivo do relógio aqui embaixo.`:"."}`:"Nenhuma batida importada ainda. Solte o arquivo AllGLog001.txt aqui embaixo.")}
+    ${passo(2,!!R&&!nPend,"Resolver as pendências",R?(nPend?`<b style="color:var(--bad)">${nPend} pendência(s)</b>${nFal?`, entre elas ${nFal} falta(s) sem justificativa`:""}. <button type="button" class="lnk" data-irpend="1">Abrir a lista de pendências</button>`:"Nenhuma pendência. Tudo certo."):"Calcule o período para ver as pendências.")}
+    ${passo(3,false,"Conferir e fechar o período",`Baixe a folha de ponto (Excel ou PDF) e registre o fechamento na aba <button type="button" class="lnk" data-irfech="1">Fechamento do mês</button>.`)}
+   </div></div>
+  <div class="grid g2" style="margin-bottom:16px">
+   <div class="card" style="margin:0"><h2>Arquivo do relógio</h2>
+    <div class="drop" id="drop" tabindex="0">${ic("up")}<div>${P.file?esc(P.file):"Clique ou solte o AllGLog001.txt"}</div></div>
+    <input type="file" id="file" accept=".txt,.log" hidden>
+    <div class="sub" id="info" style="margin-top:8px">${P.punches.length?infoText():"As batidas importadas ficam guardadas: não precisa importar de novo o que já entrou."}</div></div>
+   <div class="card" style="margin:0"><h2>Calcular e baixar</h2>
+    <p class="sub" style="margin:0 0 10px">${R?`Calculado de <b>${brDate(R.start)}</b> a <b>${brDate(R.end)}</b>.`:"Clique em Calcular para ver as horas, as faltas e as pendências do período."}</p>
+    <div class="row" style="flex-wrap:wrap;gap:8px">
+     <button class="b" id="go" style="flex:none">${ic("calc")} ${R?"Recalcular":"Calcular o período"}</button>
+     <button class="b sec" id="toXlsx" style="flex:none" ${R?"":"disabled"}>${ic("sheet")} Folha de ponto (Excel)</button>
+     <button class="b sec" id="toPdf" style="flex:none" ${R?"":"disabled"}>${ic("file")} Folha de ponto (PDF)</button>
+     <button class="b sec" id="toPln" style="flex:none">${ic("sheet")} Planilha do ponto</button></div>
+    <span class="err" id="err" style="margin:6px 0 0;display:block">${esc(P.err)}</span></div>
   </div>
-  <div class="row" style="margin-bottom:16px"><button class="b" id="go" style="flex:none">${ic("calc")} Calcular jornadas</button>
-   <button class="b sec" id="toPln" style="flex:none">${ic("sheet")} Planilha do ponto</button>
-   <button class="b sec" id="toXlsx" style="flex:none" ${P.result?"":"disabled"}>${ic("sheet")} XLSX para o contador</button>
-   <button class="b sec" id="toPdf" style="flex:none" ${P.result?"":"disabled"}>${ic("file")} PDF para o contador</button><span class="err" id="err" style="margin:0">${esc(P.err)}</span></div>
-  <div id="out">${P.result?renderResult(P.result):`<div class="empty">Carregue o arquivo do relógio e clique em "Calcular jornadas".<br>Os turnos de cada integrante ficam na aba Turnos.</div>`}</div>`;
+  <details class="card" style="margin-bottom:16px"><summary style="cursor:pointer;font-weight:700">Regras do cálculo e datas à mão (avançado)</summary>
+   <p class="sub" style="margin:8px 0">Só mude se souber o que está fazendo. As datas à mão servem para conferir um trecho; para a folha e o banco de horas, use o período de 26 a 25.</p>
+   <div class="row"><div><label>De</label><input type="date" id="start" value="${P.start}"></div><div><label>Até</label><input type="date" id="end" value="${P.end}"></div>
+    <div style="flex:2"><label>Feriados a mais (AAAA-MM-DD, separados por vírgula)</label><input id="hol" value="${esc(P.hol)}" placeholder="2026-09-07"></div></div>
+   <div class="row"><div><label>Batidas repetidas até (min)</label><input type="number" id="dup" value="${P.dup}"></div>
+    <div><label>Na batida repetida, vale a</label><select id="keep"><option value="first" ${P.keep==="first"?"selected":""}>primeira</option><option value="last" ${P.keep==="last"?"selected":""}>última</option></select></div>
+    <div><label>Aceitar batida antes do turno (min)</label><input type="number" id="wb" value="${P.wb}"></div><div><label>Aceitar batida depois do turno (min)</label><input type="number" id="wa" value="${P.wa}"></div></div>
+   <label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="brk" ${P.brk?"checked":""}> Descontar o intervalo já previsto no turno</label></details>
+  <div id="out">${R?renderResult(R):`<div class="empty">${Object.keys(S.marcacoes).length?`Clique em "Calcular o período".`:"Importe o arquivo do relógio e clique em \"Calcular o período\"."}<br>Os turnos de cada integrante ficam em Escalas e turnos.</div>`}</div>
+  </div>`;
 }
 function infoText(){
   const P=POINT,users=new Set(P.punches.map(p=>p.userId)),days=P.punches.map(p=>isoDate(p.ts)).sort();
@@ -34,9 +57,17 @@ function bindPonto(){
   drop.ondragover=e=>{e.preventDefault();drop.classList.add("on")};drop.ondragleave=()=>drop.classList.remove("on");
   drop.ondrop=e=>{e.preventDefault();drop.classList.remove("on");if(e.dataTransfer.files[0])loadLog(e.dataTransfer.files[0])};
   fi.onchange=()=>fi.files[0]&&loadLog(fi.files[0]);
-  const sync=()=>{P.start=$("start").value;P.end=$("end").value;P.hol=$("hol").value;P.dup=+$("dup").value;P.keep=$("keep").value;P.wb=+$("wb").value;P.wa=+$("wa").value;P.brk=$("brk").checked};
-  ["start","end","hol","dup","keep","wb","wa","brk"].forEach(k=>$(k).onchange=sync);
+  const sync=()=>{P.hol=$("hol").value;P.dup=+$("dup").value;P.keep=$("keep").value;P.wb=+$("wb").value;P.wa=+$("wa").value;P.brk=$("brk").checked};
+  ["hol","dup","keep","wb","wa","brk"].forEach(k=>$(k).onchange=sync);
+  // datas à mão: saem do período de 26 a 25 até clicar em "Voltar"
+  ["start","end"].forEach(k=>$(k).onchange=()=>{P.custom=true;P.start=$("start").value;P.end=$("end").value;P.result=null;go("ponto",true)});
+  const cx=$("pcustx");if(cx)cx.onclick=()=>{P.custom=false;P.result=null;go("ponto",true)};
+  bindPontoPeriodo(()=>{pontoSyncRef();if(Object.keys(S.marcacoes).length||P.punches.length)calcular(true);else go("ponto",true)});
+  document.querySelectorAll("[data-irpend]").forEach(b=>b.onclick=()=>{XM.sec.ponto="pendencias";go("ponto",true)});
+  document.querySelectorAll("[data-irfech]").forEach(b=>b.onclick=()=>{XM.sec.ponto="fechamento";go("ponto",true)});
   $("go").onclick=()=>{sync();calcular(true)};
+  // ao abrir, já calcula o período escolhido (as batidas ficam guardadas)
+  if(!P.result&&!P.err&&P.start&&P.start<=P.end&&(Object.keys(S.marcacoes).length||P.punches.length)&&P.autoCalc!==P.start+P.end){P.autoCalc=P.start+P.end;setTimeout(()=>{if(ROUTE==="ponto"&&!P.result)calcular(true)},30)}
   $("toPln").onclick=()=>openPlanilha();
   $("toXlsx").onclick=()=>exportXlsx();
   $("toPdf").onclick=()=>exportPdfContador();
@@ -46,13 +77,13 @@ async function loadLog(f){
   try{
     const{punches,divergences}=parseRawlog(decodeFile(await f.arrayBuffer()));
     const P=POINT;P.punches=punches;P.file=f.name;P.div=divergences;P.result=null;P.err="";
-    const days=punches.map(p=>isoDate(p.ts)).sort();if(days.length){P.start=days[0];P.end=days[days.length-1]}
+    pontoSyncRef();
     const novos=new Map();for(const p of punches)if(!integByUid(p.userId)&&!novos.has(p.userId))novos.set(p.userId,p.uname);
     for(const[u,nm]of novos)put("integrantes","u"+u,{uid:u,nome:nm,nomeCompleto:"",depto:"Outro",turno:"",escalaModo:"semana",dias:[0,1,2,3,4],situacao:"Ativo"});
     const novasMarcas=importMarcas(punches);
     if(novos.size)toast(`${novos.size} integrante(s) cadastrado(s) a partir do relógio. Complete os dados no Prontuário.`);
     if(novasMarcas)toast(`${novasMarcas} marcação(ões) nova(s) importada(s) para o histórico.`);
-    go("ponto",true);
+    BHCACHE.clear();calcular(true);
   }catch(e){toast("Erro ao ler o arquivo: "+e.message,true)}
 }
 function calcular(show){
@@ -93,7 +124,7 @@ function calcular(show){
       const rows=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end).map(j=>{
         const r={day:j.day,wd:WD[pyWeekday(j.day)],status:j.status,shift:j.shiftNo,
           intervals:j.intervals.map(([a,b])=>hm(a)+"–"+hm(b)+(isoDate(b)!==isoDate(a)?" (+1)":"")),
-          rawIntervals:j.intervals,
+          rawIntervals:j.intervals,marcas:j.marcas||null,
           workedMin:j.workedMin,expectedMin:j.expectedMin,late:j.lateMin,early:j.earlyLeaveMin,extra:j.extraMin,tolMin:j.tolMin||0,feriadoMin:j.feriadoMin||0,
           night:j.turnoNoturno,endsOn:j.endsOn,flags:[...j.flags],oc:null};
         {const nm=nightMinutes(j.intervals,j.turnoNoturno&&cfg.prorrogNoturna!==false);r.nightReal=nm.real;r.nightPror=nm.pror;r.nightFicta=nm.ficta}
@@ -178,7 +209,7 @@ function bindResult(){
   document.querySelectorAll("[data-rn]").forEach(b=>b.onclick=()=>openRename(+b.dataset.rn));
   document.querySelectorAll("[data-pln]").forEach(b=>b.onclick=()=>openPlanilha(+b.dataset.pln,POINT.result&&POINT.result.start,POINT.result&&POINT.result.end));
   document.querySelectorAll("[data-esc]").forEach(b=>b.onclick=()=>openEscalaAjuste(b.dataset.esc,b.dataset.escday,{tipo:b.dataset.esctipo}));
-  document.querySelectorAll("[data-stat]").forEach(b=>b.onclick=()=>openStatModal(b.dataset.stat));
+  document.querySelectorAll("[data-stat]").forEach(b=>b.onclick=()=>{if(b.dataset.stat==="pendencias"&&ROUTE==="ponto"){XM.sec.ponto="pendencias";go("ponto",true);return}openStatModal(b.dataset.stat)});
 }
 function openStatModal(kind){
   const R=POINT.result;if(!R)return;
@@ -186,7 +217,7 @@ function openStatModal(kind){
   let rows=[];
   if(kind==="integrantes")rows=R.users.map(u=>({uid:u.uid,nome:u.nome,detail:`${u.depto} · ${u.t.trab}/${u.t.escalados} dias trabalhados no período`,action:"pront"}));
   else if(kind==="faltas")R.users.forEach(u=>u.rows.filter(r=>r.status==="falta").forEach(r=>rows.push({uid:u.uid,nome:u.nome,day:r.day,detail:`${brDate(r.day)} ${r.wd} — sem marcação, sem justificativa`,action:"oc"})));
-  else if(kind==="pendencias")R.users.forEach(u=>u.pendencies.forEach(p=>rows.push({uid:u.uid,nome:u.nome,day:p.day,detail:`${brDate(p.day)} — ${p.kind}: ${esc(p.detail)}`,sugereHora:p.sugereHora,action:p.kind==="marcacao_sem_escala"?"esc":/falta_(entrada|saida|pontual)/.test(p.kind)?"mk":"oc"})));
+  else if(kind==="pendencias")R.users.forEach(u=>u.pendencies.forEach(p=>rows.push({uid:u.uid,nome:u.nome,day:p.day,detail:`${brDate(p.day)} — ${PEND_TIPO[p.kind]||p.kind}: ${esc(p.detail)}`,sugereHora:p.sugereHora,action:p.kind==="marcacao_sem_escala"?"esc":/falta_(entrada|saida|pontual)/.test(p.kind)?"mk":"oc"})));
   else if(kind==="atestados")R.users.forEach(u=>u.rows.filter(r=>r.status==="atestado").forEach(r=>rows.push({uid:u.uid,nome:u.nome,day:r.day,detail:`${brDate(r.day)} ${r.wd}${r.oc&&r.oc.texto?" — "+esc(r.oc.texto):""}`,action:"oc"})));
   else if(kind==="extra")R.users.forEach(u=>u.rows.filter(r=>r.extra>0).forEach(r=>rows.push({uid:u.uid,nome:u.nome,day:r.day,detail:`${brDate(r.day)} ${r.wd} — ${fmtHHMM(r.extra)} de extra`,action:"mk"})));
   else if(kind==="atraso")R.users.forEach(u=>u.rows.filter(r=>r.late>0).forEach(r=>rows.push({uid:u.uid,nome:u.nome,day:r.day,detail:`${brDate(r.day)} ${r.wd} — ${r.late} min de atraso`,action:"mk"})));

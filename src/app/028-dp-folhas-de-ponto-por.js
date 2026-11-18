@@ -62,7 +62,7 @@ async function folhasBaixar(){
   if(!fm.length)return toast("Marque ao menos um formato.",true);
   if(!Object.values(A).some(Boolean))return toast("Marque ao menos uma aba.",true);
   if(!R&&!A.capa&&!A.integrantes)return toast("Calcule o ponto na aba Ponto primeiro — jornadas e folha individual dependem dele.",true);
-  const per=R?R.start.slice(0,7):"sem-periodo";
+  const per=R?refYm(R.end):"sem-periodo";
   toast("Gerando as folhas…");
   try{
     const arq=[],gerar=async(uids,rot)=>{

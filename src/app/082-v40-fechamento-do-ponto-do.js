@@ -4,12 +4,13 @@
    conformidade, feriados, aprovação por setor e a exportação para o contador.
    Apoio à conferência: não altera o ponto nem trava nada. */
 const XFP={de:"",ate:"",cmp:null};
-const xfpMesIni=ym=>ym+"-01";
-const xfpMesFim=ym=>{const [y,m]=ym.split("-").map(Number);return ym+"-"+String(new Date(y,m,0).getDate()).padStart(2,"0")};
-const xfpYmPadrao=()=>{const h=hojeIso(),ym=h.slice(0,7);if(+h.slice(8)<=10){const [y,m]=ym.split("-").map(Number);const d=new Date(y,m-2,1);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")}return ym};
+const xfpMesIni=ym=>refIni(ym);
+const xfpMesFim=ym=>refFim(ym);
+const xfpYmPadrao=()=>pontoRef();
 function xfpPeriodo(){
-  if(!XFP.de||!XFP.ate){const ym=xfpYmPadrao();XFP.de=xfpMesIni(ym);XFP.ate=xfpMesFim(ym)}
-  return{de:XFP.de,ate:XFP.ate,ym:XFP.de.slice(0,7)};
+  // segue o período de referência escolhido no Ponto (26 a 25); datas digitadas à mão valem até trocar o período
+  if(!XFP.de||!XFP.ate||XFP.ym!==pontoRef()){XFP.ym=pontoRef();XFP.de=xfpMesIni(XFP.ym);XFP.ate=xfpMesFim(XFP.ym)}
+  return{de:XFP.de,ate:XFP.ate,ym:refYm(XFP.ate)};
 }
 const xfpCfg=()=>xmcfg("ponto");
 const xfpConf=ym=>((xfpCfg().fechConf||{})[ym])||{};
@@ -42,9 +43,9 @@ function xfpVerifica(){
   out.push({k:"calc",nivel:calc?0:1,t:"Jornadas calculadas para este período",d:calc?`Calculado para ${R.users.length} pessoa(s), de ${brDate(de)} a ${brDate(ate)}.${ate>=hoje?" O período ainda não terminou: só contam os dias até ontem (dias futuros não viram falta).":""}`:(R?`O último cálculo é de outro período (${brDate(R.start)} a ${brDate(R.end)}). Calcule de novo para este.`:"Ainda não foi calculado. Calcule para ver faltas, atrasos e pendências."),acao:{rot:calc?"Recalcular":"Calcular agora",id:"calc"}});
   if(calc){
     const pend=R.users.filter(u=>u.pendencies.length),totP=R.users.reduce((s,u)=>s+u.pendencies.length,0);
-    out.push({k:"pend",nivel:totP?2:0,t:"Dias com batida faltando ou sobrando",d:totP?`${totP} dia(s): ${pend.slice(0,5).map(u=>`${u.nome} (${u.pendencies.slice(0,3).map(p=>xfpFmt(p.day)).join(", ")}${u.pendencies.length>3?"…":""})`).join("; ")}${pend.length>5?" e mais "+(pend.length-5)+" pessoa(s)":""}. Resolva com batida esquecida, pedido de ajuste ou justificativa.`:"Nenhum dia com batida faltando.",acao:totP?{rot:"Ver o mapa de frequência",id:"mapa"}:null});
+    out.push({k:"pend",nivel:totP?2:0,t:"Dias com batida faltando ou sobrando",d:totP?`${totP} dia(s): ${pend.slice(0,5).map(u=>`${u.nome} (${u.pendencies.slice(0,3).map(p=>xfpFmt(p.day)).join(", ")}${u.pendencies.length>3?"…":""})`).join("; ")}${pend.length>5?" e mais "+(pend.length-5)+" pessoa(s)":""}. Resolva com batida esquecida, pedido de ajuste ou justificativa.`:"Nenhum dia com batida faltando.",acao:totP?{rot:"Resolver pendências",id:"pendencias"}:null});
     const fl=R.users.filter(u=>u.t.faltas),totF=R.users.reduce((s,u)=>s+u.t.faltas,0);
-    out.push({k:"faltas",nivel:totF?2:0,t:"Faltas sem justificativa",d:totF?`${totF} falta(s): ${fl.slice(0,6).map(u=>`${u.nome} (${u.t.faltas})`).join(", ")}${fl.length>6?" e mais "+(fl.length-6):""}. Lance atestado, folga ou justificativa; o que sobrar vira desconto na folha.`:"Nenhuma falta sem justificativa.",acao:totF?{rot:"Ver o mapa de frequência",id:"mapa"}:null});
+    out.push({k:"faltas",nivel:totF?2:0,t:"Faltas sem justificativa",d:totF?`${totF} falta(s): ${fl.slice(0,6).map(u=>`${u.nome} (${u.t.faltas})`).join(", ")}${fl.length>6?" e mais "+(fl.length-6):""}. Lance atestado, folga ou justificativa; o que sobrar vira desconto na folha.`:"Nenhuma falta sem justificativa.",acao:totF?{rot:"Resolver faltas",id:"pendencias"}:null});
     const ex=R.users.reduce((s,u)=>s+u.t.extra,0),at=R.users.reduce((s,u)=>s+u.t.late+u.t.early,0);
     {const sc=R.semCadastro||[];out.push({k:"semcad",nivel:sc.length?1:0,t:"Números do relógio sem cadastro",d:sc.length?`${sc.map(x=>"nº "+x.uid+" ("+x.n+" batida(s))").join(", ")}. Ficam fora do cálculo. Se for alguém da casa, cadastre ou ligue no De-para.`:"Todas as batidas do período são de integrantes cadastrados.",acao:sc.length?{rot:"Abrir o De-para",id:"vinculos"}:null})}
     out.push({k:"horas",nivel:0,t:"Horas extras e atrasos (só para conhecimento)",d:`Extras: ${xeHM(ex)} · atrasos e saídas antecipadas: ${xeHM(at)}. Confira se as extras foram autorizadas antes de pagar.`,acao:{rot:"Ver autorização de horas extras",id:"heaut"}});
@@ -65,7 +66,7 @@ function xfpVerifica(){
 }
 const xfpIco=n=>n===0?`<b style="color:var(--verde-medio)">✔</b>`:n===1?`<b style="color:var(--madeira)">▲</b>`:`<b style="color:var(--bad)">●</b>`;
 function xfpGoTab(id){
-  if(id==="imp"||id==="regras"||id==="mapa"||id==="calc"){XM.sec.ponto="";XAB.tab.ponto="p:Calcular jornadas";go("ponto",true);return}
+  if(id==="imp"||id==="regras"||id==="mapa"||id==="calc"){XM.sec.ponto="";XAB.tab.ponto="p:"+XAB_PRI.ponto;go("ponto",true);return}
   XM.sec.ponto=id;go("ponto",true);
 }
 function xfpHtml(){
@@ -77,7 +78,7 @@ function xfpHtml(){
    <p class="sub" style="margin:0 0 10px">Siga a lista de cima para baixo. Cada linha diz o que falta e leva direto para onde resolver. É um apoio à conferência: nada é travado nem alterado por aqui.</p>
    <div class="row" style="align-items:flex-end;margin-bottom:10px">
     <div><label>De</label><input type="date" id="xfpde" value="${de}"></div><div><label>Até</label><input type="date" id="xfpate" value="${ate}"></div>
-    <button type="button" class="b sec" data-xfpper="ant" style="flex:none">Mês passado</button><button type="button" class="b sec" data-xfpper="atual" style="flex:none">Este mês</button></div>
+    <button type="button" class="b sec" data-xfpper="ant" style="flex:none">◀ Período anterior</button><button type="button" class="b sec" data-xfpper="prox" style="flex:none">Próximo ▶</button><span class="sub" style="align-self:center">Referência ${ym.slice(5)}/${ym.slice(0,4)}: ${refRotulo(ym)}</span></div>
    <div class="callout ${pend.length?"sand":""}" style="margin-bottom:10px">${resumo}${fech?` <span class="sub">Fechado em ${brDate(fech.em)} por ${esc(fech.por||"—")}.</span>`:""}</div>
    ${L.map(x=>`<div class="doc" style="align-items:flex-start;gap:10px;${conf[x.k]?"opacity:.6":""}"><div style="width:18px;text-align:center;padding-top:2px">${xfpIco(conf[x.k]&&x.nivel?0:x.nivel)}</div>
      <div class="grow"><div class="nm">${esc(x.t)}</div><div class="sub">${esc(x.d)}</div></div>
@@ -92,7 +93,7 @@ function xfpBind(){
   const de=document.getElementById("xfpde"),ate=document.getElementById("xfpate");
   if(de)de.onchange=()=>{if(de.value){XFP.de=de.value;if(XFP.ate<XFP.de)XFP.ate=XFP.de}R()};
   if(ate)ate.onchange=()=>{if(ate.value){XFP.ate=ate.value;if(XFP.de>XFP.ate)XFP.de=XFP.ate}R()};
-  document.querySelectorAll("[data-xfpper]").forEach(b=>b.onclick=()=>{let ym=xfpYmPadrao();const h=hojeIso().slice(0,7);if(b.dataset.xfpper==="atual")ym=h;else{const [y,m]=h.split("-").map(Number),d=new Date(y,m-2,1);ym=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")}XFP.de=xfpMesIni(ym);XFP.ate=xfpMesFim(ym);R()});
+  document.querySelectorAll("[data-xfpper]").forEach(b=>b.onclick=()=>{PREF.ym=refYmAdd(pontoRef(),b.dataset.xfpper==="ant"?-1:1);XFP.ym=null;R()});
   const L=xfpVerifica();
   document.querySelectorAll("[data-xfpa]").forEach(b=>b.onclick=()=>{
     const x=L.find(v=>v.k===b.dataset.xfpa);if(!x||!x.acao)return;const a=x.acao;

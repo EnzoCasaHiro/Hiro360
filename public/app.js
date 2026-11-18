@@ -273,7 +273,7 @@ function pairPunches(punches,schedule,cfg,holidays,until){
         const paired=new Set(pairs.flat());strayPunch=ps.find(p=>!paired.has(p))||null;}
     }
     if(!pairs)[pairs,orphan]=sequentialPairs(ps);
-    const j=newJourney(d,OK,sh.no,{expectedMin,turnoNoturno:noturno,endsOn,rawIds:ps.map(p=>p.rawId)});
+    const j=newJourney(d,OK,sh.no,{expectedMin,turnoNoturno:noturno,endsOn,rawIds:ps.map(p=>p.rawId),marcas:ps.map(p=>p.ts)});
     j.dupIds=ps.flatMap(p=>absBy.get(p.rawId)||[]);
     j.intervals=pairs.map(([a,b])=>[a.ts,b.ts]);
     j.workedMin=j.intervals.reduce((s,[a,b])=>s+minutesBetween(a,b),0);
@@ -304,7 +304,7 @@ function pairPunches(punches,schedule,cfg,holidays,until){
     if(until&&d>until)continue;
     const ps=byDay.get(d).sort((a,b)=>a.ts-b.ts);const[pairs,orphan]=sequentialPairs(ps);
     const ivs=pairs.map(([a,b])=>[a.ts,b.ts]);const w=ivs.reduce((s,[a,b])=>s+minutesBetween(a,b),0);
-    const j=newJourney(d,SEM_ESCALA,null,{intervals:ivs,workedMin:w,extraMin:w,rawIds:ps.map(p=>p.rawId),endsOn:d});
+    const j=newJourney(d,SEM_ESCALA,null,{intervals:ivs,workedMin:w,extraMin:w,rawIds:ps.map(p=>p.rawId),marcas:ps.map(p=>p.ts),endsOn:d});
     journeys.push(j);pend.push({day:d,kind:"marcacao_sem_escala",detail:`${ps.length} marcação(ões) sem escala`});
     if(orphan){j.flags.push("falta_saida");pend.push({day:d,kind:"falta_saida",detail:`marcação ${hm(orphan.ts)} sem par`})}
   }
@@ -359,6 +359,33 @@ const FLAG_LABEL={tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trab
 const FLAG_OCULTA=new Set(["escala_lancada","previsto_manual"]);
 const flagsVisiveis=r=>((r&&r.flags)||[]).filter(f=>!FLAG_OCULTA.has(f));
 
+/* >>> periodo-ref */
+/* Período de referência do ponto: do dia 26 do mês anterior ao dia 25 do mês.
+   "2026-11" = 26/10/2026 a 25/11/2026. O dia 26 em diante já pertence ao mês seguinte. */
+const PONTO_CORTE=25;
+const refYmAdd=(ym,n)=>{const d=new Date(+ym.slice(0,4),+ym.slice(5,7)-1+n,1);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")};
+const refIni=ym=>refYmAdd(ym,-1)+"-"+String(PONTO_CORTE+1).padStart(2,"0");
+const refFim=ym=>ym+"-"+String(PONTO_CORTE).padStart(2,"0");
+const refYm=iso=>{const s=String(iso||"").slice(0,10);return +s.slice(8,10)>PONTO_CORTE?refYmAdd(s.slice(0,7),1):s.slice(0,7)};
+const refRotulo=ym=>{const a=refIni(ym),b=refFim(ym);return a.slice(8)+"/"+a.slice(5,7)+" a "+b.slice(8)+"/"+b.slice(5,7)+"/"+b.slice(0,4)};
+/* ao abrir a tela: o período que está correndo; nos 5 primeiros dias depois do corte, ainda o que acabou de fechar */
+const refPadrao=()=>{const h=hojeIso(),ym=refYm(h),dias=Math.round((new Date(h+"T12:00:00")-new Date(refIni(ym)+"T12:00:00"))/864e5);return dias<5?refYmAdd(ym,-1):ym};
+/* <<< periodo-ref */
+/* período escolhido nas telas do ponto (Ponto, Pendências, Fechamento): o mesmo em todas */
+const PREF={ym:null};
+const pontoRef=()=>PREF.ym||(PREF.ym=refPadrao());
+function pontoPeriodoSel(){
+  const ym=pontoRef(),hj=refYm(hojeIso()),meses=[];for(let k=1;k>=-12;k--)meses.push(refYmAdd(hj,k));if(!meses.includes(ym))meses.push(ym);
+  return `<div class="row" style="align-items:flex-end;gap:8px;flex-wrap:wrap">
+   <button type="button" class="b sec sm" data-prefmv="-1" title="Período anterior" style="flex:none">◀</button>
+   <div style="flex:0 1 340px"><label>Período de referência</label><select data-prefsel>${meses.map(m=>`<option value="${m}" ${m===ym?"selected":""}>${MESES_PT[+m.slice(5)-1]} de ${m.slice(0,4)} · ${refRotulo(m)}</option>`).join("")}</select></div>
+   <button type="button" class="b sec sm" data-prefmv="1" title="Próximo período" style="flex:none">▶</button></div>`;
+}
+function bindPontoPeriodo(depois){
+  const muda=ym=>{PREF.ym=ym;POINT.custom=false;POINT.result=null;BHCACHE.clear();if(depois)depois();else go(ROUTE,true)};
+  document.querySelectorAll("[data-prefsel]").forEach(s=>s.onchange=()=>muda(s.value));
+  document.querySelectorAll("[data-prefmv]").forEach(b=>b.onclick=()=>muda(refYmAdd(pontoRef(),+b.dataset.prefmv)));
+}
 /* ================= persistência (db + assets) ================= */
 const RT={db:null,assets:null,dl:null,user:null,sample:null,ready:false};
 const S={integrantes:{},docs:{},ocorr:{},config:{},marcacoes:{},acessos:{},perfis:{},pedidos:{},nfarq:{},links:{}};
@@ -463,7 +490,7 @@ const podeSal=()=>!!(perfilAtual()||{}).salario,podePii=()=>!!(perfilAtual()||{}
 const GRAVA_COL={integrantes:["pront","turnos","ponto"],ocorr:["ponto","pront","turnos"],marcacoes:["ponto"],docs:["docs"],nfarq:["nf","fin"]};
 const GRAVA_CFG=[[/^nf(_p\d+)?$/,["nf"]],[/^fin_cfg$/,["fin","contab"]],[/^fin_\d+$/,["fin","nf","prest","estoque","fin2"]],[/^recorrencias$/,["fin","prest"]],
  [/^(estoque|mov_\d+)$/,["estoque","nf","res","fin2"]],[/^(prestadores|contratos)$/,["prest"]],[/^contab$/,["contab","fin"]],[/^docs_val$/,["docs"]],
- [/^(residentes|evo_\d+)$/,["res","pres","cuid","admres"]],[/^tar_\d+$/,["agenda","cuid","infra"]],[/^(esc_\d+|escalaEx|escala_cfg)$/,["turnos","ponto"]],[/^prevm_/,["ponto"]],
+ [/^(residentes|evo_\d+)$/,["res","pres","cuid","admres"]],[/^tar_\d+$/,["agenda","cuid","infra"]],[/^(esc_\d+|escalaEx|escala_cfg)$/,["turnos","ponto"]],[/^prevm_/,["ponto"]],[/^pfolha_/,["ponto"]],
  [/^(x_gp|fech_\d+)$/,["gp"]],[/^x_cuid$/,["cuid"]],[/^x_infra$/,["infra"]],[/^x_ind$/,["ind"]],[/^x_fin2$/,["fin2"]],[/^x_fin4$/,["fin"]],[/^x_fin6$/,["fin"]],[/^x_fin7$/,["fin"]],[/^x_fin8$/,["fin"]],[/^x_fin9$/,["fin"]],[/^x_fin10$/,["fin"]],[/^x_fin11$/,["fin"]],[/^x_admres$/,["admres"]],
  [/^armazenamento$/,["docs","fin","nf","pront","res","pres","turnos","ponto"]],[/^geral$/,["pront","turnos","ponto","contador","docs","fin","prest"]]];
 function escritaOk(col,id){
@@ -741,28 +768,51 @@ function importMarcas(punches){
 
 /* ================= PONTO ================= */
 const POINT={punches:[],file:"",div:[],start:"",end:"",hol:"",dup:3,keep:"first",wb:240,wa:240,brk:true,result:null,err:""};
+/* ponto do período: período de referência de 26 a 25; as datas só mudam à mão em "Regras do cálculo" */
+function pontoSyncRef(){const P=POINT;if(P.custom)return;const ym=pontoRef(),f=fimCalc(ym);P.start=refIni(ym);P.end=f<refIni(ym)?refIni(ym):f}
+const PEND_TIPO={falta:"Faltou sem justificativa",falta_pontual:"Esqueceu de bater o ponto",falta_entrada:"Falta a batida de entrada",falta_saida:"Falta a batida de saída",marcacao_sem_escala:"Bateu ponto em dia de folga"};
 function pgPonto(){
-  const P=POINT;
-  return banner("","Ponto eletrônico","Conferência das marcações do relógio, com tolerância da CLT, hora noturna, atestados e justificativas.","clock")+noStore()+`
-  <div class="grid g3" style="margin-bottom:16px">
-    <div class="card" style="margin:0"><h2>1 · Arquivo do relógio</h2>
-      <div class="drop" id="drop" tabindex="0">${ic("up")}<div>${P.file?esc(P.file):"Clique ou solte o AllGLog001.txt"}</div></div>
-      <input type="file" id="file" accept=".txt,.log" hidden>
-      <div class="sub" id="info" style="margin-top:8px">${P.punches.length?infoText():""}</div></div>
-    <div class="card" style="margin:0"><h2>2 · Período</h2>
-      <div class="row"><div><label>De</label><input type="date" id="start" value="${P.start}"></div><div><label>Até</label><input type="date" id="end" value="${P.end}"></div></div>
-      <label>Feriados (AAAA-MM-DD, separados por vírgula)</label><input id="hol" value="${esc(P.hol)}" placeholder="2026-09-07"></div>
-    <div class="card" style="margin:0"><h2>3 · Regras do pareamento</h2>
-      <div class="row"><div><label>Duplicata (min)</label><input type="number" id="dup" value="${P.dup}"></div>
-      <div><label>Vale a</label><select id="keep"><option value="first" ${P.keep==="first"?"selected":""}>primeira</option><option value="last" ${P.keep==="last"?"selected":""}>última</option></select></div></div>
-      <div class="row"><div><label>Janela antes (min)</label><input type="number" id="wb" value="${P.wb}"></div><div><label>Janela depois (min)</label><input type="number" id="wa" value="${P.wa}"></div></div>
-      <label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="brk" ${P.brk?"checked":""}> Descontar intervalo pré-assinalado</label></div>
+  const P=POINT;pontoSyncRef();
+  const ym=pontoRef(),R=P.result,futuro=fimCalc(ym)<refIni(ym);
+  const nPend=R?R.users.reduce((s,u)=>s+u.pendencies.length,0):0,nFal=R?R.users.reduce((s,u)=>s+u.t.faltas,0):0;
+  const ult=Object.values(S.marcacoes).reduce((a,m)=>!m.removida&&m.ts>a?m.ts:a,"");
+  const passo=(n,ok,t,d)=>`<div class="doc" style="align-items:flex-start;gap:10px"><div style="width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:800;background:${ok?"var(--verde-medio)":"var(--areia-esc,#e8dfcc)"};color:${ok?"#fff":"var(--ink)"}">${ok?"✓":n}</div><div class="grow"><div class="nm">${t}</div><div class="sub">${d}</div></div></div>`;
+  return banner("","Ponto eletrônico","Batidas do relógio, pendências, banco de horas e folha de ponto — sempre do dia 26 do mês anterior ao dia 25.","clock")+noStore()+`
+  <div class="pontomain">
+  <div class="card"><h2>Ponto do período</h2>
+   <p class="sub" style="margin:0 0 10px">O ponto da Casa Hiro vai do <b>dia 26 do mês anterior ao dia 25</b>. Escolha o período abaixo e siga os passos. Dias que ainda não chegaram não entram na conta.</p>
+   ${pontoPeriodoSel()}
+   ${P.custom?`<div class="callout sand" style="margin-top:8px">Usando datas escolhidas à mão: <b>${brDate(P.start)} a ${brDate(P.end)}</b>. <button type="button" class="lnk" id="pcustx">Voltar ao período de 26 a 25</button></div>`:""}
+   ${futuro?`<div class="callout sand" style="margin-top:8px">Esse período ainda não começou (começa em ${brDate(refIni(ym))}).</div>`:""}
+   <div style="margin-top:12px;display:grid;gap:6px">
+    ${passo(1,!!ult&&ult.slice(0,10)>=addDaysIso(P.end,-1),"Importar as batidas do relógio",ult?`Última batida importada: <b>${brDate(ult.slice(0,10))}</b>${ult.slice(0,10)<addDaysIso(P.end,-1)?` — faltam batidas até ${brDate(P.end)}: solte o arquivo do relógio aqui embaixo.`:"."}`:"Nenhuma batida importada ainda. Solte o arquivo AllGLog001.txt aqui embaixo.")}
+    ${passo(2,!!R&&!nPend,"Resolver as pendências",R?(nPend?`<b style="color:var(--bad)">${nPend} pendência(s)</b>${nFal?`, entre elas ${nFal} falta(s) sem justificativa`:""}. <button type="button" class="lnk" data-irpend="1">Abrir a lista de pendências</button>`:"Nenhuma pendência. Tudo certo."):"Calcule o período para ver as pendências.")}
+    ${passo(3,false,"Conferir e fechar o período",`Baixe a folha de ponto (Excel ou PDF) e registre o fechamento na aba <button type="button" class="lnk" data-irfech="1">Fechamento do mês</button>.`)}
+   </div></div>
+  <div class="grid g2" style="margin-bottom:16px">
+   <div class="card" style="margin:0"><h2>Arquivo do relógio</h2>
+    <div class="drop" id="drop" tabindex="0">${ic("up")}<div>${P.file?esc(P.file):"Clique ou solte o AllGLog001.txt"}</div></div>
+    <input type="file" id="file" accept=".txt,.log" hidden>
+    <div class="sub" id="info" style="margin-top:8px">${P.punches.length?infoText():"As batidas importadas ficam guardadas: não precisa importar de novo o que já entrou."}</div></div>
+   <div class="card" style="margin:0"><h2>Calcular e baixar</h2>
+    <p class="sub" style="margin:0 0 10px">${R?`Calculado de <b>${brDate(R.start)}</b> a <b>${brDate(R.end)}</b>.`:"Clique em Calcular para ver as horas, as faltas e as pendências do período."}</p>
+    <div class="row" style="flex-wrap:wrap;gap:8px">
+     <button class="b" id="go" style="flex:none">${ic("calc")} ${R?"Recalcular":"Calcular o período"}</button>
+     <button class="b sec" id="toXlsx" style="flex:none" ${R?"":"disabled"}>${ic("sheet")} Folha de ponto (Excel)</button>
+     <button class="b sec" id="toPdf" style="flex:none" ${R?"":"disabled"}>${ic("file")} Folha de ponto (PDF)</button>
+     <button class="b sec" id="toPln" style="flex:none">${ic("sheet")} Planilha do ponto</button></div>
+    <span class="err" id="err" style="margin:6px 0 0;display:block">${esc(P.err)}</span></div>
   </div>
-  <div class="row" style="margin-bottom:16px"><button class="b" id="go" style="flex:none">${ic("calc")} Calcular jornadas</button>
-   <button class="b sec" id="toPln" style="flex:none">${ic("sheet")} Planilha do ponto</button>
-   <button class="b sec" id="toXlsx" style="flex:none" ${P.result?"":"disabled"}>${ic("sheet")} XLSX para o contador</button>
-   <button class="b sec" id="toPdf" style="flex:none" ${P.result?"":"disabled"}>${ic("file")} PDF para o contador</button><span class="err" id="err" style="margin:0">${esc(P.err)}</span></div>
-  <div id="out">${P.result?renderResult(P.result):`<div class="empty">Carregue o arquivo do relógio e clique em "Calcular jornadas".<br>Os turnos de cada integrante ficam na aba Turnos.</div>`}</div>`;
+  <details class="card" style="margin-bottom:16px"><summary style="cursor:pointer;font-weight:700">Regras do cálculo e datas à mão (avançado)</summary>
+   <p class="sub" style="margin:8px 0">Só mude se souber o que está fazendo. As datas à mão servem para conferir um trecho; para a folha e o banco de horas, use o período de 26 a 25.</p>
+   <div class="row"><div><label>De</label><input type="date" id="start" value="${P.start}"></div><div><label>Até</label><input type="date" id="end" value="${P.end}"></div>
+    <div style="flex:2"><label>Feriados a mais (AAAA-MM-DD, separados por vírgula)</label><input id="hol" value="${esc(P.hol)}" placeholder="2026-09-07"></div></div>
+   <div class="row"><div><label>Batidas repetidas até (min)</label><input type="number" id="dup" value="${P.dup}"></div>
+    <div><label>Na batida repetida, vale a</label><select id="keep"><option value="first" ${P.keep==="first"?"selected":""}>primeira</option><option value="last" ${P.keep==="last"?"selected":""}>última</option></select></div>
+    <div><label>Aceitar batida antes do turno (min)</label><input type="number" id="wb" value="${P.wb}"></div><div><label>Aceitar batida depois do turno (min)</label><input type="number" id="wa" value="${P.wa}"></div></div>
+   <label style="display:flex;gap:8px;align-items:center;font-weight:400"><input type="checkbox" id="brk" ${P.brk?"checked":""}> Descontar o intervalo já previsto no turno</label></details>
+  <div id="out">${R?renderResult(R):`<div class="empty">${Object.keys(S.marcacoes).length?`Clique em "Calcular o período".`:"Importe o arquivo do relógio e clique em \"Calcular o período\"."}<br>Os turnos de cada integrante ficam em Escalas e turnos.</div>`}</div>
+  </div>`;
 }
 function infoText(){
   const P=POINT,users=new Set(P.punches.map(p=>p.userId)),days=P.punches.map(p=>isoDate(p.ts)).sort();
@@ -775,9 +825,17 @@ function bindPonto(){
   drop.ondragover=e=>{e.preventDefault();drop.classList.add("on")};drop.ondragleave=()=>drop.classList.remove("on");
   drop.ondrop=e=>{e.preventDefault();drop.classList.remove("on");if(e.dataTransfer.files[0])loadLog(e.dataTransfer.files[0])};
   fi.onchange=()=>fi.files[0]&&loadLog(fi.files[0]);
-  const sync=()=>{P.start=$("start").value;P.end=$("end").value;P.hol=$("hol").value;P.dup=+$("dup").value;P.keep=$("keep").value;P.wb=+$("wb").value;P.wa=+$("wa").value;P.brk=$("brk").checked};
-  ["start","end","hol","dup","keep","wb","wa","brk"].forEach(k=>$(k).onchange=sync);
+  const sync=()=>{P.hol=$("hol").value;P.dup=+$("dup").value;P.keep=$("keep").value;P.wb=+$("wb").value;P.wa=+$("wa").value;P.brk=$("brk").checked};
+  ["hol","dup","keep","wb","wa","brk"].forEach(k=>$(k).onchange=sync);
+  // datas à mão: saem do período de 26 a 25 até clicar em "Voltar"
+  ["start","end"].forEach(k=>$(k).onchange=()=>{P.custom=true;P.start=$("start").value;P.end=$("end").value;P.result=null;go("ponto",true)});
+  const cx=$("pcustx");if(cx)cx.onclick=()=>{P.custom=false;P.result=null;go("ponto",true)};
+  bindPontoPeriodo(()=>{pontoSyncRef();if(Object.keys(S.marcacoes).length||P.punches.length)calcular(true);else go("ponto",true)});
+  document.querySelectorAll("[data-irpend]").forEach(b=>b.onclick=()=>{XM.sec.ponto="pendencias";go("ponto",true)});
+  document.querySelectorAll("[data-irfech]").forEach(b=>b.onclick=()=>{XM.sec.ponto="fechamento";go("ponto",true)});
   $("go").onclick=()=>{sync();calcular(true)};
+  // ao abrir, já calcula o período escolhido (as batidas ficam guardadas)
+  if(!P.result&&!P.err&&P.start&&P.start<=P.end&&(Object.keys(S.marcacoes).length||P.punches.length)&&P.autoCalc!==P.start+P.end){P.autoCalc=P.start+P.end;setTimeout(()=>{if(ROUTE==="ponto"&&!P.result)calcular(true)},30)}
   $("toPln").onclick=()=>openPlanilha();
   $("toXlsx").onclick=()=>exportXlsx();
   $("toPdf").onclick=()=>exportPdfContador();
@@ -787,13 +845,13 @@ async function loadLog(f){
   try{
     const{punches,divergences}=parseRawlog(decodeFile(await f.arrayBuffer()));
     const P=POINT;P.punches=punches;P.file=f.name;P.div=divergences;P.result=null;P.err="";
-    const days=punches.map(p=>isoDate(p.ts)).sort();if(days.length){P.start=days[0];P.end=days[days.length-1]}
+    pontoSyncRef();
     const novos=new Map();for(const p of punches)if(!integByUid(p.userId)&&!novos.has(p.userId))novos.set(p.userId,p.uname);
     for(const[u,nm]of novos)put("integrantes","u"+u,{uid:u,nome:nm,nomeCompleto:"",depto:"Outro",turno:"",escalaModo:"semana",dias:[0,1,2,3,4],situacao:"Ativo"});
     const novasMarcas=importMarcas(punches);
     if(novos.size)toast(`${novos.size} integrante(s) cadastrado(s) a partir do relógio. Complete os dados no Prontuário.`);
     if(novasMarcas)toast(`${novasMarcas} marcação(ões) nova(s) importada(s) para o histórico.`);
-    go("ponto",true);
+    BHCACHE.clear();calcular(true);
   }catch(e){toast("Erro ao ler o arquivo: "+e.message,true)}
 }
 function calcular(show){
@@ -834,7 +892,7 @@ function calcular(show){
       const rows=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end).map(j=>{
         const r={day:j.day,wd:WD[pyWeekday(j.day)],status:j.status,shift:j.shiftNo,
           intervals:j.intervals.map(([a,b])=>hm(a)+"–"+hm(b)+(isoDate(b)!==isoDate(a)?" (+1)":"")),
-          rawIntervals:j.intervals,
+          rawIntervals:j.intervals,marcas:j.marcas||null,
           workedMin:j.workedMin,expectedMin:j.expectedMin,late:j.lateMin,early:j.earlyLeaveMin,extra:j.extraMin,tolMin:j.tolMin||0,feriadoMin:j.feriadoMin||0,
           night:j.turnoNoturno,endsOn:j.endsOn,flags:[...j.flags],oc:null};
         {const nm=nightMinutes(j.intervals,j.turnoNoturno&&cfg.prorrogNoturna!==false);r.nightReal=nm.real;r.nightPror=nm.pror;r.nightFicta=nm.ficta}
@@ -919,7 +977,7 @@ function bindResult(){
   document.querySelectorAll("[data-rn]").forEach(b=>b.onclick=()=>openRename(+b.dataset.rn));
   document.querySelectorAll("[data-pln]").forEach(b=>b.onclick=()=>openPlanilha(+b.dataset.pln,POINT.result&&POINT.result.start,POINT.result&&POINT.result.end));
   document.querySelectorAll("[data-esc]").forEach(b=>b.onclick=()=>openEscalaAjuste(b.dataset.esc,b.dataset.escday,{tipo:b.dataset.esctipo}));
-  document.querySelectorAll("[data-stat]").forEach(b=>b.onclick=()=>openStatModal(b.dataset.stat));
+  document.querySelectorAll("[data-stat]").forEach(b=>b.onclick=()=>{if(b.dataset.stat==="pendencias"&&ROUTE==="ponto"){XM.sec.ponto="pendencias";go("ponto",true);return}openStatModal(b.dataset.stat)});
 }
 function openStatModal(kind){
   const R=POINT.result;if(!R)return;
@@ -927,7 +985,7 @@ function openStatModal(kind){
   let rows=[];
   if(kind==="integrantes")rows=R.users.map(u=>({uid:u.uid,nome:u.nome,detail:`${u.depto} · ${u.t.trab}/${u.t.escalados} dias trabalhados no período`,action:"pront"}));
   else if(kind==="faltas")R.users.forEach(u=>u.rows.filter(r=>r.status==="falta").forEach(r=>rows.push({uid:u.uid,nome:u.nome,day:r.day,detail:`${brDate(r.day)} ${r.wd} — sem marcação, sem justificativa`,action:"oc"})));
-  else if(kind==="pendencias")R.users.forEach(u=>u.pendencies.forEach(p=>rows.push({uid:u.uid,nome:u.nome,day:p.day,detail:`${brDate(p.day)} — ${p.kind}: ${esc(p.detail)}`,sugereHora:p.sugereHora,action:p.kind==="marcacao_sem_escala"?"esc":/falta_(entrada|saida|pontual)/.test(p.kind)?"mk":"oc"})));
+  else if(kind==="pendencias")R.users.forEach(u=>u.pendencies.forEach(p=>rows.push({uid:u.uid,nome:u.nome,day:p.day,detail:`${brDate(p.day)} — ${PEND_TIPO[p.kind]||p.kind}: ${esc(p.detail)}`,sugereHora:p.sugereHora,action:p.kind==="marcacao_sem_escala"?"esc":/falta_(entrada|saida|pontual)/.test(p.kind)?"mk":"oc"})));
   else if(kind==="atestados")R.users.forEach(u=>u.rows.filter(r=>r.status==="atestado").forEach(r=>rows.push({uid:u.uid,nome:u.nome,day:r.day,detail:`${brDate(r.day)} ${r.wd}${r.oc&&r.oc.texto?" — "+esc(r.oc.texto):""}`,action:"oc"})));
   else if(kind==="extra")R.users.forEach(u=>u.rows.filter(r=>r.extra>0).forEach(r=>rows.push({uid:u.uid,nome:u.nome,day:r.day,detail:`${brDate(r.day)} ${r.wd} — ${fmtHHMM(r.extra)} de extra`,action:"mk"})));
   else if(kind==="atraso")R.users.forEach(u=>u.rows.filter(r=>r.late>0).forEach(r=>rows.push({uid:u.uid,nome:u.nome,day:r.day,detail:`${brDate(r.day)} ${r.wd} — ${r.late} min de atraso`,action:"mk"})));
@@ -1049,7 +1107,7 @@ function pgTurnos(){
   ${pgEscalaCalendario()}
   ${pgAlertasEscala()}
   ${pgSugestoes()}
-  <div class="card"><h2>Escala dos integrantes</h2>
+  <div class="card" id="escint"><h2>Escala dos integrantes</h2>
    <p class="sub" style="margin:0 0 10px">Marque os dias em que cada integrante trabalha. Para plantão 12x36 (ou qualquer ciclo "trabalha X, folga Y"), use o modo Ciclo — funciona certo mesmo virando o mês. Pares/ímpares é um atalho rápido, mas falha em meses de 31 dias.</p>
    ${integList().filter(i=>!semPonto(i)).length?`<div class="wrap"><table><thead><tr><th style="width:200px">Integrante</th><th style="width:150px">Turno</th><th>Quando trabalha</th></tr></thead><tbody>
    ${integList().filter(i=>!semPonto(i)).map(i=>`<tr data-id="${i.id}"><td><b>${esc(nomeInteg(i))}</b><div class="sub">${esc(i.depto||"Outro")}${i.uid!=null?" · ID "+i.uid:""}</div></td>
@@ -1696,38 +1754,21 @@ function valueCell(ws,addr,val,opts){
   c.border={bottom:{style:"thin",color:{argb:"FFB9DCB9"}}};
   if(opts&&opts.numFmt)c.numFmt=opts.numFmt;
 }
+// título de aba sem células mescladas (mesclar atrapalha editar no Google Planilhas e no Excel)
 function bandTitle(ws,fromCol,toCol,rows){
-  // banner de topo reaproveitado em toda aba: linha 1-2 CASA HIRO, linha3 tagline, linha4 título da aba
-  const r1=colLetter(fromCol)+"1",r1b=colLetter(toCol)+"2";
-  ws.mergeCells(`${r1}:${r1b}`);
-  const c1=ws.getCell(r1);c1.value="CASA HIRO";c1.font={name:"Georgia",size:24,bold:true,color:{argb:BR.branco}};
-  c1.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c1.alignment={horizontal:"center",vertical:"center"};
-  for(let c=fromCol;c<=toCol;c++)ws.getRow(1).getCell(c).fill=ws.getRow(2).getCell(c).fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};
-  ws.mergeCells(`${colLetter(fromCol)}3:${colLetter(toCol)}3`);
-  const c3=ws.getCell(`${colLetter(fromCol)}3`);c3.value="A ciência do cuidado com o acolhimento de casa.";
-  c3.font={italic:true,size:11,color:{argb:BR.verdeClaroBg}};c3.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c3.alignment={horizontal:"center",vertical:"center"};
-  ws.mergeCells(`${colLetter(fromCol)}4:${colLetter(toCol)}4`);
-  const c4=ws.getCell(`${colLetter(fromCol)}4`);c4.value=rows;
-  c4.font={bold:true,size:12,color:{argb:BR.branco}};c4.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeMedio}};c4.alignment={horizontal:"center",vertical:"center"};
-  ws.getRow(1).height=17;ws.getRow(2).height=17;ws.getRow(4).height=24;
+  const c1=ws.getCell(1,fromCol);c1.value="Casa Hiro — "+rows;c1.font={name:"Calibri",size:14,bold:true,color:{argb:BR.verdeEsc}};
+  const c2=ws.getCell(2,fromCol);c2.value="A ciência do cuidado com o acolhimento de casa.";c2.font={italic:true,size:9.5,color:{argb:BR.mute}};
 }
 
 function buildCapa(wb,e,R){
   const ws=wb.addWorksheet("Capa");pageBox(ws,"portrait");
-  ws.columns=[{width:3},{width:24},{width:60},{width:3}];
-  ws.mergeCells("A1:D2");const c1=ws.getCell("A1");c1.value="CASA HIRO";c1.font={name:"Georgia",size:28,bold:true,color:{argb:BR.branco}};
-  c1.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c1.alignment={horizontal:"center",vertical:"center"};
-  for(const col of["A","B","C","D"]){ws.getCell(col+"1").fill=ws.getCell(col+"2").fill=c1.fill}
-  ws.mergeCells("A3:D3");const c3=ws.getCell("A3");c3.value="A ciência do cuidado com o acolhimento de casa.";
-  c3.font={italic:true,size:11,color:{argb:BR.verdeClaroBg}};c3.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c3.alignment={horizontal:"center",vertical:"center"};
-  ws.mergeCells("A4:D4");const c4=ws.getCell("A4");c4.value="Relatório de integrantes e apuração de ponto";
-  c4.font={bold:true,size:13,color:{argb:BR.branco}};c4.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeMedio}};c4.alignment={horizontal:"center",vertical:"center"};
-  ws.getRow(4).height=26;
+  ws.columns=[{width:24},{width:70}];
+  bandTitle(ws,1,2,"Relatório de integrantes e apuração de ponto");
   const info=[["Razão social",e.razao],["CNPJ",e.cnpj||"—"],["Endereço",e.endereco],["Telefone",e.telefone],["E-mail",e.email],["Site",e.site],
-    ["Período apurado",R?`${brDate(R.start)} a ${brDate(R.end)}`:"Ponto ainda não calculado"],["Emitido em",new Date().toLocaleString("pt-BR")]];
-  let r=6;
-  info.forEach(([k,v])=>{labelCell(ws,"B"+r,k);valueCell(ws,"C"+r,v);ws.getRow(r).height=22;r++});
-  ws.mergeCells(`B${r+1}:C${r+1}`);const note=ws.getCell(`B${r+1}`);
+    ["Período apurado",R?`${brDate(R.start)} a ${brDate(R.end)}${R.end<=refFim(refYm(R.end))&&R.start===refIni(refYm(R.end))?" (referência "+refYm(R.end).slice(5)+"/"+refYm(R.end).slice(0,4)+": dia 26 a dia 25)":""}`:"Ponto ainda não calculado"],["Emitido em",new Date().toLocaleString("pt-BR")]];
+  let r=4;
+  info.forEach(([k,v])=>{labelCell(ws,"A"+r,k);valueCell(ws,"B"+r,v);r++});
+  const note=ws.getCell(`A${r+1}`);
   note.value="Abas: Integrantes · Jornadas diárias · uma folha de ponto por integrante (com campo de assinatura).";
   note.font={italic:true,size:9.5,color:{argb:BR.mute}};
 }
@@ -1751,151 +1792,128 @@ function buildIntegrantesSheet(wb,L){
   ws.views=[{state:"frozen",xSplit:2,ySplit:1,showGridLines:false}];
   ws.autoFilter={from:"A1",to:colLetter(head.length)+"1"};
 }
-// escreve uma linha de jornada (Data/Dia/Entrada-Saída.../Trabalhado/Previsto/Observação) a partir da coluna startCol
+const SALDO_FMT="+0;-0;0";
+const xlHorasTxt=ref=>`IF(${ref}<0,"-",IF(${ref}>0,"+",""))&TEXT(ABS(${ref})/1440,"[h]:mm")&" h"`;
+// o mesmo texto que a fórmula acima produz (Excel e Google Planilhas), para o arquivo abrir já igual ao recalculado
+const xlHorasRes=min=>{const r=Math.round(min||0),a=Math.abs(r);return(r<0?"-":r>0?"+":"")+Math.floor(a/60)+":"+String(a%60).padStart(2,"0")+" h"};
+// escreve uma linha de jornada a partir da coluna startCol:
+// Data | Dia | Entrada/Saída… | Ajuste (min) | Trabalhado | Previsto | Saldo (min) | Observação
+// Tudo é valor de verdade ou fórmula visível: mexendo nas batidas, o trabalhado e o saldo recalculam (Excel e Google Planilhas).
+const xlParesDia=r=>{const M=r.marcas||[],I=r.rawIntervals||[];
+  if(!M.length||M.length===2*I.length)return I.map(([a,b])=>[a,b]);
+  const L=[];for(let i=0;i<M.length;i+=2)L.push([M[i],M[i+1]||null]);return L};
+const xlMaxPares=rows=>Math.max(1,...rows.map(r=>Math.max(r.intervals.length,xlParesDia(r).length)));
 function writeJourneyRow(ws,rowIdx,startCol,r,maxP,zebra){
   let c=startCol;
   const put=(v,fmt,formula,align)=>{
     const cell=ws.getCell(rowIdx,c);
-    if(formula)cell.value={formula,result:v};else cell.value=v;
+    cell.value=formula?{formula,result:v}:v;
     if(fmt)cell.numFmt=fmt;
     cell.font={size:10,color:{argb:BR.ink}};cell.border=thinBorder(BR.areiaEsc);
-    cell.alignment={horizontal:align||"center",vertical:"middle",wrapText:align==="left"};
+    cell.alignment={horizontal:align||"center",vertical:"middle"};
     if(zebra)cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.areia}};
-    c++;
+    return c++;
   };
+  const L=n=>colLetter(n)+rowIdx;
   put(xlDateOnly(r.day),"dd/mm/yyyy");
   put(WD3[pyWeekday(r.day)]);
-  const entC=[],saiC=[];
+  const entC=[],saiC=[],pares=xlParesDia(r);
   for(let k=0;k<maxP;k++){
-    const iv=r.rawIntervals&&r.rawIntervals[k];
-    entC.push(c);put(iv?xlSerial(iv[0]):null,"hh:mm");
-    saiC.push(c);put(iv?xlSerial(iv[1]):null,"hh:mm");
+    const iv=pares[k];
+    entC.push(put(iv&&iv[0]?xlSerial(iv[0]):null,"hh:mm"));
+    saiC.push(put(iv&&iv[1]?xlSerial(iv[1]):null,"hh:mm"));
   }
-  const workFormula=entC.map((ec,i)=>`${colLetter(saiC[i])}${rowIdx}-${colLetter(ec)}${rowIdx}`).join("+")||"0";
-  // se o dia teve desconto de intervalo ou crédito (atestado, esquecimento), o ajuste em minutos aparece na própria fórmula
-  const parMin=(r.rawIntervals||[]).reduce((sum,[a,b])=>sum+minutesBetween(a,b),0),adj=Math.round(r.workedMin-parMin);
-  put(r.workedMin/1440,"hh:mm",`ROUND((${workFormula})*1440${adj?(adj>0?"+":"")+adj:""},0)/1440`);
-  put(xlDur(r.expectedMin),"hh:mm");
-  put(obsText(r),null,null,"left");
-  return c-1; // última coluna escrita
+  // ajuste em minutos: intervalo descontado (negativo) ou dia abonado por atestado/esquecimento (positivo)
+  const parMin=pares.filter(([a,b])=>a&&b).reduce((sum,[a,b])=>sum+minutesBetween(a,b),0),adj=Math.round(r.workedMin-parMin);
+  const ajC=put(adj||null,"0");
+  // cada par só conta com entrada e saída preenchidas; MOD aceita plantão que passa da meia-noite
+  const fP=entC.map((ec,i)=>`IF(AND(${L(ec)}<>"",${L(saiC[i])}<>""),MOD(${L(saiC[i])}-${L(ec)},1),0)`).join("+")||"0";
+  const wC=put(r.workedMin/1440,"[h]:mm",`ROUND((${fP})*1440+N(${L(ajC)}),0)/1440`);
+  const pC=put(xlDur(r.expectedMin),"[h]:mm");
+  // saldo do dia em minutos; até 10 min de diferença no dia não conta (CLT art. 58 §1º); dia com pendência fica fora (0)
+  const dm=Math.round(r.workedMin-r.expectedMin),dif=`ROUND((${L(wC)}-${L(pC)})*1440,0)`;
+  let sF=null;
+  if(r.status!==PENDENCIA){if(r.saldo===0&&dm!==0&&Math.abs(dm)<=10)sF=`IF(ABS(${dif})<=10,0,${dif})`;else if(r.saldo===dm)sF=dif}
+  // dia com batida faltando: saldo 0 enquanto o número de batidas for ímpar; completou na planilha, passa a calcular
+  else if(!r.saldo&&maxP)sF=`IF(MOD(COUNT(${L(entC[0])}:${L(saiC[maxP-1])}),2)=1,0,IF(ABS(${dif})<=10,0,${dif}))`;
+  const sC=put(r.saldo||0,SALDO_FMT,sF);
+  const oC=put(obsText(r),null,null,"left");
+  return{wC,pC,sC,oC};
 }
 function buildJornadasSheet(wb,R,maxP){
   const ws=wb.addWorksheet("Jornadas diárias");pageBox(ws,"landscape");
-  bandTitle(ws,1,4+2*maxP+3,"Jornadas diárias — consolidado");
-  const head=["ID","Integrante","Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Trabalhado","Previsto do dia","Observação");
-  head.forEach((h,i)=>headerCell(ws,colLetter(i+1)+"6",h));ws.getRow(6).height=26;
-  const widths=[6,26,10,5];for(let k=0;k<maxP;k++)widths.push(9,9);widths.push(11,13,34);
+  const head=["ID","Integrante","Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Ajuste (min)","Trabalhado","Previsto","Saldo (min)","Observação");
+  bandTitle(ws,1,head.length,"Jornadas diárias de "+brDate(R.start)+" a "+brDate(R.end));
+  const hr=4;head.forEach((h,i)=>headerCell(ws,colLetter(i+1)+hr,h));ws.getRow(hr).height=30;
+  const widths=[6,26,11,6];for(let k=0;k<maxP;k++)widths.push(8,8);widths.push(9,11,10,10,38);
   ws.columns=widths.map(w=>({width:w}));
-  let rr=7,zebra=false,uidx=0;
+  let rr=hr+1,zebra=false;
   R.users.forEach(u=>{
     u.rows.forEach(r=>{
-      ws.getCell(rr,1).value=u.uid;ws.getCell(rr,1).font={size:10,color:{argb:BR.ink}};ws.getCell(rr,1).border=thinBorder(BR.areiaEsc);
-      ws.getCell(rr,1).alignment={horizontal:"center",vertical:"middle"};if(zebra)ws.getCell(rr,1).fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.areia}};
-      ws.getCell(rr,2).value=u.nome;ws.getCell(rr,2).font={size:10,color:{argb:BR.ink}};ws.getCell(rr,2).border=thinBorder(BR.areiaEsc);
-      ws.getCell(rr,2).alignment={horizontal:"left",vertical:"middle"};if(zebra)ws.getCell(rr,2).fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.areia}};
+      [[1,u.uid,"center"],[2,u.nome,"left"]].forEach(([col,v,al])=>{const cell=ws.getCell(rr,col);cell.value=v;cell.font={size:10,color:{argb:BR.ink}};cell.border=thinBorder(BR.areiaEsc);
+        cell.alignment={horizontal:al,vertical:"middle"};if(zebra)cell.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.areia}}});
       writeJourneyRow(ws,rr,3,r,maxP,zebra);
       rr++;
     });
-    zebra=!zebra;uidx++;
+    zebra=!zebra;
   });
-  ws.views=[{state:"frozen",xSplit:2,ySplit:6,showGridLines:false}];
-  ws.autoFilter={from:"A6",to:colLetter(head.length)+"6"};
+  ws.views=[{state:"frozen",xSplit:2,ySplit:hr,showGridLines:false}];
+  ws.autoFilter={from:"A"+hr,to:colLetter(head.length)+hr};
 }
+// folha de ponto de uma pessoa: sem células mescladas, com fórmulas visíveis, pronta para editar no Excel ou no Google Planilhas
 function buildPersonSheet(wb,e,ig,u){
   const name=nomeInteg(ig).slice(0,31)||("ID "+u.uid);
   let sheetName=name,n=1;while(wb.getWorksheet(sheetName)){sheetName=(name.slice(0,28)+" "+(++n)).slice(0,31)}
   const ws=wb.addWorksheet(sheetName);pageBox(ws,"portrait");
-  const maxP=Math.max(1,...u.rows.map(r=>r.intervals.length));
-  const tableLastCol=2+2*maxP+3; // Data,Dia,(Entrada/Saída)xN,Trabalhado,Previsto,Observação
-  const bannerLastCol=Math.max(9,tableLastCol);
-  ws.mergeCells(`A1:${colLetter(bannerLastCol)}2`);const c1=ws.getCell("A1");c1.value="CASA HIRO";c1.font={name:"Georgia",size:24,bold:true,color:{argb:BR.branco}};
-  c1.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c1.alignment={horizontal:"center",vertical:"center"};
-  for(let c=1;c<=bannerLastCol;c++){ws.getRow(1).getCell(c).fill=ws.getRow(2).getCell(c).fill=c1.fill}
-  ws.mergeCells(`A3:${colLetter(bannerLastCol)}3`);const c3=ws.getCell("A3");c3.value="A ciência do cuidado com o acolhimento de casa.";
-  c3.font={italic:true,size:11,color:{argb:BR.verdeClaroBg}};c3.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};c3.alignment={horizontal:"center",vertical:"center"};
-  ws.mergeCells(`A4:${colLetter(bannerLastCol)}4`);const c4=ws.getCell("A4");c4.value="Folha de apuração de ponto";
-  c4.font={bold:true,size:12,color:{argb:BR.branco}};c4.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeMedio}};c4.alignment={horizontal:"center",vertical:"center"};
-  ws.getRow(1).height=17;ws.getRow(2).height=17;ws.getRow(4).height=24;
-  // bloco de identificação: esquema fixo A-I (label A, valor B:F, label2 G, valor2 H:I)
-  const idBlock=[["Integrante",nomeInteg(ig),"ID relógio",u.uid??""],["CPF",ig.cpf||"","RG",ig.rg||""],
-    ["Cargo",ig.cargo||"","Departamento",ig.depto||"Outro"],["Admissão",ig.admissao?brDate(ig.admissao):"","Turno",ig.turno||"—"],
-    ["Período",`${brDate(POINT.result.start)} a ${brDate(POINT.result.end)}`,"Situação",ig.situacao||"Ativo"]];
-  idBlock.forEach((row,ri)=>{
-    const r=6+ri;
-    ws.mergeCells(`B${r}:F${r}`);ws.mergeCells(`H${r}:I${r}`);
-    labelCell(ws,"A"+r,row[0]);valueCell(ws,"B"+r,row[1]);
-    labelCell(ws,"G"+r,row[2]);valueCell(ws,"H"+r,row[3]);
-    ws.getRow(r).height=21;
-  });
-  ws.mergeCells("B11:I11");labelCell(ws,"A11","Escala");valueCell(ws,"B11",ig.id?escalasTexto(ig,POINT.result.start,POINT.result.end):"—");ws.getRow(11).height=21;
-  const headRowNo=12;
-  const head=["Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Trabalhado","Previsto","Observação");
-  head.forEach((h,i)=>headerCell(ws,colLetter(i+1)+headRowNo,h));ws.getRow(headRowNo).height=24;
-  const widths=[13,7];for(let k=0;k<maxP;k++)widths.push(10,10);widths.push(12,11,34);
+  const R=POINT.result,ym=refYm(R.end),maxP=xlMaxPares(u.rows);
+  const widths=[11,6];for(let k=0;k<maxP;k++)widths.push(8,8);widths.push(9,11,10,10,38);
   ws.columns=widths.map(w=>({width:w}));
-  let r=headRowNo+1;
-  u.rows.forEach((row,ri)=>{ws.getRow(r).height=18;writeJourneyRow(ws,r,1,row,maxP,ri%2===1);r++});
-  const lastData=r-1,totRow=lastData+1;
-  const workCol=3+2*maxP,prevCol=workCol+1,obsCol=prevCol+1;
-  ws.mergeCells(`A${totRow}:${colLetter(workCol-1)}${totRow}`);
-  const totLabel=ws.getCell(`A${totRow}`);totLabel.value="TOTAIS";totLabel.font={bold:true,size:10.5,color:{argb:BR.branco}};
-  totLabel.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};totLabel.alignment={horizontal:"right",vertical:"middle"};totLabel.border=thinBorder(BR.verdeEsc);
-  for(let c=2;c<workCol;c++){const cc=ws.getCell(totRow,c);cc.fill=totLabel.fill;cc.border=thinBorder(BR.verdeEsc)}
-  const wc=ws.getCell(totRow,workCol);wc.value={formula:`ROUND(SUM(${colLetter(workCol)}${headRowNo+1}:${colLetter(workCol)}${lastData})*1440,0)/1440`,result:u.t.worked/1440};
-  wc.numFmt="[h]:mm";wc.font={bold:true,size:10.5,color:{argb:BR.branco}};wc.fill=totLabel.fill;wc.alignment={horizontal:"center",vertical:"middle"};wc.border=thinBorder(BR.verdeEsc);
-  const pc=ws.getCell(totRow,prevCol);pc.value={formula:`ROUND(SUM(${colLetter(prevCol)}${headRowNo+1}:${colLetter(prevCol)}${lastData})*1440,0)/1440`,result:u.t.expected/1440};
-  pc.numFmt="[h]:mm";pc.font=wc.font;pc.fill=totLabel.fill;pc.alignment=wc.alignment;pc.border=thinBorder(BR.verdeEsc);
-  const ocCell=ws.getCell(totRow,obsCol);
-  // saldo com a tolerância da CLT (art. 58 §1º) — não é a diferença simples das duas colunas
-  ocCell.value="Saldo do mês: "+hhmmS(u.t.saldo||0);
-  ocCell.font=wc.font;ocCell.fill=totLabel.fill;ocCell.alignment={horizontal:"left",vertical:"middle"};ocCell.border=thinBorder(BR.verdeEsc);
-  ws.getRow(totRow).height=22;
-  // contadores: esquema fixo A-I (label A:D, valor E, label2 F:H, valor2 I)
-  const cRow1=totRow+2,cRow2=totRow+3;
-  labelCell(ws,"A"+cRow1,"Dias apurados");ws.mergeCells(`A${cRow1}:D${cRow1}`);
-  const d1=ws.getCell("E"+cRow1);d1.value={formula:`COUNTA(A${headRowNo+1}:A${lastData})`,result:u.rows.length};d1.font={bold:true,size:10,color:{argb:BR.ink}};d1.alignment={horizontal:"center"};
-  labelCell(ws,"F"+cRow1,"Dias com registro de ponto");ws.mergeCells(`F${cRow1}:H${cRow1}`);
-  const d2=ws.getCell("I"+cRow1);
-  d2.value={formula:`COUNTIF(${colLetter(workCol)}${headRowNo+1}:${colLetter(workCol)}${lastData},">0")`,result:u.rows.filter(rr=>rr.workedMin>0).length};
-  d2.font={bold:true,size:10,color:{argb:BR.ink}};d2.alignment={horizontal:"center"};
-  labelCell(ws,"A"+cRow2,"Faltas");ws.mergeCells(`A${cRow2}:D${cRow2}`);
-  const f1=ws.getCell("E"+cRow2);f1.value={formula:`COUNTIF(${colLetter(obsCol)}${headRowNo+1}:${colLetter(obsCol)}${lastData},"Falta*")`,result:u.t.faltas};f1.font={bold:true,size:10,color:{argb:BR.ink}};f1.alignment={horizontal:"center"};
-  labelCell(ws,"F"+cRow2,"Atestados");ws.mergeCells(`F${cRow2}:H${cRow2}`);
-  const a1=ws.getCell("I"+cRow2);a1.value={formula:`COUNTIF(${colLetter(obsCol)}${headRowNo+1}:${colLetter(obsCol)}${lastData},"Atestado*")`,result:u.t.atestados};a1.font={bold:true,size:10,color:{argb:BR.ink}};a1.alignment={horizontal:"center"};
-  ws.getRow(cRow1).height=20;ws.getRow(cRow2).height=20;
-  // horas a mais e banco de horas: esquema fixo A-I (label A:F, valor G:I)
-  const fb=folhaBanco(u,POINT.result),bRow=totRow+5;
-  ws.mergeCells(`A${bRow}:I${bRow}`);headerCell(ws,"A"+bRow,"Horas a mais e banco de horas — "+fb.mm,{h:"left"});ws.getRow(bRow).height=20;
-  fb.linhas.forEach(([k,v],i)=>{const rr=bRow+1+i,forte=i===2||i===fb.linhas.length-1;
-    ws.mergeCells(`A${rr}:F${rr}`);ws.mergeCells(`G${rr}:I${rr}`);labelCell(ws,"A"+rr,k);valueCell(ws,"G"+rr,v);
-    const vc=ws.getCell("G"+rr);vc.alignment={horizontal:"right",vertical:"middle"};if(forte)vc.font={name:"Calibri",size:10.5,bold:true,color:{argb:BR.verdeEsc}};ws.getRow(rr).height=19});
-  const nRow=bRow+1+fb.linhas.length;ws.mergeCells(`A${nRow}:I${nRow+1}`);
-  const nc=ws.getCell("A"+nRow);nc.value=fb.notas.join(" ");nc.font={italic:true,size:8.5,color:{argb:BR.mute}};nc.alignment={horizontal:"left",vertical:"top",wrapText:true};
-  ws.getRow(nRow).height=fb.notas.length>1?24:18;ws.getRow(nRow+1).height=fb.notas.length>1?24:12;
-  const off=fb.linhas.length+4;
-  // declaração e assinatura: esquema fixo A-I
-  const decRow=totRow+6+off;
-  ws.mergeCells(`A${decRow}:I${decRow+1}`);
-  const dec=ws.getCell("A"+decRow);dec.value="Declaro que conferi os registros de ponto acima referentes ao período apurado e que estão de acordo com a jornada efetivamente cumprida.";
-  dec.font={italic:true,size:9.5,color:{argb:BR.ink}};dec.alignment={horizontal:"left",vertical:"center",wrapText:true};
-  const sigDateRow=totRow+9+off;
-  ws.mergeCells(`A${sigDateRow}:I${sigDateRow}`);
-  ws.getCell("A"+sigDateRow).value="Caraguatatuba - SP, ____ de ______________ de ________";ws.getCell("A"+sigDateRow).alignment={horizontal:"right"};
-  const sigRow=totRow+13+off,labRow=sigRow+1,nameRow=sigRow+2,docRow=sigRow+3;
-  ws.mergeCells(`A${sigRow}:D${sigRow}`);ws.mergeCells(`F${sigRow}:I${sigRow}`);
-  ws.getCell("A"+sigRow).border=medBottom(BR.ink);ws.getCell("F"+sigRow).border=medBottom(BR.ink);
-  ws.getRow(sigRow).height=30;
-  ws.mergeCells(`A${labRow}:D${labRow}`);ws.mergeCells(`F${labRow}:I${labRow}`);
-  ws.getCell("A"+labRow).value="INTEGRANTE";ws.getCell("F"+labRow).value="CASA HIRO";
-  [ws.getCell("A"+labRow),ws.getCell("F"+labRow)].forEach(c=>{c.font={bold:true,size:10.5,color:{argb:BR.verdeEsc}};c.alignment={horizontal:"center",vertical:"center"}});
-  ws.mergeCells(`A${nameRow}:D${nameRow}`);ws.mergeCells(`F${nameRow}:I${nameRow}`);
-  ws.getCell("A"+nameRow).value=nomeInteg(ig);ws.getCell("F"+nameRow).value=e.razao;
-  [ws.getCell("A"+nameRow),ws.getCell("F"+nameRow)].forEach(c=>{c.font={size:9.5,color:{argb:BR.ink}};c.alignment={horizontal:"center",vertical:"center",wrapText:true}});
-  ws.getRow(nameRow).height=28;
-  ws.mergeCells(`A${docRow}:D${docRow}`);ws.mergeCells(`F${docRow}:I${docRow}`);
-  ws.getCell("A"+docRow).value="CPF "+(ig.cpf||"—");ws.getCell("F"+docRow).value="CNPJ "+(e.cnpj||"—");
-  [ws.getCell("A"+docRow),ws.getCell("F"+docRow)].forEach(c=>{c.font={size:8.5,italic:true,color:{argb:BR.mute}};c.alignment={horizontal:"center",vertical:"center"}});
-  ws.views=[{state:"frozen",ySplit:headRowNo,showGridLines:false}];
+  const ink={size:10,color:{argb:BR.ink}},forte={size:10.5,bold:true,color:{argb:BR.verdeEsc}};
+  const cel=(addr,v,font,fmt)=>{const c=ws.getCell(addr);c.value=v;c.font=font||ink;c.alignment={vertical:"middle"};if(fmt)c.numFmt=fmt;return c};
+  cel("A1","Folha de apuração de ponto",{size:15,bold:true,color:{argb:BR.verdeEsc}});
+  cel("A2",(e.razao||"Casa Hiro")+(e.cnpj?" · CNPJ "+e.cnpj:""),{size:9.5,italic:true,color:{argb:BR.mute}});
+  const per=`${brDate(R.start)} a ${brDate(R.end)}`+(R.start===refIni(ym)?` (referência ${ym.slice(5)}/${ym.slice(0,4)}: do dia 26 ao dia 25)`:"");
+  const ident=[["Integrante",nomeInteg(ig)],["CPF",ig.cpf||"—"],["Cargo",ig.cargo||"—"],["Departamento",ig.depto||"Outro"],["Admissão",ig.admissao?brDate(ig.admissao):"—"],["Nº no relógio",u.uid!=null?String(u.uid):"—"],["Escala",ig.id?escalasTexto(ig,R.start,R.end):"—"],["Período",per]];
+  let r=4;ident.forEach(([k,v])=>{labelCell(ws,"A"+r,k);cel("B"+r,v);r++});
+  const hr=r+1,head=["Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Ajuste (min)","Trabalhado","Previsto","Saldo (min)","Observação");
+  head.forEach((h,i)=>headerCell(ws,colLetter(i+1)+hr,h));ws.getRow(hr).height=30;
+  let rr=hr+1,cols=null;
+  u.rows.forEach((row,ri)=>{cols=writeJourneyRow(ws,rr,1,row,maxP,ri%2===1);rr++});
+  const ini=hr+1,fim=Math.max(ini,rr-1),wC=3+2*maxP+1,pC=wC+1,sC=pC+1,oC=sC+1;
+  const faixa=col=>`${colLetter(col)}${ini}:${colLetter(col)}${fim}`;
+  // totais
+  const tr=rr,tot=(col,formula,res,fmt)=>{const c=ws.getCell(tr,col);c.value={formula,result:res};c.numFmt=fmt;c.font={bold:true,size:10.5,color:{argb:BR.branco}}};
+  for(let c=1;c<=oC;c++){const cc=ws.getCell(tr,c);cc.fill={type:"pattern",pattern:"solid",fgColor:{argb:BR.verdeEsc}};cc.border=thinBorder(BR.verdeEsc);cc.alignment={horizontal:c===oC?"left":"center",vertical:"middle"}}
+  const tl=ws.getCell(tr,1);tl.value="TOTAIS";tl.font={bold:true,size:10.5,color:{argb:BR.branco}};
+  tot(wC,`ROUND(SUM(${faixa(wC)})*1440,0)/1440`,u.t.worked/1440,"[h]:mm");
+  tot(pC,`ROUND(SUM(${faixa(pC)})*1440,0)/1440`,u.t.expected/1440,"[h]:mm");
+  tot(sC,`SUM(${faixa(sC)})`,u.t.saldo||0,SALDO_FMT);
+  const S=colLetter(sC)+tr;ws.getCell(tr,oC).value={formula:`"Saldo do período: "&${xlHorasTxt(S)}`,result:"Saldo do período: "+xlHorasRes(u.t.saldo)};ws.getCell(tr,oC).font={bold:true,size:10.5,color:{argb:BR.branco}};
+  // resumo: rótulo na coluna A, número na coluna "Previsto"
+  r=tr+2;cel("A"+r,"Resumo do período",forte);r++;
+  [["Dias apurados",`COUNT(${faixa(1)})`,u.rows.length],["Dias com registro de ponto",`COUNTIF(${faixa(wC)},">0")`,u.rows.filter(x=>x.workedMin>0).length],
+   ["Faltas",`COUNTIFS(${faixa(oC)},"Falta*",${faixa(wC)},0)`,u.t.faltas],["Atestados",`COUNTIF(${faixa(oC)},"Atestado*")`,u.t.atestados]].forEach(([k,f,v])=>{cel("A"+r,k);const c=ws.getCell(r,pC);c.value={formula:f,result:v};c.font=forte;c.alignment={horizontal:"center"};r++});
+  // banco de horas: minutos na coluna "Saldo", em horas na "Observação"
+  const fb=folhaBanco(u,R);r++;
+  cel("A"+r,"Horas a mais e banco de horas — referência "+fb.mm,forte);r++;
+  const linhaB=(k,valor,formula,negrito)=>{cel("A"+r,k,negrito?forte:ink);const c=ws.getCell(r,sC);c.value=formula?{formula,result:valor}:valor;c.numFmt=SALDO_FMT;c.font=negrito?forte:ink;c.alignment={horizontal:"center"};
+    const h=ws.getCell(r,oC);h.value={formula:xlHorasTxt(colLetter(sC)+r),result:xlHorasRes(valor)};h.font=negrito?forte:ink;const ref=colLetter(sC)+r;r++;return ref};
+  linhaB("Horas trabalhadas a mais que o previsto (min)",u.t.mais||0,`SUMIF(${faixa(sC)},">0")`);
+  linhaB("Horas trabalhadas a menos que o previsto (min)",u.t.menos||0,`SUMIF(${faixa(sC)},"<0")`);
+  const rS=linhaB("Saldo do período (min)",u.t.saldo||0,`${S}`,true);
+  const rA=linhaB(`Banco de horas antes de ${brDate(refIni(ym))} (min)`,fb.ant,null);
+  const rL=linhaB("Folgas compensadas e horas pagas no período (min)",fb.lanc,null);
+  linhaB("Banco de horas para o próximo período (min)",fb.fim,`${rA}+${rS}+${rL}`,true);
+  fb.notas.forEach(t=>{cel("A"+r,t,{italic:true,size:8.5,color:{argb:BR.mute}});r++});
+  // declaração e assinaturas
+  r++;cel("A"+r,"Declaro que conferi os registros de ponto acima referentes ao período apurado e que estão de acordo com a jornada efetivamente cumprida.",{italic:true,size:9.5,color:{argb:BR.ink}});
+  r+=2;cel("A"+r,"Caraguatatuba - SP, ____ de ______________ de ________");
+  r+=2;const meio=Math.max(3,Math.floor(oC/2));
+  for(let c=1;c<=oC;c++)if(c<meio||c>meio)ws.getCell(r,c).border=medBottom(BR.ink);
+  r++;cel("A"+r,"INTEGRANTE",forte);cel(colLetter(meio+1)+r,"CASA HIRO",forte);
+  r++;cel("A"+r,nomeInteg(ig)+" · CPF "+(ig.cpf||"—"));cel(colLetter(meio+1)+r,(e.razao||"")+(e.cnpj?" · CNPJ "+e.cnpj:""));
+  // sem linhas congeladas: o Google Planilhas repete as linhas congeladas no topo de cada página impressa
+  ws.views=[{showGridLines:false}];
 }
 function buildNoturnoSheet(wb,R){
   const ws=wb.addWorksheet("Adicional noturno");pageBox(ws,"landscape");
@@ -1923,7 +1941,7 @@ function buildWorkbook(opt){
   if(abas.capa)buildCapa(wb,e,R);
   if(abas.integrantes)buildIntegrantesSheet(wb,L);
   if(R){
-    const maxP=Math.max(1,...R.users.flatMap(u=>u.rows.map(r=>r.intervals.length)));
+    const maxP=xlMaxPares(R.users.flatMap(u=>u.rows));
     if(abas.jornadas)buildJornadasSheet(wb,R,maxP);
     if(abas.jornadas&&R.users.some(u=>(u.t.nightReal||0)>0))buildNoturnoSheet(wb,R);
     if(abas.individual)R.users.forEach(u=>buildPersonSheet(wb,e,u.ig||{},u));
@@ -5438,7 +5456,7 @@ async function folhasBaixar(){
   if(!fm.length)return toast("Marque ao menos um formato.",true);
   if(!Object.values(A).some(Boolean))return toast("Marque ao menos uma aba.",true);
   if(!R&&!A.capa&&!A.integrantes)return toast("Calcule o ponto na aba Ponto primeiro — jornadas e folha individual dependem dele.",true);
-  const per=R?R.start.slice(0,7):"sem-periodo";
+  const per=R?refYm(R.end):"sem-periodo";
   toast("Gerando as folhas…");
   try{
     const arq=[],gerar=async(uids,rot)=>{
@@ -6295,20 +6313,20 @@ function calcSilencioso(ini,fim){
 }
 const mesFimIso=ym=>isoDate(new Date(+ym.slice(0,4),+ym.slice(5,7),0));
 // só conta até ontem: dias que ainda não aconteceram não são falta
-const fimCalc=ym=>{const f=mesFimIso(ym),o=addDaysIso(hojeIso(),-1);return f<o?f:o};
+const fimCalc=ym=>{const f=refFim(ym),o=addDaysIso(hojeIso(),-1);return f<o?f:o};
 function mesesEntre(a,b){const out=[];let y=+a.slice(0,4),m=+a.slice(5,7);while(`${y}-${String(m).padStart(2,"0")}`<=b){out.push(`${y}-${String(m).padStart(2,"0")}`);m++;if(m>12){m=1;y++}}return out}
-const primeiraMarca=()=>{const l=Object.values(S.marcacoes).filter(m=>!m.removida).map(m=>m.ts.slice(0,7)).sort();return l[0]||hojeIso().slice(0,7)};
+const primeiraMarca=()=>{const l=Object.values(S.marcacoes).filter(m=>!m.removida).map(m=>refYm(m.ts)).sort();return l[0]||refYm(hojeIso())};
 const bhCfg=()=>({limiteH:40,inicio:primeiraMarca(),...(xcfg("gp").bh||{})});
 function bhSaldos(ym){
   const c=bhCfg(),meses=mesesEntre(c.inicio<=ym?c.inicio:ym,ym),por=new Map(),erros=[];
   meses.forEach(m=>{
-    if(fimCalc(m)<m+"-01")return;
-    const r=calcSilencioso(m+"-01",fimCalc(m));
+    if(fimCalc(m)<refIni(m))return;
+    const r=calcSilencioso(refIni(m),fimCalc(m));
     if(!r||r.erro){erros.push(r&&r.erro);return}
     r.users.forEach(u=>{if(!u.ig||!u.ig.id)return;const x=por.get(u.ig.id)||{ig:u.ig,mes:0,mais:0,menos:0,trab:0,esp:0,ant:0,lanc:0,acum:0};
       const s=u.t.saldo;x.acum+=s;if(m===ym){x.mes=s;x.mais=u.t.mais;x.menos=u.t.menos;x.trab=u.t.worked;x.esp=u.t.expected}else x.ant+=s;por.set(u.ig.id,x)});
   });
-  xs("bh").forEach(l=>{if(l.data&&typeof l.data==="string"&&l.data.slice(0,7)<=ym&&l.data.slice(0,7)>=c.inicio){const x=por.get(l.integ);if(!x)return;const h=Math.round((+l.h||0)*60);x.acum+=h;if(l.data.slice(0,7)===ym)x.lanc+=h;else x.ant+=h}});
+  xs("bh").forEach(l=>{if(l.data&&typeof l.data==="string"&&refYm(l.data)<=ym&&refYm(l.data)>=c.inicio){const x=por.get(l.integ);if(!x)return;const h=Math.round((+l.h||0)*60);x.acum+=h;if(refYm(l.data)===ym)x.lanc+=h;else x.ant+=h}});
   return{por,erros};
 }
 // banco de horas de um mês para a folha de ponto: cálculo único por geração (cache curto)
@@ -6318,29 +6336,30 @@ function bhSaldosMemo(ym){const k=ym+"|"+(Date.now()/15000|0);if(BHMEMO.k!==k){B
 const hhmmS=min=>{const r=Math.round(min);return(r>0?"+":r<0?"-":"")+hhmm(Math.abs(r))};
 // quadro "horas a mais e banco de horas" da folha individual (Excel e PDF)
 function folhaBanco(u,R){
-  const ym=R.start.slice(0,7),c=bhCfg(),x=u.ig&&u.ig.id?bhSaldosMemo(ym).por.get(u.ig.id):null;
+  const ym=refYm(R.end),c=bhCfg(),x=u.ig&&u.ig.id?bhSaldosMemo(ym).por.get(u.ig.id):null;
   const ant=x?x.ant:0,lanc=x?x.lanc:0,saldo=u.t.saldo||0,fim=ant+saldo+lanc,mm=ym.slice(5)+"/"+ym.slice(0,4);
-  const pend=u.rows.filter(r=>r.status===PENDENCIA).length,mesCheio=R.start===ym+"-01"&&R.end.slice(0,7)===ym;
+  const pend=u.rows.filter(r=>r.status===PENDENCIA).length,mesCheio=R.start===refIni(ym)&&R.end<=refFim(ym);
   const notas=["Horas a mais e a menos já descontam a tolerância de até 5 min por marcação e 10 min por dia (CLT art. 58 §1º). Atestados e justificativas contam como cumpridos."];
   if(pend)notas.push(`${pend} dia(s) com marcação faltando ficaram fora do banco até serem resolvidos.`);
-  if(!mesCheio)notas.push(`O período desta folha não é o mês inteiro: o banco anterior vai até o fim de ${brDate(addMesesIso(ym+"-01",-1)).slice(3)}.`);
+  if(!mesCheio)notas.push(`O período desta folha não é o período de referência inteiro (${refRotulo(ym)}): o banco anterior vai até ${brDate(addDaysIso(refIni(ym),-1))}.`);
   if(ym<c.inicio)notas.push("Este mês é anterior ao início do controle do banco de horas.");
   if(Math.abs(fim)>c.limiteH*60)notas.push(fim>0?`Saldo acima de ${c.limiteH}h: programe folgas para compensar dentro do prazo do acordo.`:`Saldo negativo acima de ${c.limiteH}h.`);
-  return{mm,linhas:[
+  return{mm,ant,lanc,saldo,linhas:[
     ["Horas trabalhadas a mais que o previsto",hhmmS(u.t.mais||0)],
     ["Horas trabalhadas a menos que o previsto",hhmmS(u.t.menos||0)],
-    ["Saldo do mês",hhmmS(saldo)],
-    [`Banco de horas antes de ${mm}`,hhmmS(ant)],
-    ["Folgas compensadas e horas pagas no mês",hhmmS(lanc)],
-    ["Banco de horas para o próximo mês",hhmmS(fim)]],fim,notas};
+    ["Saldo do período",hhmmS(saldo)],
+    [`Banco de horas antes de ${brDate(refIni(ym))}`,hhmmS(ant)],
+    ["Folgas compensadas e horas pagas no período",hhmmS(lanc)],
+    ["Banco de horas para o próximo período",hhmmS(fim)]],fim,notas};
 }
 const hhmm=min=>{const s=min<0?"−":"",a=Math.abs(Math.round(min));return s+Math.floor(a/60)+"h"+String(a%60).padStart(2,"0")};
-const BHST={ym:hojeIso().slice(0,7)};
+const BHST={ym:null};
 function bhHtml(){
+  if(!BHST.ym)BHST.ym=refPadrao();
   const c=bhCfg(),{por,erros}=bhSaldos(BHST.ym),L=[...por.values()].sort((a,b)=>nomeInteg(a.ig).localeCompare(nomeInteg(b.ig),"pt"));
-  const meses=mesesEntre(addMesesIso(hojeIso(),-11).slice(0,7),hojeIso().slice(0,7)).reverse();
+  const meses=mesesEntre(refYmAdd(refYm(hojeIso()),-11),refYm(hojeIso())).reverse();
   return `<div class="card"><h2>Saldo do banco de horas</h2><p class="sub" style="margin:0 0 10px">Saldo = horas trabalhadas − horas esperadas pela escala, sem contar os minutos dentro da tolerância da CLT (até 5 min por marcação e 10 min por dia). Atestados e justificativas contam como cumpridos; dias com marcação faltando só entram depois de resolvidos. O saldo é somado desde o início do controle, junto com as compensações e pagamentos lançados abaixo.</p>
-   <div class="row" style="align-items:flex-end"><div style="flex:0 0 180px"><label>Mês</label><select id="bhmes">${meses.map(m=>`<option value="${m}" ${m===BHST.ym?"selected":""}>${m.slice(5)}/${m.slice(0,4)}</option>`).join("")}</select></div>
+   <div class="row" style="align-items:flex-end"><div style="flex:0 0 250px"><label>Período de referência</label><select id="bhmes">${meses.map(m=>`<option value="${m}" ${m===BHST.ym?"selected":""}>${m.slice(5)}/${m.slice(0,4)} · ${refRotulo(m)}</option>`).join("")}</select></div>
     <div style="flex:0 0 190px"><label>Início do controle</label><input type="month" id="bhini" value="${c.inicio}" ${podeEd("gp")?"":"disabled"}></div><div style="flex:0 0 190px"><label>Alerta acima de (horas)</label><input type="number" id="bhlim" value="${c.limiteH}" min="1" ${podeEd("gp")?"":"disabled"}></div></div>
    ${erros.length&&!L.length?`<div class="callout sand" style="margin-top:12px">Não foi possível calcular: ${esc(erros[0]||"importe o arquivo do relógio na aba Ponto")}.</div>`:""}
    ${L.length?`<div class="wrap" style="margin-top:12px"><table><thead><tr><th>Integrante</th><th>Trabalhado</th><th>Esperado</th><th>A mais</th><th>A menos</th><th>Banco anterior</th><th>Saldo do mês</th><th>Compensado / pago</th><th>Banco final</th><th></th></tr></thead><tbody>${L.map(x=>{const al=Math.abs(x.acum)>c.limiteH*60;return `<tr><td><b>${esc(nomeInteg(x.ig))}</b></td><td>${hhmm(x.trab)}</td><td>${hhmm(x.esp)}</td><td>${hhmmS(x.mais)}</td><td>${hhmmS(x.menos)}</td><td>${hhmmS(x.ant)}</td><td>${hhmmS(x.mes)}</td><td>${hhmmS(x.lanc)}</td><td><b>${hhmmS(x.acum)}</b></td><td>${al?xPill(x.acum>0?2:1,x.acum>0?"saldo alto: programar folga":"saldo negativo"):""}</td></tr>`}).join("")}</tbody></table></div>`:""}</div>`;
@@ -6354,7 +6373,7 @@ const bhCrud={id:"bh",col:"bh",mod:"gp",novoLabel:"Lançar compensação ou paga
 
 /* ---------- fechamento do ponto ---------- */
 const fechDoc=ym=>S.config["fech_"+ym.replace("-","")];
-const mesFechado=iso=>{const d=iso&&fechDoc(String(iso).slice(0,7));return d&&d.fechado};
+const mesFechado=iso=>{const d=iso&&fechDoc(refYm(iso));return d&&d.fechado};
 XGUARD.push((col,id,obj,antes)=>{
   const msg=m=>`${m} está fechado para o contador. Reabra o mês na aba Fechamento do ponto (Gestão de pessoas) para ajustar.`;
   if(col==="marcacoes"){const d=(obj||antes||{}).ts;if(d&&mesFechado(d))return msg("O mês de "+brDate(d.slice(0,10)).slice(3))}
@@ -6366,11 +6385,11 @@ XGUARD.push((col,id,obj,antes)=>{
   }
 });
 function fechHtml(){
-  const meses=mesesEntre(addMesesIso(hojeIso(),-11).slice(0,7),hojeIso().slice(0,7)).reverse();
+  const meses=mesesEntre(refYmAdd(refYm(hojeIso()),-11),refYm(hojeIso())).reverse();
   return `<div class="card"><h2>Fechamento do ponto por mês</h2><p class="sub" style="margin:0 0 10px">Depois de fechado, o mês não aceita novas marcações, ocorrências nem mudanças de escala: o que foi para o contador não muda sem você saber. Só o gestor reabre, e fica registrado.</p>
    <div class="wrap"><table><thead><tr><th>Mês</th><th>Situação</th><th>Pendências</th><th></th></tr></thead><tbody>${meses.map(m=>{
-     const f=fechDoc(m),r=f&&f.fechado||fimCalc(m)<m+"-01"?null:calcSilencioso(m+"-01",fimCalc(m)),pend=r&&r.users?r.users.reduce((s,u)=>s+u.pendencies.length,0):null;
-     return `<tr><td><b>${m.slice(5)}/${m.slice(0,4)}</b></td><td>${f&&f.fechado?xPill(0,"fechado em "+brDate(f.em.slice(0,10)))+` <span class="sub">${esc(f.nome||"")}</span>`:xPill(1,"aberto")}</td><td>${f&&f.fechado?(f.pend?f.pend+" no fechamento":"nenhuma"):(pend==null?"—":pend?`<b>${pend}</b> a resolver`:"nenhuma")}</td>
+     const f=fechDoc(m),r=f&&f.fechado||fimCalc(m)<refIni(m)?null:calcSilencioso(refIni(m),fimCalc(m)),pend=r&&r.users?r.users.reduce((s,u)=>s+u.pendencies.length,0):null;
+     return `<tr><td><b>${m.slice(5)}/${m.slice(0,4)}</b><div class="sub">${refRotulo(m)}</div></td><td>${f&&f.fechado?xPill(0,"fechado em "+brDate(f.em.slice(0,10)))+` <span class="sub">${esc(f.nome||"")}</span>`:xPill(1,"aberto")}</td><td>${f&&f.fechado?(f.pend?f.pend+" no fechamento":"nenhuma"):(pend==null?"—":pend?`<b>${pend}</b> a resolver`:"nenhuma")}</td>
      <td style="white-space:nowrap">${f&&f.fechado?(ACC.gestor||!RT.db?`<button class="b sec sm" data-freab="${m}">Reabrir</button>`:""):(podeEd("gp")?`<button class="b sm" data-ffecha="${m}" data-fp="${pend||0}">Fechar o mês</button>`:"")}</td></tr>`}).join("")}</tbody></table></div></div>`;
 }
 function bindFech(){
@@ -6500,7 +6519,7 @@ const epiCrud={id:"epi",col:"epi",mod:"gp",novoLabel:"Registrar entrega",novoTit
 const bfCfg=()=>({vtDia:0,vtDescPct:6,vrDia:0,fgtsPct:8,patronalPct:0,diaPag:5,...(xcfg("gp").benef||{})});
 const BFST={ym:hojeIso().slice(0,7),detalhar:false};
 function bfLinhas(ym){
-  const c=bfCfg(),r=fimCalc(ym)<ym+"-01"?null:calcSilencioso(ym+"-01",fimCalc(ym)),us=new Map(((r&&r.users)||[]).filter(u=>u.ig&&u.ig.id).map(u=>[u.ig.id,u]));
+  const c=bfCfg(),r=fimCalc(ym)<refIni(ym)?null:calcSilencioso(refIni(ym),fimCalc(ym)),us=new Map(((r&&r.users)||[]).filter(u=>u.ig&&u.ig.id).map(u=>[u.ig.id,u]));
   return gpAtivos().filter(i=>+i.salario>0).map(i=>{
     const sal=+i.salario,u=us.get(i.id),dias=u?u.t.trab:0,ov=S.benef[i.id]||{};
     const vtD=ov.vtDia!==undefined&&ov.vtDia!==""?+ov.vtDia:c.vtDia,vrD=ov.vrDia!==undefined&&ov.vrDia!==""?+ov.vrDia:c.vrDia,optaVT=ov.vtOpta!==false;
@@ -6779,8 +6798,8 @@ XURG.push((L,h,fim)=>{
   if(M.length)L.push({nivel:M.some(x=>x.s.n===3)?2:1,tipo:"Treinamentos",titulo:`${M.length} treinamento(s) obrigatório(s) vencido(s), vencendo ou nunca feitos`,detalhe:M.slice(0,2).map(x=>`${nomeInteg(x.i)} — ${x.t.curso}`).join("; "),quando:null,rota:"gp",res:{k:"gptrein"},resLabel:"Ver treinamentos"});
   xs("epi").filter(e=>e.troca&&e.troca<=addDaysIso(h,15)).forEach(e=>L.push({nivel:e.troca<h?2:1,tipo:"EPI",titulo:`Trocar ${e.item} — ${xNomeInteg(e.integ)}`,detalhe:`troca prevista para ${brDate(e.troca)}`,quando:e.troca,rota:"gp",res:{k:"gpepi"},resLabel:"Abrir EPI"}));
   xs("movgp").filter(m=>m.status!=="concluído"&&daysBetweenIso(m.data,h)>=7).forEach(m=>L.push({nivel:1,tipo:m.tipo==="desligamento"?"Desligamento":"Admissão",titulo:`Checklist incompleto — ${xNomeInteg(m.integ)}`,detalhe:`${m.tipo==="desligamento"?"último dia":"início"} em ${brDate(m.data)}`,quando:m.data,rota:"gp",res:{k:"gpmov",id:m.id},resLabel:"Abrir checklist"}));
-  const ant=addMesesIso(h,-1).slice(0,7);
-  if(+h.slice(8)>=6&&gpAtivos().some(i=>i.uid!=null&&!semPonto(i))&&!mesFechado(ant+"-01"))L.push({nivel:1,tipo:"Ponto",titulo:`O ponto de ${ant.slice(5)}/${ant.slice(0,4)} ainda não foi fechado`,detalhe:"Feche o mês para travar as marcações antes de enviar ao contador",quando:null,rota:"gp",res:{k:"gpfech"},resLabel:"Fechar o mês"});
+  const ant=refYmAdd(refYm(h),-1);
+  if(h>addDaysIso(refFim(ant),5)&&gpAtivos().some(i=>i.uid!=null&&!semPonto(i))&&!mesFechado(refFim(ant)))L.push({nivel:1,tipo:"Ponto",titulo:`O ponto de ${ant.slice(5)}/${ant.slice(0,4)} (${refRotulo(ant)}) ainda não foi fechado`,detalhe:"Feche o mês para travar as marcações antes de enviar ao contador",quando:null,rota:"gp",res:{k:"gpfech"},resLabel:"Fechar o mês"});
 });
 XRES.gpferias=(id)=>{PGX.gp.st.tab="ferias";go("gp");setTimeout(()=>xForm(feriasCrud,{integ:id,status:"programada",abono:0},f=>xcrudSalvar(feriasCrud,f,null)),60)};
 XRES.gptrein=()=>{PGX.gp.st.tab="trein";go("gp")};XRES.gpepi=()=>{PGX.gp.st.tab="epi";go("gp")};XRES.gpfech=()=>{PGX.gp.st.tab="fech";go("gp")};
@@ -6801,9 +6820,9 @@ REPORTS.push(
  {id:"gp_epi",g:"Departamento pessoal",t:"Entregas de EPI e uniformes",d:"Quem recebeu o quê, CA, troca prevista e assinatura.",pii:false,b:()=>({titulo:"Entregas de EPI e uniformes",sub:relSub({},false),
    cols:[{h:"Integrante",w:28},{h:"Item",w:28},{h:"Qtd",t:"num",w:7},{h:"Entrega",t:"date",w:12},{h:"Troca prevista",t:"date",w:14},{h:"CA",w:12},{h:"Assinado",w:10,c:true}],
    rows:xs("epi").sort((a,b)=>b.entrega.localeCompare(a.entrega)).map(e=>[xNomeInteg(e.integ),e.item,+e.qtd||1,e.entrega,e.troca||"",e.ca||"",e.assin?"Sim":"Não"])})},
- {id:"gp_banco",g:"Departamento pessoal",t:"Banco de horas (mês selecionado)",d:"Trabalhado, esperado e saldo acumulado por integrante.",pii:false,b:()=>({titulo:"Banco de horas — "+BHST.ym.slice(5)+"/"+BHST.ym.slice(0,4),sub:relSub({},false),
-   cols:[{h:"Integrante",w:26},{h:"Trabalhado (h)",t:"num",w:11},{h:"Esperado (h)",t:"num",w:11},{h:"A mais (h)",t:"num",w:10},{h:"A menos (h)",t:"num",w:10},{h:"Banco anterior (h)",t:"num",w:13},{h:"Saldo do mês (h)",t:"num",w:12},{h:"Compensado / pago (h)",t:"num",w:14},{h:"Banco final (h)",t:"num",w:12}],
-   rows:[...bhSaldos(BHST.ym).por.values()].map(x=>[nomeInteg(x.ig),...[x.trab,x.esp,x.mais,x.menos,x.ant,x.mes,x.lanc,x.acum].map(v=>+(v/60).toFixed(2))])})},
+ {id:"gp_banco",g:"Departamento pessoal",t:"Banco de horas (mês selecionado)",d:"Trabalhado, esperado e saldo acumulado por integrante.",pii:false,b:()=>{if(!BHST.ym)BHST.ym=refPadrao();return{titulo:"Banco de horas — "+BHST.ym.slice(5)+"/"+BHST.ym.slice(0,4)+" ("+refRotulo(BHST.ym)+")",sub:relSub({},false),
+   cols:[{h:"Integrante",w:26},{h:"Trabalhado (h)",t:"num",w:11},{h:"Esperado (h)",t:"num",w:11},{h:"A mais (h)",t:"num",w:10},{h:"A menos (h)",t:"num",w:10},{h:"Banco anterior (h)",t:"num",w:13},{h:"Saldo do período (h)",t:"num",w:12},{h:"Compensado / pago (h)",t:"num",w:14},{h:"Banco final (h)",t:"num",w:12}],
+   rows:[...bhSaldos(BHST.ym).por.values()].map(x=>[nomeInteg(x.ig),...[x.trab,x.esp,x.mais,x.menos,x.ant,x.mes,x.lanc,x.acum].map(v=>+(v/60).toFixed(2))])}}},
  {id:"gp_aniv",g:"Departamento pessoal",t:"Aniversariantes do ano",d:"Integrantes em atividade na data do pedido, por mês e dia (o calendário em PDF fica em Gestão de pessoas → Benefícios e aniversários).",pii:true,b:()=>{const L=anivLista();return{titulo:"Aniversariantes — integrantes em atividade",sub:`em atividade em ${brDate(L.ref)} · `+relSub({},false),
    cols:[{h:"Mês",w:14},{h:"Dia",t:"num",w:7},{h:"Integrante",w:38},{h:"Cargo",w:26},{h:"De férias no dia",w:14,c:true}],
    rows:L.ok.slice().sort((a,b)=>a.m-b.m||a.d-b.d||nomeInteg(a.i).localeCompare(nomeInteg(b.i),"pt")).map(x=>{const y=+L.ref.slice(0,4),d=Math.min(x.d,new Date(y,x.m,0).getDate());return[MESES_PT[x.m-1],d,nomeInteg(x.i),x.i.cargo||"",anivFerias(x.i,y+"-"+String(x.m).padStart(2,"0")+"-"+String(d).padStart(2,"0"))?"Sim":""]})}}},
@@ -12304,37 +12323,37 @@ const xeAfastado=(id,iso)=>xeL("licencas").some(l=>l.col===id&&l.ini<=iso&&(!l.f
 xmUrg(()=>podeVer("ponto")?xeL("licencas").filter(l=>l.fim&&xmDias(l.fim)>=0&&xmDias(l.fim)<=7).map(l=>({nivel:1,tipo:"Ponto",titulo:`Licença terminando: ${xmColNome(l.col)}`,detalhe:`${l.tipo} até ${brDate(l.fim)}`,quando:l.fim,rota:"ponto"})):[]);
 /* --- horas extras, adicional noturno, DSR e custo (135, 136, 141, 142, 161, 162) --- */
 function xeFolhaHoras(ym){
-  const c=xeCfg(),ini=ym+"-01",fim=fimCalc(ym),r=calcSilencioso(ini,fim);if(!r||r.erro)return{erro:r&&r.erro,L:[]};
-  const dm=new Date(+ym.slice(0,4),+ym.slice(5,7),0).getDate();let dom=0,uteis=0;for(let d=1;d<=dm;d++){const iso=ym+"-"+String(d).padStart(2,"0");const w=new Date(iso+"T12:00:00").getDay();if(w===0||(typeof feriadoNome==="function"&&feriadoNome(iso)))dom++;else uteis++}
+  const c=xeCfg(),ini=refIni(ym),fim=fimCalc(ym),r=calcSilencioso(ini,fim);if(!r||r.erro)return{erro:r&&r.erro,L:[]};
+  const diasRef=[];for(let d=refIni(ym);d<=refFim(ym);d=addDaysIso(d,1))diasRef.push(d);const dm=diasRef.length;let dom=0,uteis=0;for(const iso of diasRef){const w=new Date(iso+"T12:00:00").getDay();if(w===0||(typeof feriadoNome==="function"&&feriadoNome(iso)))dom++;else uteis++}
   const L=r.users.filter(u=>u.ig&&u.ig.id).map(u=>{const sal=+u.ig.salario||0,vh=sal?sal/220:0,ex=u.t.extra||0,exV=ex/60*vh*(1+c.perc/100),nt=u.t.nightReal||0,ntV=nt/60*vh*(c.noturno/100),red=Math.max(0,(u.t.nightFicta||0)-nt),redV=red/60*vh,dsr=uteis?exV/uteis*dom:0;return{ig:u.ig,ex,exV,nt,ntV,red,redV,dsr,tot:exV+ntV+redV+dsr,sal}});
   return{L,dom,uteis,fim,dm};
 }
 xmReg("ponto","extras","Horas e custo","Horas extras e adicionais",()=>{
-  const ym=XM.sim.xeym||xeHoje().slice(0,7),c=xeCfg(),F=xeFolhaHoras(ym),L=F.L||[],tot=L.reduce((s,x)=>s+x.tot,0);
-  const prev=(()=>{const hoje=xeHoje();if(ym!==hoje.slice(0,7))return null;const d=+hoje.slice(8),dm=F.dm||30;return d>1?L.reduce((s,x)=>s+x.ex,0)/(d-1)*dm:null})();
+  const ym=XM.sim.xeym||refPadrao(),c=xeCfg(),F=xeFolhaHoras(ym),L=F.L||[],tot=L.reduce((s,x)=>s+x.tot,0);
+  const prev=(()=>{const hoje=xeHoje();if(ym!==refYm(hoje))return null;const d=daysBetweenIso(refIni(ym),hoje)+1,dm=F.dm||30;return d>1?L.reduce((s,x)=>s+x.ex,0)/(d-1)*dm:null})();
   const setor={};L.forEach(x=>{const k=x.ig.cargo||"Sem cargo";setor[k]=(setor[k]||0)+x.tot});
   return f6Card("Horas extras, adicional noturno e DSR (estimativa)",`Usa o resultado do cálculo de jornadas do mês. Valor-hora = salário ÷ 220. Extras com adicional de ${c.perc}% (use o campo abaixo para mudar), adicional noturno de ${c.noturno}% e ganho da hora noturna reduzida (52min30s). DSR = valor das extras ÷ dias úteis × domingos e feriados. Apoio para conferência: o cálculo oficial é do contador.`,
-   `<div class="row" style="align-items:flex-end"><div><label>Mês</label><input type="month" id="xeym" value="${ym}"></div><div><label>% hora extra</label><input type="number" id="xep1" value="${c.perc}" style="width:80px"></div><div><label>% noturno</label><input type="number" id="xep2" value="${c.noturno}" style="width:80px"></div><button class="b sec sm" id="xeeb">Calcular</button></div>`+
+   `<div class="row" style="align-items:flex-end"><div><label>Mês de referência (26 a 25)</label><input type="month" id="xeym" value="${ym}" title="${refRotulo(ym)}"></div><div><label>% hora extra</label><input type="number" id="xep1" value="${c.perc}" style="width:80px"></div><div><label>% noturno</label><input type="number" id="xep2" value="${c.noturno}" style="width:80px"></div><button class="b sec sm" id="xeeb">Calcular</button></div>`+
    (F.erro?`<div class="err">${f6Esc(F.erro)}</div>`:"")+(L.length?f6Tbl(["Integrante","Extras","Valor extras","Noturno","Valor noturno","Hora reduzida","DSR","Total"],[L.sort((a,b)=>b.tot-a.tot).map(x=>`<tr><td>${f6Esc(nomeInteg(x.ig))}${x.sal?"":` <span class="sub">(sem salário)</span>`}</td><td class="n">${xeHM(x.ex)}</td><td class="n">${fmtBRL(x.exV)}</td><td class="n">${xeHM(x.nt)}</td><td class="n">${fmtBRL(x.ntV)}</td><td class="n">${fmtBRL(x.redV)}</td><td class="n">${fmtBRL(x.dsr)}</td><td class="n"><b>${fmtBRL(x.tot)}</b></td></tr>`).join("")],"txt")+`<p style="margin-top:8px"><b>Total do mês: ${fmtBRL(tot)}</b>${prev!=null?` · Previsão de extras até o fim do mês: <b>${xeHM(prev)}</b>`:""}</p>`+f6Card("Custo de extras e adicionais por cargo/setor","",f6Tbl(["Cargo","Valor"],[Object.entries(setor).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<tr><td>${f6Esc(k)}</td><td class="n">${fmtBRL(v)}</td></tr>`).join("")],"txt")):'<div class="empty">Sem dados de ponto para o mês.</div>'));
 },()=>{const b=$("xeeb");if(b)b.onclick=()=>{xmsave("ponto",{cfg:{...xeCfg(),perc:+$("xep1").value||50,noturno:+$("xep2").value||20}});XM.sim.xeym=$("xeym").value;xmGo()}});
 /* --- resumo e ranking de assiduidade (154, 155) --- */
 xmReg("ponto","resumo","Horas e custo","Resumo e ranking de assiduidade",()=>{
-  const ym=XM.sim.xerm||xeHoje().slice(0,7),r=calcSilencioso(ym+"-01",fimCalc(ym)),L=(r&&r.users||[]).filter(u=>u.ig&&u.ig.id).map(u=>{const t=u.t,esc=t.escalados||0,pct=esc?Math.max(0,Math.round((esc-(t.faltas||0))/esc*100)):100;return{ig:u.ig,t,pct}}).sort((a,b)=>b.pct-a.pct||(a.t.late||0)-(b.t.late||0));
-  return f6Card("Faltas, atrasos e extras por pessoa",`Assiduidade = dias escalados menos faltas, em %. Mês de referência escolhido abaixo.`,`<div class="row" style="align-items:flex-end"><div><label>Mês</label><input type="month" id="xerm" value="${ym}"></div><button class="b sec sm" id="xerb">Ver</button></div>`+(L.length?f6Tbl(["#","Integrante","Assiduidade","Faltas","Atrasos","Extras","Atestados","Esquecidos"],[L.map((x,i)=>`<tr><td class="n">${i+1}</td><td>${f6Esc(nomeInteg(x.ig))}</td><td class="n"><b>${x.pct}%</b></td><td class="n">${x.t.faltas||0}</td><td class="n">${xeHM(x.t.late||0)}</td><td class="n">${xeHM(x.t.extra||0)}</td><td class="n">${x.t.atestados||0}</td><td class="n">${x.t.esquecidos||0}</td></tr>`).join("")],"txt"):'<div class="empty">Sem dados no mês.</div>'));
+  const ym=XM.sim.xerm||refPadrao(),r=calcSilencioso(refIni(ym),fimCalc(ym)),L=(r&&r.users||[]).filter(u=>u.ig&&u.ig.id).map(u=>{const t=u.t,esc=t.escalados||0,pct=esc?Math.max(0,Math.round((esc-(t.faltas||0))/esc*100)):100;return{ig:u.ig,t,pct}}).sort((a,b)=>b.pct-a.pct||(a.t.late||0)-(b.t.late||0));
+  return f6Card("Faltas, atrasos e extras por pessoa",`Assiduidade = dias escalados menos faltas, em %. Período de referência escolhido abaixo (${refRotulo(ym)}).`,`<div class="row" style="align-items:flex-end"><div><label>Mês de referência (26 a 25)</label><input type="month" id="xerm" value="${ym}"></div><button class="b sec sm" id="xerb">Ver</button></div>`+(L.length?f6Tbl(["#","Integrante","Assiduidade","Faltas","Atrasos","Extras","Atestados","Esquecidos"],[L.map((x,i)=>`<tr><td class="n">${i+1}</td><td>${f6Esc(nomeInteg(x.ig))}</td><td class="n"><b>${x.pct}%</b></td><td class="n">${x.t.faltas||0}</td><td class="n">${xeHM(x.t.late||0)}</td><td class="n">${xeHM(x.t.extra||0)}</td><td class="n">${x.t.atestados||0}</td><td class="n">${x.t.esquecidos||0}</td></tr>`).join("")],"txt"):'<div class="empty">Sem dados no mês.</div>'));
 },()=>{const b=$("xerb");if(b)b.onclick=()=>{XM.sim.xerm=$("xerm").value;xmGo()}});
 /* --- espelho de ponto, ciência e envio (150, 151, 163) --- */
 function xeEspelhoHtml(id,ym){
-  const i=S.integrantes[id];if(!i)return"";const fim=mesFimIso(ym),J=i.uid!=null?xeJornadas(i.uid,ym+"-01",fim).filter(j=>j.dia.startsWith(ym)):[];
+  const i=S.integrantes[id];if(!i)return"";const fim=refFim(ym),J=i.uid!=null?xeJornadas(i.uid,refIni(ym),fim).filter(j=>j.dia>=refIni(ym)&&j.dia<=fim):[];
   const linhas=J.map(j=>`<tr><td>${brDate(j.dia)}</td><td>${j.m.map(t=>t.toTimeString().slice(0,5)).join(" · ")}${j.impar?" ⚠":""}</td><td style="text-align:right">${xeHM(j.w)}</td></tr>`).join("");
-  return `<h3>Espelho de ponto — ${f6Esc(nomeInteg(i))}</h3><p>Competência ${ym.slice(5)}/${ym.slice(0,4)} · ${f6Esc(empresa().razao||"")}</p><table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th style="text-align:left;border-bottom:1px solid #333">Dia</th><th style="text-align:left;border-bottom:1px solid #333">Batidas</th><th style="text-align:right;border-bottom:1px solid #333">Trabalhado</th></tr>${linhas||"<tr><td colspan=3>Sem batidas no mês</td></tr>"}</table><p>Total trabalhado: <b>${xeHM(J.reduce((s,j)=>s+j.w,0))}</b></p><p style="margin-top:30px">Ciente: ______________________________ Data: ___/___/_____</p>`;
+  return `<h3>Espelho de ponto — ${f6Esc(nomeInteg(i))}</h3><p>Competência ${ym.slice(5)}/${ym.slice(0,4)} (${refRotulo(ym)}) · ${f6Esc(empresa().razao||"")}</p><table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th style="text-align:left;border-bottom:1px solid #333">Dia</th><th style="text-align:left;border-bottom:1px solid #333">Batidas</th><th style="text-align:right;border-bottom:1px solid #333">Trabalhado</th></tr>${linhas||"<tr><td colspan=3>Sem batidas no mês</td></tr>"}</table><p>Total trabalhado: <b>${xeHM(J.reduce((s,j)=>s+j.w,0))}</b></p><p style="margin-top:30px">Ciente: ______________________________ Data: ___/___/_____</p>`;
 }
 xmReg("ponto","espelho","Espelho e consulta","Espelho de ponto",()=>{
-  const ym=XM.sim.xesm||xeHoje().slice(0,7),sel=XM.sim.xesc||"";
+  const ym=XM.sim.xesm||refPadrao(),sel=XM.sim.xesc||"";
   return f6Card("Espelho de ponto do integrante","Imprima para assinatura, ou envie o resumo por WhatsApp (abre o aplicativo com a mensagem pronta; o envio é feito por você).",`<div class="row" style="align-items:flex-end"><div><label>Integrante</label><select id="xesc"><option value="">Escolha…</option>${xeCols().map(i=>`<option value="${i.id}" ${sel===i.id?"selected":""}>${f6Esc(nomeInteg(i))}</option>`).join("")}</select></div><div><label>Mês</label><input type="month" id="xesm" value="${ym}"></div><button class="b sm" id="xesp">Imprimir espelho</button><button class="b sec sm" id="xesw">WhatsApp</button><button class="b sec sm" id="xesk">Registrar ciência</button></div>`)+
   f6Card("Ciências registradas","",(xeL("ciencias").length?f6Tbl(["Integrante","Mês","Registrado em","Por"],[xeL("ciencias").slice().reverse().slice(0,40).map(c=>`<tr><td>${f6Esc(xmColNome(c.col))}</td><td class="n">${c.ym}</td><td class="n">${brDate(c.em.slice(0,10))}</td><td>${f6Esc(c.por||"")}</td></tr>`).join("")],"txt"):'<div class="empty">Nenhuma.</div>'));
 },()=>{const g=()=>{XM.sim.xesc=$("xesc").value;XM.sim.xesm=$("xesm").value;return[$("xesc").value,$("xesm").value]};
   const p=$("xesp");if(p)p.onclick=()=>{const[i,m]=g();if(!i)return toast("Escolha o integrante.");xmPrint("Espelho de ponto",xeEspelhoHtml(i,m))};
-  const w=$("xesw");if(w)w.onclick=()=>{const[i,m]=g();const x=S.integrantes[i];if(!x)return toast("Escolha o integrante.");const J=x.uid!=null?xeJornadas(x.uid,m+"-01",mesFimIso(m)).filter(j=>j.dia.startsWith(m)):[];const txt=`Olá, ${nomeInteg(x).split(" ")[0]}! Seu resumo de ponto de ${m.slice(5)}/${m.slice(0,4)}: ${J.length} dia(s) trabalhado(s), ${xeHM(J.reduce((s,j)=>s+j.w,0))} no total. Qualquer divergência, fale com a administração.`;const tel=String(x.telefone||"").replace(/\D/g,"");if(!tel)return toast("Integrante sem telefone cadastrado.");window.open("https://wa.me/"+(tel.length<=11?"55":"")+tel+"?text="+encodeURIComponent(txt),"_blank")};
+  const w=$("xesw");if(w)w.onclick=()=>{const[i,m]=g();const x=S.integrantes[i];if(!x)return toast("Escolha o integrante.");const J=x.uid!=null?xeJornadas(x.uid,refIni(m),refFim(m)).filter(j=>j.dia>=refIni(m)&&j.dia<=refFim(m)):[];const txt=`Olá, ${nomeInteg(x).split(" ")[0]}! Seu resumo de ponto de ${m.slice(5)}/${m.slice(0,4)}: ${J.length} dia(s) trabalhado(s), ${xeHM(J.reduce((s,j)=>s+j.w,0))} no total. Qualquer divergência, fale com a administração.`;const tel=String(x.telefone||"").replace(/\D/g,"");if(!tel)return toast("Integrante sem telefone cadastrado.");window.open("https://wa.me/"+(tel.length<=11?"55":"")+tel+"?text="+encodeURIComponent(txt),"_blank")};
   const k=$("xesk");if(k)k.onclick=()=>{const[i,m]=g();if(!i)return toast("Escolha o integrante.");xmsave("ponto",{ciencias:[...xeL("ciencias"),{id:uid8(),col:i,ym:m,em:new Date().toISOString(),por:xeQuem()}]});toast("Ciência registrada.");xmGo()}});
 /* --- vínculos, desligados, de-para (156, 157, 158) --- */
 xmReg("ponto","vinculos","Cadastro e conferência","De-para e vínculos",()=>{
@@ -14738,6 +14757,8 @@ function pgEscalaCalendario(){
   const gcargos=[...new Set(lista.map(x=>cargoDe(x.ig)))];
   const cobs=xmdCobertura(gcargos,days),cfgc=xmdCobCfg();
   const todosElegiveis=xmdTodos(),incons=lista.filter(x=>xfoTurno12(x.ig)&&xfoModoDe(x.ig)==="semana").map(x=>x.ig);
+  /* quem foi cadastrado e ainda não tem turno não entra na grade nem no teste de escala: avisa e leva ao campo */
+  const semTurno=integList().filter(i=>!semPonto(i)&&(i.situacao||"Ativo")!=="Desligado"&&!todosElegiveis.includes(i));
   const turnos=turnosList(),cont={abaixo:0,acima:0,ok:0,sem:0};lista.forEach(x=>cont[x.sit.k]++);
   const nomeMes=MESES_PT[+ym.slice(5,7)-1];
   const simN=Object.keys(XMD.set).length,imp=XMD.sim&&simN?xmdImpacto(gcargos,days):[];
@@ -14773,6 +14794,7 @@ function pgEscalaCalendario(){
    <details id="xfopessoas" ${ESCUI.selAberto?"open":""} style="margin-bottom:10px"><summary style="cursor:pointer;font-weight:700">Ou marque na lista completa: ${ESCUI.sel.length?ESCUI.sel.length+" selecionada(s)":"todas"}</summary>
     <div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px;margin-top:6px;columns:2 220px">${todosElegiveis.map(i=>`<label style="display:block;break-inside:avoid;font-weight:400;padding:2px 0"><input type="checkbox" data-xfosel="${i.id}" ${ESCUI.sel.includes(i.id)?"checked":""}> ${esc(nomeInteg(i))} <span class="sub">${esc(cargoDe(i))}</span></label>`).join("")||'<span class="sub">Ninguém com turno definido.</span>'}</div>
     <div class="chips" style="margin-top:6px"><button type="button" class="b sec sm" id="xfoselnada">Mostrar todas as pessoas</button><button type="button" class="b sec sm" id="xfoselfiltro">Marcar quem está nos filtros acima</button></div></details>
+   ${semTurno.length?`<div class="callout sand" style="margin-bottom:10px"><b>${semTurno.length===1?"1 integrante não aparece":semTurno.length+" integrantes não aparecem"} na escala nem no teste de escala</b> porque ainda não ${semTurno.length===1?"tem":"têm"} turno: ${semTurno.slice(0,8).map(i=>`<button type="button" class="b sec sm" data-xmdturno="${i.id}" title="Ir para o turno de ${esc(nomeInteg(i))}" style="margin:2px 2px 0 0">${esc(nomeInteg(i))} <span class="sub">${esc(cargoDe(i))}</span></button>`).join("")}${semTurno.length>8?" …":""}<div class="sub" style="margin-top:4px">Clique no nome para escolher o turno em <b>Escala dos integrantes</b>, mais abaixo nesta página. Se a pessoa não bate ponto, marque isso no cadastro.</div></div>`:""}
    ${simBox}
    ${incons.length?`<div class="callout sand" style="margin-bottom:10px"><b>Atenção:</b> ${incons.length} pessoa(s) estão com turno 12×36, mas a escala está em “dias fixos da semana”, por isso a grade não alterna: ${incons.slice(0,6).map(i=>esc(nomeInteg(i))).join(", ")}${incons.length>6?"…":""}. No <b>Resumo do mês</b>, coluna <b>Escala</b>, escolha <b>12×36 · alterna</b> (informe um dia em que a pessoa trabalha).</div>`:""}
    <div class="chips" style="margin-bottom:10px">
@@ -14813,6 +14835,11 @@ bindTurnos=function(){
   const add=document.getElementById("xmdsadd");if(add)add.onclick=()=>{const id=document.getElementById("xmdsp").value,d=document.getElementById("xmdsd").value;if(!id||!d)return toast("Escolha a pessoa e o dia.",true);toggle(id,d)};
   document.querySelectorAll("[data-xmdsdel]").forEach(b=>b.onclick=()=>{delete XMD.set[b.dataset.xmdsdel];R()});
   const lim=document.getElementById("xmdslimpa");if(lim)lim.onclick=()=>{XMD.set={};R()};
+  document.querySelectorAll("[data-xmdturno]").forEach(b=>b.onclick=()=>{
+    const tr=document.querySelector(`#escint tr[data-id="${b.dataset.xmdturno}"]`);if(!tr)return;
+    tr.scrollIntoView({behavior:"smooth",block:"center"});tr.style.outline="2px solid var(--madeira,#8C4A1F)";
+    const s=tr.querySelector('[data-e="turno"]');if(s)setTimeout(()=>s.focus(),400);
+  });
   const apl=document.getElementById("xmdsapl");if(apl)apl.onclick=async()=>{
     if(!podeEd("turnos"))return toast("Você só pode consultar esta tela.",true);
     const ks=Object.keys(XMD.set);if(!ks.length)return;
@@ -14984,10 +15011,14 @@ async function xfoPdf(){
    - Cartões da própria tela viram abas (os que se parecem são juntados).
    - Os "Mais recursos" de cada tela viram abas por assunto, com os itens do assunto logo abaixo.
    Nada muda nas funções: só a organização. Telas que já têm abas próprias ficam como estão. */
-const XAB={sub:{},tab:{}};
+const XAB={sub:{},tab:{},mais:{}};
+/* telas com muitas abas: só estas ficam à vista; o resto abre em "Mais ferramentas" */
+const XAB_MAIS={ponto:["Pendências","Fechamento do mês"]};
+/* número ao lado do nome da aba (ex.: quantas pendências faltam) */
+const XAB_CONTA={"ponto|Pendências":()=>typeof ppdConta==="function"?ppdConta():0};
 const XAB_PULA=["fin","fin2","gp","cuid","admres","infra","ind","contab","acesso","pend"];
-const XAB_PRI={pront:"Integrantes",ponto:"Calcular jornadas",res:"Residentes",pres:"Prontuário",nf:"Notas fiscais",prest:"Prestadores",docs:"Documentos",estoque:"Estoque"};
-const XAB_ABRE={ponto:"fechamento"};
+const XAB_PRI={pront:"Integrantes",ponto:"Ponto do período",res:"Residentes",pres:"Prontuário",nf:"Notas fiscais",prest:"Prestadores",docs:"Documentos",estoque:"Estoque"};
+const XAB_ABRE={};
 const XAB_FIXO={rel:/per[ií]odo e formatos/i};
 const XAB_GRUPOS={
   home:[["Hoje",/urgente|aten[cç][aã]o|resumo de hoje/i],["Semana",/semana|acompanhar/i],["Caixa",/fluxo/i]],
@@ -14997,7 +15028,7 @@ const XAB_GRUPOS={
   estoque:[["Movimentar",/lan[cç]ar|[úu]ltimas mov/i],["Itens e áreas",/[áa]reas|^itens/i],["Consumo",/consumo/i]]
 };
 const XAB_ORDEM_G={
-  ponto:["Fechamento do mês","Relógio","Cadastro e conferência","Ajustes e justificativas","Horas e custo","Espelho e consulta","Folha e contador","Fiscalização da jornada","Segurança"],
+  ponto:["Pendências","Fechamento do mês","Relógio","Cadastro e conferência","Ajustes e justificativas","Horas e custo","Espelho e consulta","Folha e contador","Fiscalização da jornada","Segurança"],
   turnos:["Montar a escala","Trocas e extras","Feriados e rodízio","Publicar a escala","Escala por pessoa","Escalas de outras áreas"]
 };
 (function(){const st=document.createElement("style");st.id="xabcss";st.textContent=`
@@ -15057,7 +15088,17 @@ function xabShell(){
   depois.forEach(e=>{e.style.display=ativa.startsWith("g:")?"":"none"});
   // barra de abas
   const bar=document.createElement("div");bar.className="tabs xabbar";bar.id="xabbar";
-  bar.innerHTML=abas.map(a=>`<button type="button" data-xabt="${esc(a.k)}" class="${a.k===ativa?"on":""}">${esc(a.l)}</button>`).join("")+G.map(g=>`<button type="button" class="g ${g.k===ativa?"on":""}" data-xabt="${esc(g.k)}">${esc(g.l)}<span class="n">${g.secs.length>1?g.secs.length:""}</span></button>`).join("");
+  bar.innerHTML=abas.map(a=>`<button type="button" data-xabt="${esc(a.k)}" class="${a.k===ativa?"on":""}">${esc(a.l)}</button>`).join("")+G.map(g=>`<button type="button" class="g ${g.k===ativa?"on":""}" data-xabt="${esc(g.k)}">${esc(g.l)}${XAB_CONTA[r+"|"+g.g]?(n=>n?`<span class="n" style="background:var(--bad);color:#fff;border-radius:9px;padding:0 6px;font-weight:700">${n}</span>`:"")(XAB_CONTA[r+"|"+g.g]()):`<span class="n">${g.secs.length>1?g.secs.length:""}</span>`}</button>`).join("");
+  if(XAB_MAIS[r]){
+    const extras=[...bar.querySelectorAll("button.g")].filter(b=>!XAB_MAIS[r].includes(b.dataset.xabt.slice(2)));
+    if(extras.length){
+      const aberto=XAB.mais[r]||extras.some(b=>b.classList.contains("on"));
+      const mb=document.createElement("button");mb.type="button";mb.className="g";mb.textContent=aberto?"Menos ▴":"Mais ferramentas ▾";
+      bar.appendChild(mb);extras.forEach(b=>{b.style.display=aberto?"":"none";bar.appendChild(b)});
+      mb.onclick=()=>{const abre=extras[0].style.display==="none";XAB.mais[r]=abre;extras.forEach(b=>b.style.display=abre?"":"none");mb.textContent=abre?"Menos ▴":"Mais ferramentas ▾"};
+      bar.style.flexWrap="wrap";
+    }
+  }
     v.insertBefore(bar,ancora||antes.find(e=>cards.some(c=>c.e===e))||pn||null);
   const gAt=G.find(x=>x.k===ativa);
   if(gAt&&gAt.secs.length>1){
@@ -15103,18 +15144,204 @@ function xabFin(){
 
 
 /* >>> x_m25.js */
+/* ===== Ponto · aba Pendências: arrumar o ponto integrante por integrante (prefixo ppd) =====
+   1) lista quem tem problema no período de referência (26 a 25);
+   2) escolhido o integrante, mostra as pendências dele com o botão que resolve cada uma;
+   3) baixa a folha de ponto dele em Excel para terminar de arrumar (Excel ou Google Planilhas);
+   4) recebe o .xlsx arrumado, mostra as diferenças na planilha do ponto e, ao salvar,
+      marca a folha como enviada e guarda o PDF final no prontuário. */
+const PPD={tipo:"",quem:"",ver:""};
+const PPD_INFO={
+  falta:{cor:"var(--bad)",d:p=>"Não tem nenhuma batida e a pessoa estava na escala. Se faltou com motivo (atestado, folga, troca), justifique. Se trabalhou, lance as batidas."},
+  falta_pontual:{cor:"var(--madeira)",d:p=>`${p.detail.charAt(0).toUpperCase()+p.detail.slice(1)}. Lance a batida que faltou${p.sugereHora?` (horário esperado pela escala: ${p.sugereHora})`:""}.`},
+  falta_entrada:{cor:"var(--madeira)",d:p=>`Tem só uma batida (${p.detail.replace(/^marcação /,"").replace(/ sem par$/,"")}) e falta a entrada. Lance a batida que faltou ou justifique.`},
+  falta_saida:{cor:"var(--madeira)",d:p=>`Tem só uma batida (${p.detail.replace(/^marcação /,"").replace(/ sem par$/,"")}) e falta a saída. Lance a batida que faltou ou justifique.`},
+  marcacao_sem_escala:{cor:"var(--azul-mar)",d:p=>"A pessoa bateu ponto num dia em que não estava na escala. Se trabalhou nesse dia (troca ou plantão extra), marque como dia de trabalho. Se foi engano, apague a batida."}
+};
+if(!CATS.includes("Folhas de ponto"))CATS.splice(CATS.length-1,0,"Folhas de ponto");
+function ppdDados(){
+  const ym=pontoRef(),ini=refIni(ym),fim=fimCalc(ym);
+  if(fim<ini)return{ym,ini,fim,futuro:true,L:[],U:[]};
+  if(!Object.keys(S.marcacoes).length&&!POINT.punches.length)return{ym,ini,fim,semBatidas:true,L:[],U:[]};
+  const r=calcSilencioso(ini,fim);
+  if(!r||r.erro)return{ym,ini,fim,erro:(r&&r.erro)||"não foi possível calcular",L:[],U:[]};
+  const U=r.users.filter(u=>!semPonto(u.ig||integByUid(u.uid))).slice().sort((a,b)=>a.nome.localeCompare(b.nome,"pt"));
+  const L=[];U.forEach(u=>u.pendencies.forEach(p=>L.push({u,p})));
+  return{ym,ini,fim,L,U};
+}
+const ppdConta=()=>{try{return ppdDados().L.length}catch(e){return 0}};
+// folhas enviadas no período: config/pfolha_AAAA-MM → {pessoas:{[nº do relógio]:{em,por,mud,arq,docId,de,ate,pend}}}
+const ppdEnvDoc=ym=>S.config["pfolha_"+ym]||{};
+const ppdEnvio=(ym,uid)=>(ppdEnvDoc(ym).pessoas||{})[String(uid)]||null;
+const ppdSituacao=(D,u)=>ppdEnvio(D.ym,u.uid)?"enviada":u.pendencies.length?"pendente":"pronta";
+const PPD_SIT={pendente:["Com pendências","var(--bad)"],pronta:["Pronta para enviar","var(--madeira)"],enviada:["Folha enviada","var(--verde-medio)"]};
+// cálculo completo (com datas) de um período, sem mexer no que está aberto na tela do Ponto
+function ppdCalcula(ini,fim){
+  const P=POINT,sv={s:P.start,e:P.end,r:P.result,er:P.err};let R=null;
+  try{P.start=ini;P.end=fim;calcular(false);R=P.result}finally{P.start=sv.s;P.end=sv.e;P.result=sv.r;P.err=sv.er}
+  if(!R)throw new Error(sv.er||"não foi possível calcular o ponto deste período");
+  return R;
+}
+// gera com o resultado R no lugar do POINT.result (as funções da folha leem dali) e devolve o que gerar
+function ppdComResultado(R,fn){const sv=POINT.result;POINT.result=R;try{return fn()}finally{POINT.result=sv}}
+const ppdArqNome=(u,ym,ext)=>`folha-ponto_${safe(u.nome)}_${ym}.${ext}`;
+async function ppdBaixaExcel(u,D){
+  try{
+    if(typeof ExcelJS==="undefined")throw new Error("a biblioteca de planilha não carregou. Recarregue a página.");
+    const R=ppdCalcula(D.ini,D.fim);
+    const wb=ppdComResultado(R,()=>buildWorkbook({uids:[String(u.uid)],abas:{capa:false,integrantes:false,jornadas:false,individual:true}}));
+    await saveFile(ppdArqNome(u,D.ym,"xlsx"),new Blob([await wb.xlsx.writeBuffer()],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+  }catch(e){console.error(e);toast("Não foi possível gerar a folha: "+(e&&e.message||e),true)}
+}
+async function ppdPdfFinal(u,D){
+  const R=ppdCalcula(D.ini,D.fim);
+  return ppdComResultado(R,()=>gerarPdfContador({uids:[String(u.uid)],abas:{capa:false,integrantes:false,jornadas:false,individual:true}}));
+}
+async function ppdMarcaEnviada(uid,info){
+  BHCACHE.clear();
+  const D=ppdDados(),u=D.U.find(x=>+x.uid===+uid);if(!u)return toast("Integrante não encontrado neste período.",true);
+  const ig=u.ig||integByUid(u.uid)||{},ant=ppdEnvio(D.ym,u.uid);
+  const reg={em:new Date().toISOString(),por:(typeof f4Quem==="function"&&f4Quem())||"",mud:info.mud||0,arq:info.arq||"",de:D.ini,ate:D.fim,pend:u.pendencies.length,docId:null};
+  // guarda a folha final (PDF) no prontuário do integrante
+  let aviso="";
+  try{
+    if(!ig.id)throw new Error("o integrante não tem cadastro");
+    const blob=await ppdPdfFinal(u,D);
+    reg.docId=await uploadDoc(ig.id,new File([blob],ppdArqNome(u,D.ym,"pdf"),{type:"application/pdf"}),"Folhas de ponto");
+    if(ant&&ant.docId&&S.docs&&S.docs[ant.docId])await removeDoc(S.docs[ant.docId],true);
+  }catch(e){console.error(e);aviso=" A folha em PDF não foi guardada no prontuário ("+(e&&e.message||e)+"); baixe e guarde à mão."}
+  const doc=ppdEnvDoc(D.ym);
+  put("config","pfolha_"+D.ym,{...strip(doc),pessoas:{...(doc.pessoas||{}),[String(u.uid)]:reg}});
+  toast(`Folha de ${u.nome} enviada (${refRotulo(D.ym)}).`+(reg.pend?` Atenção: ainda tem ${reg.pend} pendência(s).`:"")+aviso,!!aviso);
+  go("ponto",true);
+}
+async function ppdDesfazEnvio(uid){
+  const ym=pontoRef(),doc=ppdEnvDoc(ym),p={...(doc.pessoas||{})},reg=p[String(uid)];if(!reg)return;
+  if(!await askConfirm("Desfazer o envio desta folha? As batidas continuam como estão; só a marcação de enviada sai (e o PDF guardado no prontuário é apagado).","Desfazer envio"))return;
+  if(reg.docId&&S.docs&&S.docs[reg.docId])await removeDoc(S.docs[reg.docId],true);
+  delete p[String(uid)];put("config","pfolha_"+ym,{...strip(doc),pessoas:p});go("ponto",true);
+}
+function ppdRecebeArquivo(uid,f,D){
+  if(!/\.(xlsx|xls|csv)$/i.test(f.name))return toast("Envie a folha em .xlsx (no Google Planilhas: Arquivo › Fazer download › Microsoft Excel).",true);
+  openPlanilha(+uid,D.ini,D.fim,{arquivo:f,aoSalvar:n=>ppdMarcaEnviada(uid,{mud:n,arq:f.name}),
+    depoisImportar:async ov=>{
+      if(plnMudancas())return;
+      if(await askConfirm("O arquivo não tem nenhuma batida diferente do que já está no sistema. Marcar a folha como enviada assim mesmo?","Marcar como enviada")){ov.remove();PLN.aoSalvar=null;ppdMarcaEnviada(uid,{mud:0,arq:f.name})}
+    }});
+}
+function ppdBotoes(u,p){
+  const b=(attr,txt,sec)=>`<button type="button" class="b ${sec?"sec ":""}sm" ${attr} style="flex:none">${txt}</button>`;
+  if(p.kind==="marcacao_sem_escala")return(u.ig&&u.ig.id?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho"):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
+  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
+  return b(`data-ppdmk="${u.uid}" data-day="${p.day}" ${p.sugereHora?`data-sug="${p.sugereHora}"`:""}`,"Lançar a batida que faltou")+b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar",1);
+}
+const ppdPasso=(n,ok,titulo,corpo)=>`<div style="display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--line)">
+  <div style="flex:none;width:30px;height:30px;border-radius:50%;display:grid;place-items:center;font-weight:700;${ok?"background:var(--verde-medio);color:#fff":"background:var(--areia-esc);color:var(--ink)"}">${ok?"✓":n}</div>
+  <div class="grow" style="min-width:0"><h3 style="margin:4px 0 6px;font-size:16px">${titulo}</h3>${corpo}</div></div>`;
+function ppdPessoaHtml(D,u,lista){
+  const ed=podeEd("ponto"),env=ppdEnvio(D.ym,u.uid),pend=u.pendencies,ig=u.ig||{};
+  const conta={};pend.forEach(p=>conta[p.kind]=(conta[p.kind]||0)+1);
+  if(PPD.tipo&&!conta[PPD.tipo])PPD.tipo="";
+  const itens=pend.filter(p=>!PPD.tipo||p.kind===PPD.tipo).slice().sort((a,b)=>a.day.localeCompare(b.day));
+  const chip=(k,t,n)=>`<button type="button" class="b ${PPD.tipo===k?"":"sec "}sm" data-ppdtipo="${k}" style="flex:none">${esc(t)} <b>${n}</b></button>`;
+  const i=lista.findIndex(x=>+x.uid===+u.uid),ant=lista[i-1],prox=lista[i+1];
+  const ate=D.fim<refFim(D.ym)?`${brDate(D.fim)} (o período ainda não terminou: a folha vai só até ontem)`:brDate(D.fim);
+  return `<div class="card" id="ppdpessoa">
+   <div class="row" style="align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:4px">
+    <button type="button" class="b sec sm" data-ppdsel="" style="flex:none">◀ Voltar à lista</button><span style="flex:1"></span>
+    ${ant?`<button type="button" class="b sec sm" data-ppdsel="${ant.uid}" style="flex:none" title="${esc(ant.nome)}">◀ Anterior</button>`:""}
+    <span class="sub">${i+1} de ${lista.length}</span>
+    ${prox?`<button type="button" class="b sec sm" data-ppdsel="${prox.uid}" style="flex:none" title="${esc(prox.nome)}">Próximo ▶</button>`:""}</div>
+   <h2 style="margin:8px 0 2px">${esc(u.nome)}</h2>
+   <p class="sub" style="margin:0 0 6px">${esc(ig.cargo||"—")} · nº ${esc(u.uid)} no relógio · ${refRotulo(D.ym)}</p>
+   ${ppdPasso(1,!pend.length,`Resolver as pendências ${pend.length?`<span style="color:var(--bad)">(${pend.length})</span>`:""}`,
+     (pend.length?`<p class="sub" style="margin:0 0 10px">Cada linha diz o que aconteceu e tem o botão que resolve. Resolvida, a linha sai da lista.</p>
+      ${Object.keys(conta).length>1?`<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">${chip("","Todas",pend.length)}${Object.keys(PEND_TIPO).filter(k=>conta[k]).map(k=>chip(k,PEND_TIPO[k],conta[k])).join("")}</div>`:""}
+      ${itens.map(p=>`<div class="doc" style="align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="width:84px;flex:none"><b>${brDate(p.day).slice(0,5)}</b><div class="sub">${WD_FULL[pyWeekday(p.day)]}</div></div>
+       <div class="grow" style="min-width:200px"><div class="nm" style="color:${(PPD_INFO[p.kind]||{}).cor||"var(--ink)"}">${esc(PEND_TIPO[p.kind]||p.kind)}</div><div class="sub">${esc((PPD_INFO[p.kind]||{d:()=>p.detail}).d(p))}</div></div>
+       ${ed?`<div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">${ppdBotoes(u,p)}</div>`:""}</div>`).join("")}`
+     :`<p style="margin:0 0 8px;color:var(--verde-medio)"><b>Nenhuma pendência.</b></p>`)+
+     `<p class="sub" style="margin:10px 0 0">Para ver e corrigir todos os dias de uma vez: <button type="button" class="lnk" data-ppdpln="${u.uid}">abrir a planilha do ponto de ${esc(u.nome.split(" ")[0])}</button>.</p>`)}
+   ${ppdPasso(2,false,"Baixar a folha de ponto (Excel)",`<p class="sub" style="margin:0 0 10px">De <b>${brDate(D.ini)}</b> até <b>${ate}</b>. Abra no Excel ou no Google Planilhas e termine de arrumar: corrija as horas nas colunas <b>Entrada</b> e <b>Saída</b> (formato 07:30). Trabalhado, saldo e banco de horas recalculam sozinhos. Depois salve em .xlsx (no Google: Arquivo › Fazer download › Microsoft Excel).</p>
+     ${pend.length?`<div class="callout sand" style="margin-bottom:10px">Ainda há ${pend.length} pendência(s). Dá para baixar assim, mas o mais fácil é resolver no passo 1 antes.</div>`:""}
+     <button type="button" class="b sec" data-ppdxls="${u.uid}" style="flex:none">${ic("down")} Baixar a folha de ${esc(u.nome.split(" ")[0])} (.xlsx)</button>`)}
+   ${ppdPasso(3,!!env,"Enviar a folha arrumada",env?`<div class="callout" style="margin-bottom:10px"><b style="color:var(--verde-medio)">Folha enviada</b> em ${new Date(env.em).toLocaleString("pt-BR",{dateStyle:"short",timeStyle:"short"})}${env.por?" por "+esc(env.por):""} · de ${brDate(env.de)} a ${brDate(env.ate)}${env.arq?` · arquivo ${esc(env.arq)} (${env.mud} alteração(ões))`:""}.${env.pend?` <b style="color:var(--bad)">Foi enviada com ${env.pend} pendência(s).</b>`:""}${env.ate<D.fim?` <b>Depois do envio entraram mais dias (até ${brDate(D.fim)}): envie de novo quando o período fechar.</b>`:""}</div>
+      <div class="row" style="flex-wrap:wrap;gap:6px">${env.docId&&S.docs&&S.docs[env.docId]?`<button type="button" class="b sec sm" data-ppdpdf="${esc(env.docId)}" style="flex:none">${ic("down")} Baixar a folha enviada (PDF)</button>`:""}
+       ${ed?`<button type="button" class="b sec sm" data-ppdup="${u.uid}" style="flex:none">${ic("up")} Enviar de novo (outro arquivo)</button><button type="button" class="b sec sm" data-ppddes="${u.uid}" style="flex:none">Desfazer envio</button>`:""}</div>`
+     :ed?`<p class="sub" style="margin:0 0 10px">Escolha o arquivo .xlsx que você arrumou. A planilha do ponto abre com o que mudou em <span style="background:#fff1b8;padding:0 4px;border-radius:4px">amarelo</span>; confira e clique em <b>Salvar alterações</b>. A folha fica marcada como enviada até ${brDate(D.fim)} e a versão final em PDF vai para o prontuário de ${esc(u.nome.split(" ")[0])}.</p>
+      <div class="row" style="flex-wrap:wrap;gap:8px;align-items:center"><button type="button" class="b" data-ppdup="${u.uid}" style="flex:none">${ic("up")} Enviar a folha arrumada (.xlsx)</button>
+      <button type="button" class="lnk" data-ppdok="${u.uid}">A folha já está certa: enviar sem arquivo</button></div>`
+     :`<p class="sub" style="margin:0">Seu perfil não permite enviar a folha.</p>`)}
+   <input type="file" id="ppdfile" accept=".xlsx,.xls,.csv" hidden></div>`;
+}
+function ppdHtml(){
+  const D=ppdDados();
+  const pedidos=typeof xeL==="function"?xeL("ajustes").filter(x=>(x.status||"Pendente")==="Pendente").length:0;
+  const sit={pendente:0,pronta:0,enviada:0};D.U.forEach(u=>sit[ppdSituacao(D,u)]++);
+  if(PPD.ver&&!sit[PPD.ver])PPD.ver="";
+  const lista=D.U.filter(u=>!PPD.ver||ppdSituacao(D,u)===PPD.ver);
+  const sel=PPD.quem&&D.U.find(u=>String(u.uid)===PPD.quem);if(PPD.quem&&!sel)PPD.quem="";
+  const nav=sel?(lista.some(u=>+u.uid===+sel.uid)?lista:D.U):lista;
+  const chip=(k,t,n)=>`<button type="button" class="b ${PPD.ver===k?"":"sec "}sm" data-ppdver="${k}" style="flex:none">${esc(t)} <b>${n}</b></button>`;
+  const topo=`<div class="card"><h2>Arrumar o ponto, integrante por integrante</h2>
+   <p class="sub" style="margin:0 0 10px">Escolha um integrante, resolva as pendências dele, baixe a folha em Excel para terminar de arrumar e envie a folha arrumada. Repita com o próximo.</p>
+   ${pontoPeriodoSel()}
+   ${D.futuro?`<div class="callout sand" style="margin-top:10px">Esse período ainda não começou (começa em ${brDate(D.ini)}).</div>`:
+     D.semBatidas?`<div class="callout sand" style="margin-top:10px">Nenhuma batida importada ainda. Importe o arquivo do relógio na primeira aba do Ponto.</div>`:
+     D.erro?`<div class="callout sand" style="margin-top:10px">Não consegui calcular: ${esc(D.erro)}</div>`:`
+   <p class="sub" style="margin:10px 0">Conferido de <b>${brDate(D.ini)}</b> até <b>${brDate(D.fim)}</b>${D.fim<refFim(D.ym)?" (só até ontem: os próximos dias entram quando passarem)":""}.</p>
+   ${pedidos?`<div class="callout sand" style="margin-bottom:10px"><b>${pedidos} pedido(s) de ajuste</b> dos integrantes aguardando sua aprovação. <button type="button" class="lnk" id="ppdped">Ver os pedidos</button></div>`:""}
+   <div class="callout ${D.L.length?"sand":""}" style="margin-bottom:10px;font-size:15px">${D.L.length?`<b>${D.L.length} pendência(s)</b> em ${D.U.filter(u=>u.pendencies.length).length} pessoa(s)`:`<b style="color:var(--verde-medio)">Nenhuma pendência no período</b>`} · <b>${sit.enviada}</b> de ${D.U.length} folha(s) enviada(s).${!D.L.length&&sit.enviada===D.U.length&&D.U.length?` Pode seguir para o <button type="button" class="lnk" id="ppdfech">Fechamento do mês</button>.`:""}</div>`}
+  </div>`;
+  if(D.futuro||D.semBatidas||D.erro)return topo;
+  if(sel)return topo+ppdPessoaHtml(D,sel,nav);
+  return topo+`<div class="card"><h2>Integrantes</h2>
+   <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">${chip("","Todos",D.U.length)}${Object.keys(PPD_SIT).filter(k=>sit[k]).map(k=>chip(k,PPD_SIT[k][0],sit[k])).join("")}</div>
+   ${lista.length?`<div class="wrap"><table><thead><tr><th>Integrante</th><th style="text-align:center">Pendências</th><th>Folha</th><th></th></tr></thead><tbody>
+   ${lista.map(u=>{const s=ppdSituacao(D,u),env=ppdEnvio(D.ym,u.uid);return `<tr><td><button type="button" class="lnk" data-ppdsel="${u.uid}" style="font-weight:600">${esc(u.nome)}</button><div class="sub">${esc((u.ig&&u.ig.cargo)||"")}</div></td>
+     <td style="text-align:center">${u.pendencies.length?`<b style="color:var(--bad)">${u.pendencies.length}</b>`:`<span style="color:var(--verde-medio)">✓</span>`}</td>
+     <td><span style="color:${PPD_SIT[s][1]};font-weight:600">${PPD_SIT[s][0]}</span>${env?`<div class="sub">em ${brDate(env.em.slice(0,10))}</div>`:""}</td>
+     <td style="text-align:right"><button type="button" class="b ${s==="enviada"?"sec ":""}sm" data-ppdsel="${u.uid}" style="flex:none">${s==="enviada"?"Ver":"Arrumar"} ▸</button></td></tr>`}).join("")}
+   </tbody></table></div>`:`<div class="empty">Ninguém nesta situação.</div>`}</div>`;
+}
+function ppdBind(){
+  bindPontoPeriodo();
+  const re=()=>go("ponto",true),D=()=>ppdDados();
+  document.querySelectorAll("[data-ppdver]").forEach(b=>b.onclick=()=>{PPD.ver=b.dataset.ppdver;re()});
+  document.querySelectorAll("[data-ppdsel]").forEach(b=>b.onclick=()=>{PPD.quem=b.dataset.ppdsel;PPD.tipo="";re();const c=$("ppdpessoa");if(c)c.scrollIntoView({block:"start"});else window.scrollTo(0,0)});
+  document.querySelectorAll("[data-ppdtipo]").forEach(b=>b.onclick=()=>{PPD.tipo=b.dataset.ppdtipo;re()});
+  document.querySelectorAll("[data-ppdoc]").forEach(b=>b.onclick=()=>openOcorr(+b.dataset.ppdoc,b.dataset.day));
+  document.querySelectorAll("[data-ppdmk]").forEach(b=>b.onclick=()=>openMarcas(+b.dataset.ppdmk,b.dataset.day,{suggest:b.dataset.sug}));
+  document.querySelectorAll("[data-ppdesc]").forEach(b=>b.onclick=()=>openEscalaAjuste(b.dataset.ppdesc,b.dataset.day,{tipo:"trabalho"}));
+  document.querySelectorAll("[data-ppdpln]").forEach(b=>b.onclick=()=>{const d=D();openPlanilha(+b.dataset.ppdpln,d.ini,d.fim,{aoSalvar:()=>re()})});
+  document.querySelectorAll("[data-ppdxls]").forEach(b=>b.onclick=()=>{const d=D(),u=d.U.find(x=>+x.uid===+b.dataset.ppdxls);if(u)ppdBaixaExcel(u,d)});
+  const fi=$("ppdfile");
+  document.querySelectorAll("[data-ppdup]").forEach(b=>b.onclick=()=>{if(!fi)return;fi.dataset.uid=b.dataset.ppdup;fi.click()});
+  if(fi)fi.onchange=e=>{const f=e.target.files[0];e.target.value="";if(f)ppdRecebeArquivo(fi.dataset.uid,f,D())};
+  document.querySelectorAll("[data-ppdok]").forEach(b=>b.onclick=async()=>{const d=D(),u=d.U.find(x=>+x.uid===+b.dataset.ppdok);if(!u)return;
+    if(!await askConfirm(`Marcar a folha de ${u.nome} como enviada, do jeito que está no sistema (${brDate(d.ini)} a ${brDate(d.fim)})?${u.pendencies.length?` Ainda tem ${u.pendencies.length} pendência(s).`:""}`,"Enviar a folha"))return;
+    ppdMarcaEnviada(u.uid,{mud:0})});
+  document.querySelectorAll("[data-ppddes]").forEach(b=>b.onclick=()=>ppdDesfazEnvio(b.dataset.ppddes));
+  document.querySelectorAll("[data-ppdpdf]").forEach(b=>b.onclick=async()=>{const d=S.docs[b.dataset.ppdpdf];if(!d)return;try{await saveFile(d.nome,new Blob([await bytesOf(d)],{type:"application/pdf"}))}catch(e){toast(e.message,true)}});
+  const f=$("ppdfech");if(f)f.onclick=()=>{XM.sec.ponto="fechamento";re()};
+  const pd=$("ppdped");if(pd)pd.onclick=()=>{XM.sec.ponto="ajustes";re()};
+}
+xmReg("ponto","pendencias","Pendências","Arrumar o ponto, integrante por integrante",ppdHtml,ppdBind);
+/* depois de salvar batida, justificativa ou escala, a lista é recalculada na hora (sem esperar o cache de 1 minuto) */
+{const afterOc0=afterOc;afterOc=function(){BHCACHE.clear();return afterOc0.apply(this,arguments)}}
 /* ===== V40 · Fechamento do ponto do mês: lista de conferência passo a passo (prefixo xfp) =====
    Reúne em um só lugar tudo o que costuma faltar antes de fechar o ponto: relógio importado,
    quem ficou sem batida, cadastros incompletos, jornadas calculadas, pendências, pedidos de ajuste,
    conformidade, feriados, aprovação por setor e a exportação para o contador.
    Apoio à conferência: não altera o ponto nem trava nada. */
 const XFP={de:"",ate:"",cmp:null};
-const xfpMesIni=ym=>ym+"-01";
-const xfpMesFim=ym=>{const [y,m]=ym.split("-").map(Number);return ym+"-"+String(new Date(y,m,0).getDate()).padStart(2,"0")};
-const xfpYmPadrao=()=>{const h=hojeIso(),ym=h.slice(0,7);if(+h.slice(8)<=10){const [y,m]=ym.split("-").map(Number);const d=new Date(y,m-2,1);return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")}return ym};
+const xfpMesIni=ym=>refIni(ym);
+const xfpMesFim=ym=>refFim(ym);
+const xfpYmPadrao=()=>pontoRef();
 function xfpPeriodo(){
-  if(!XFP.de||!XFP.ate){const ym=xfpYmPadrao();XFP.de=xfpMesIni(ym);XFP.ate=xfpMesFim(ym)}
-  return{de:XFP.de,ate:XFP.ate,ym:XFP.de.slice(0,7)};
+  // segue o período de referência escolhido no Ponto (26 a 25); datas digitadas à mão valem até trocar o período
+  if(!XFP.de||!XFP.ate||XFP.ym!==pontoRef()){XFP.ym=pontoRef();XFP.de=xfpMesIni(XFP.ym);XFP.ate=xfpMesFim(XFP.ym)}
+  return{de:XFP.de,ate:XFP.ate,ym:refYm(XFP.ate)};
 }
 const xfpCfg=()=>xmcfg("ponto");
 const xfpConf=ym=>((xfpCfg().fechConf||{})[ym])||{};
@@ -15147,9 +15374,9 @@ function xfpVerifica(){
   out.push({k:"calc",nivel:calc?0:1,t:"Jornadas calculadas para este período",d:calc?`Calculado para ${R.users.length} pessoa(s), de ${brDate(de)} a ${brDate(ate)}.${ate>=hoje?" O período ainda não terminou: só contam os dias até ontem (dias futuros não viram falta).":""}`:(R?`O último cálculo é de outro período (${brDate(R.start)} a ${brDate(R.end)}). Calcule de novo para este.`:"Ainda não foi calculado. Calcule para ver faltas, atrasos e pendências."),acao:{rot:calc?"Recalcular":"Calcular agora",id:"calc"}});
   if(calc){
     const pend=R.users.filter(u=>u.pendencies.length),totP=R.users.reduce((s,u)=>s+u.pendencies.length,0);
-    out.push({k:"pend",nivel:totP?2:0,t:"Dias com batida faltando ou sobrando",d:totP?`${totP} dia(s): ${pend.slice(0,5).map(u=>`${u.nome} (${u.pendencies.slice(0,3).map(p=>xfpFmt(p.day)).join(", ")}${u.pendencies.length>3?"…":""})`).join("; ")}${pend.length>5?" e mais "+(pend.length-5)+" pessoa(s)":""}. Resolva com batida esquecida, pedido de ajuste ou justificativa.`:"Nenhum dia com batida faltando.",acao:totP?{rot:"Ver o mapa de frequência",id:"mapa"}:null});
+    out.push({k:"pend",nivel:totP?2:0,t:"Dias com batida faltando ou sobrando",d:totP?`${totP} dia(s): ${pend.slice(0,5).map(u=>`${u.nome} (${u.pendencies.slice(0,3).map(p=>xfpFmt(p.day)).join(", ")}${u.pendencies.length>3?"…":""})`).join("; ")}${pend.length>5?" e mais "+(pend.length-5)+" pessoa(s)":""}. Resolva com batida esquecida, pedido de ajuste ou justificativa.`:"Nenhum dia com batida faltando.",acao:totP?{rot:"Resolver pendências",id:"pendencias"}:null});
     const fl=R.users.filter(u=>u.t.faltas),totF=R.users.reduce((s,u)=>s+u.t.faltas,0);
-    out.push({k:"faltas",nivel:totF?2:0,t:"Faltas sem justificativa",d:totF?`${totF} falta(s): ${fl.slice(0,6).map(u=>`${u.nome} (${u.t.faltas})`).join(", ")}${fl.length>6?" e mais "+(fl.length-6):""}. Lance atestado, folga ou justificativa; o que sobrar vira desconto na folha.`:"Nenhuma falta sem justificativa.",acao:totF?{rot:"Ver o mapa de frequência",id:"mapa"}:null});
+    out.push({k:"faltas",nivel:totF?2:0,t:"Faltas sem justificativa",d:totF?`${totF} falta(s): ${fl.slice(0,6).map(u=>`${u.nome} (${u.t.faltas})`).join(", ")}${fl.length>6?" e mais "+(fl.length-6):""}. Lance atestado, folga ou justificativa; o que sobrar vira desconto na folha.`:"Nenhuma falta sem justificativa.",acao:totF?{rot:"Resolver faltas",id:"pendencias"}:null});
     const ex=R.users.reduce((s,u)=>s+u.t.extra,0),at=R.users.reduce((s,u)=>s+u.t.late+u.t.early,0);
     {const sc=R.semCadastro||[];out.push({k:"semcad",nivel:sc.length?1:0,t:"Números do relógio sem cadastro",d:sc.length?`${sc.map(x=>"nº "+x.uid+" ("+x.n+" batida(s))").join(", ")}. Ficam fora do cálculo. Se for alguém da casa, cadastre ou ligue no De-para.`:"Todas as batidas do período são de integrantes cadastrados.",acao:sc.length?{rot:"Abrir o De-para",id:"vinculos"}:null})}
     out.push({k:"horas",nivel:0,t:"Horas extras e atrasos (só para conhecimento)",d:`Extras: ${xeHM(ex)} · atrasos e saídas antecipadas: ${xeHM(at)}. Confira se as extras foram autorizadas antes de pagar.`,acao:{rot:"Ver autorização de horas extras",id:"heaut"}});
@@ -15170,7 +15397,7 @@ function xfpVerifica(){
 }
 const xfpIco=n=>n===0?`<b style="color:var(--verde-medio)">✔</b>`:n===1?`<b style="color:var(--madeira)">▲</b>`:`<b style="color:var(--bad)">●</b>`;
 function xfpGoTab(id){
-  if(id==="imp"||id==="regras"||id==="mapa"||id==="calc"){XM.sec.ponto="";XAB.tab.ponto="p:Calcular jornadas";go("ponto",true);return}
+  if(id==="imp"||id==="regras"||id==="mapa"||id==="calc"){XM.sec.ponto="";XAB.tab.ponto="p:"+XAB_PRI.ponto;go("ponto",true);return}
   XM.sec.ponto=id;go("ponto",true);
 }
 function xfpHtml(){
@@ -15182,7 +15409,7 @@ function xfpHtml(){
    <p class="sub" style="margin:0 0 10px">Siga a lista de cima para baixo. Cada linha diz o que falta e leva direto para onde resolver. É um apoio à conferência: nada é travado nem alterado por aqui.</p>
    <div class="row" style="align-items:flex-end;margin-bottom:10px">
     <div><label>De</label><input type="date" id="xfpde" value="${de}"></div><div><label>Até</label><input type="date" id="xfpate" value="${ate}"></div>
-    <button type="button" class="b sec" data-xfpper="ant" style="flex:none">Mês passado</button><button type="button" class="b sec" data-xfpper="atual" style="flex:none">Este mês</button></div>
+    <button type="button" class="b sec" data-xfpper="ant" style="flex:none">◀ Período anterior</button><button type="button" class="b sec" data-xfpper="prox" style="flex:none">Próximo ▶</button><span class="sub" style="align-self:center">Referência ${ym.slice(5)}/${ym.slice(0,4)}: ${refRotulo(ym)}</span></div>
    <div class="callout ${pend.length?"sand":""}" style="margin-bottom:10px">${resumo}${fech?` <span class="sub">Fechado em ${brDate(fech.em)} por ${esc(fech.por||"—")}.</span>`:""}</div>
    ${L.map(x=>`<div class="doc" style="align-items:flex-start;gap:10px;${conf[x.k]?"opacity:.6":""}"><div style="width:18px;text-align:center;padding-top:2px">${xfpIco(conf[x.k]&&x.nivel?0:x.nivel)}</div>
      <div class="grow"><div class="nm">${esc(x.t)}</div><div class="sub">${esc(x.d)}</div></div>
@@ -15197,7 +15424,7 @@ function xfpBind(){
   const de=document.getElementById("xfpde"),ate=document.getElementById("xfpate");
   if(de)de.onchange=()=>{if(de.value){XFP.de=de.value;if(XFP.ate<XFP.de)XFP.ate=XFP.de}R()};
   if(ate)ate.onchange=()=>{if(ate.value){XFP.ate=ate.value;if(XFP.de>XFP.ate)XFP.de=XFP.ate}R()};
-  document.querySelectorAll("[data-xfpper]").forEach(b=>b.onclick=()=>{let ym=xfpYmPadrao();const h=hojeIso().slice(0,7);if(b.dataset.xfpper==="atual")ym=h;else{const [y,m]=h.split("-").map(Number),d=new Date(y,m-2,1);ym=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")}XFP.de=xfpMesIni(ym);XFP.ate=xfpMesFim(ym);R()});
+  document.querySelectorAll("[data-xfpper]").forEach(b=>b.onclick=()=>{PREF.ym=refYmAdd(pontoRef(),b.dataset.xfpper==="ant"?-1:1);XFP.ym=null;R()});
   const L=xfpVerifica();
   document.querySelectorAll("[data-xfpa]").forEach(b=>b.onclick=()=>{
     const x=L.find(v=>v.k===b.dataset.xfpa);if(!x||!x.acao)return;const a=x.acao;
@@ -15351,6 +15578,10 @@ Como preencher:
 - "dados": copie TUDO o que estiver legível neste arquivo sobre a pessoa do campo "nome" (não deixe em branco o que dá para ler). Datas sempre no formato AAAA-MM-DD (ex.: 10/MAR/1977 vira 1977-03-10). Números como impressos (pode manter pontos e traços). RG: o "Registro Geral". CPF: 11 dígitos (no verso do RG aparece como "CPF"). PIS/NIT/NIS/PASEP vão em "pis" (o Cartão do Cidadão e o comprovante de inscrição NIT trazem esse número). CTPS: número e série. Título: número de inscrição, zona e seção. Estado civil: só se o documento disser (certidão de casamento com averbação de divórcio = "divorciado(a)").
 - "lado": "frente e verso" se o arquivo mostra os dois lados (um RG aberto, ou um lado em cada página/foto); "frente" ou "verso" se só um lado; null se o documento não tem lados (digital, conta, certidão).
 - Cartão do Cidadão da Caixa: tipo "Cartão do Cidadão (NIS)". Comprovante de cadastramento do NIT/PIS: tipo "PIS/NIS".
+- Como reconhecer o "tipo" (olhe o título impresso, não só os campos — quase todo documento traz CPF, RG e filiação):
+  RG = "Carteira de Identidade"/"Registro Geral"/"Cédula de Identidade", inclusive a nova Carteira de Identidade Nacional (CIN), em que o número é o CPF; CNH = "Carteira Nacional de Habilitação" (física ou digital), mesmo trazendo CPF e RG; CTPS = "Carteira de Trabalho" (livreto azul ou digital); CPF = só o cartão ou comprovante da Receita Federal; título = "Justiça Eleitoral"/e-Título;
+  ASO = "Atestado de Saúde Ocupacional" (exame admissional, periódico, demissional; apto/inapto); Atestado médico = afastamento/repouso por doença; Comprovante de residência = conta de luz, água, gás, telefone ou internet com endereço; Comprovante bancário = comprovante de PIX/transferência, cartão ou dados da conta;
+  Registro profissional = carteira do COREN, CRM, CREFITO etc.; Diploma ou certificado = conclusão de curso; Contrato = contrato de trabalho/experiência assinado; Foto 3x4 = só o rosto, sem texto de documento.
 - Não invente. Se não tiver certeza do tipo, use "Outro". Se a imagem estiver ilegível, "legivel": false.`;
 /* recorta as margens brancas (um RG pequeno no canto de uma folha A4 fica legível para a leitura) */
 function xdcRecorta(cv){
@@ -15495,7 +15726,22 @@ async function xocrGira(blob,graus){
   return blobDe(cv,"image/jpeg",.9);
 }
 /* lê uma imagem; se o texto vier fraco, tenta a foto girada (documento de lado ou de cabeça para baixo) */
+/* cinza + contraste esticado + tamanho mínimo: o leitor simples erra bem menos em foto de celular */
+async function xocrPrep(blob){
+  try{
+    const bmp=await createImageBitmap(blob),L=Math.max(bmp.width,bmp.height),k=L<1600?Math.min(2,1600/L):L>2600?2600/L:1,cv=document.createElement("canvas");
+    cv.width=Math.round(bmp.width*k);cv.height=Math.round(bmp.height*k);
+    const cx=cv.getContext("2d");cx.fillStyle="#fff";cx.fillRect(0,0,cv.width,cv.height);cx.drawImage(bmp,0,0,cv.width,cv.height);
+    const im=cx.getImageData(0,0,cv.width,cv.height),d=im.data,h=new Uint32Array(256),tot=d.length/4;
+    for(let p=0;p<d.length;p+=4){const g=(d[p]*299+d[p+1]*587+d[p+2]*114)/1000|0;d[p]=g;h[g]++}
+    let a=0,b=255,c=0;while(a<255&&(c+=h[a])<tot*.02)a++;c=0;while(b>0&&(c+=h[b])<tot*.02)b--;
+    const f=b>a+20?255/(b-a):1;
+    for(let p=0;p<d.length;p+=4){const g=Math.max(0,Math.min(255,(d[p]-a)*f));d[p]=d[p+1]=d[p+2]=g}
+    cx.putImageData(im,0,0);return (await blobDe(cv,"image/png"))||blob;
+  }catch(e){return blob}
+}
 async function xocrImagem(blob){
+  blob=await xocrPrep(blob);
   const w=await xocrCarrega(),nota=d=>(d.confidence||0)*Math.min(1,(String(d.text||"").replace(/[^A-Za-z0-9]/g,"").length)/120);
   let melhor=(await w.recognize(blob)).data;
   if(nota(melhor)<45)for(const g of[90,270,180]){const d=(await w.recognize(await xocrGira(blob,g))).data;if(nota(d)>nota(melhor))melhor=d;if(nota(melhor)>=60)break}
@@ -15510,15 +15756,55 @@ async function xocrTextoArquivo(file,imgs){
   }
   let t="";for(const b of imgs)t+=await xocrImagem(b)+"\n";return t;
 }
-const XOCR_TIPOS=[[/CARTEIRA NACIONAL DE HABILITA|PERMISSAO PARA DIRIGIR/,"CNH"],[/CARTEIRA DE TRABALHO/,"CTPS"],[/TITULO ELEITORAL|TITULO DE ELEITOR|JUSTICA ELEITORAL/,"Título de eleitor"],[/CARTAO DO CIDADAO/,"Cartão do Cidadão (NIS)"],
-  [/CERTIDAO DE NASCIMENTO/,"Certidão de nascimento"],[/CERTIDAO DE CASAMENTO/,"Certidão de casamento"],[/CARTEIRA DE IDENTIDADE|REGISTRO GERAL|CEDULA DE IDENTIDADE|IDENTIDADE NACIONAL/,"RG"],
-  [/CADASTRO DE PESSOAS? FISICAS?|COMPROVANTE DE INSCRICAO NO CPF|CARTAO CPF/,"CPF"],[/\b(NIT|PIS|PASEP|NIS)\b.{0,40}(INSCRICAO|CADASTRO|COMPROVANTE)|(INSCRICAO|CADASTRO|COMPROVANTE).{0,40}\b(NIT|PIS|PASEP|NIS)\b/,"PIS/NIS"],
-  [/RESERVISTA|CERTIFICADO DE DISPENSA/,"Reservista"],[/VACINA/,"Cartão de vacinação"],[/ATESTADO DE SAUDE OCUPACIONAL|\bA\.?S\.?O\b/,"ASO"],[/ATESTADO/,"Atestado médico"],
-  [/CONTA DE (LUZ|AGUA|ENERGIA)|SABESP|ELEKTRO|ENEL|CONSUMO.{0,30}(KWH|M3)|FATURA|2A VIA/,"Comprovante de residência"]];
+/* tipo do documento pela leitura sem IA: cada tipo tem várias pistas com peso; a frase pode vir com letras trocadas
+   (o leitor erra "HABILITACAO" como "HABIL1TACA0"), então as pistas longas aceitam alguns erros. Pista curta só vale como palavra inteira. */
+const XOCR_PISTAS={
+  "RG":{CARTEIRADEIDENTIDADE:4,REGISTROGERAL:4,CEDULADEIDENTIDADE:3,IDENTIDADENACIONAL:3,SECRETARIADASEGURANCAPUBLICA:2,INSTITUTODEIDENTIFICACAO:2,VALIDAEMTODOOTERRITORIONACIONAL:2,DATADEEXPEDICAO:1,ASSINATURADOTITULAR:1,POLEGARDIREITO:1,DOCORIGEM:1,SSP:1},
+  "CNH":{CARTEIRANACIONALDEHABILITACAO:5,PERMISSAOPARADIRIGIR:4,DEPARTAMENTONACIONALDETRANSITO:3,PRIMEIRAHABILITACAO:3,DENATRAN:3,SENATRAN:3,DETRAN:2,CATHAB:2,ACC:1},
+  "CTPS":{CARTEIRADETRABALHO:5,PREVIDENCIASOCIAL:1,CARTEIRADETRABALHODIGITAL:2,CTPS:3,CONTRATOSDETRABALHO:1},
+  "CPF":{CADASTRODEPESSOASFISICAS:5,CADASTRODEPESSOAFISICA:5,COMPROVANTEDESITUACAOCADASTRAL:3,SITUACAOCADASTRAL:2,RECEITAFEDERAL:2,MINISTERIODAFAZENDA:1},
+  "PIS/NIS":{NUMERODEIDENTIFICACAODOTRABALHADOR:4,CADASTRONACIONALDEINFORMACOESSOCIAIS:4,CNIS:3,NIT:1,PIS:1,PASEP:1,NIS:1,INSS:1},
+  "Cartão do Cidadão (NIS)":{CARTAODOCIDADAO:5,CAIXA:1},
+  "Título de eleitor":{TITULOELEITORAL:5,TITULODEELEITOR:5,JUSTICAELEITORAL:4,TRIBUNALSUPERIORELEITORAL:3,TRIBUNALREGIONALELEITORAL:3,ZONA:1,SECAO:1},
+  "Reservista":{CERTIFICADODERESERVISTA:5,RESERVISTA:4,CERTIFICADODEDISPENSADEINCORPORACAO:5,SERVICOMILITAR:3,MINISTERIODADEFESA:2,JUNTADESERVICOMILITAR:2},
+  "Certidão de nascimento":{CERTIDAODENASCIMENTO:5,REGISTROCIVILDASPESSOASNATURAIS:2,AVOSMATERNOS:2,AVOSPATERNOS:2,DECLARANTE:1,MATRICULA:1},
+  "Certidão de casamento":{CERTIDAODECASAMENTO:5,REGIMEDEBENS:4,CONTRAENTES:2,REGISTROCIVILDASPESSOASNATURAIS:1,MATRICULA:1},
+  "Comprovante de residência":{CONTADEENERGIA:4,CONTADELUZ:4,CONTADEAGUA:4,UNIDADECONSUMIDORA:3,SABESP:3,ELEKTRO:3,ENEL:2,CPFL:2,EDP:2,KWH:2,CONSUMO:1,LEITURAATUAL:2,VENCIMENTO:1,FATURA:1,CODIGODEINSTALACAO:2},
+  "Cartão de vacinação":{CARTAODEVACINACAO:5,CARTEIRADEVACINACAO:5,CERTIFICADONACIONALDEVACINACAO:5,VACINA:3,IMUNIZACAO:2,DOSE:1,LOTE:1},
+  "ASO":{ATESTADODESAUDEOCUPACIONAL:6,EXAMEADMISSIONAL:3,EXAMEDEMISSIONAL:3,EXAMEPERIODICO:2,PCMSO:3,MEDICODOTRABALHO:2,RISCOSOCUPACIONAIS:2,APTO:1,INAPTO:1,ASO:2},
+  "Atestado médico":{ATESTADOMEDICO:4,ATESTOPARAOSDEVIDOSFINS:3,ATESTO:2,DIASDEREPOUSO:2,AFASTAMENTO:1,CID:1,CRM:1},
+  "Contrato":{CONTRATODEEXPERIENCIA:5,CONTRATODETRABALHO:2,CONTRATANTE:2,CONTRATADO:2,CLAUSULA:2,TESTEMUNHAS:1,EMPREGADOR:1},
+  "Diploma ou certificado":{DIPLOMA:4,CERTIFICAMOS:3,CERTIFICADODECONCLUSAO:3,CARGAHORARIA:2,CONCLUIU:2,CURSO:1},
+  "Registro profissional (conselho)":{CONSELHOREGIONAL:4,COREN:4,CREFITO:4,CONSELHOFEDERAL:2,INSCRICAOPROFISSIONAL:2,CRM:1,CRN:1,CRF:1},
+  "Comprovante bancário":{COMPROVANTEDETRANSFERENCIA:4,COMPROVANTEDEPAGAMENTO:2,DADOSBANCARIOS:3,CONTACORRENTE:2,CONTAPOUPANCA:2,FAVORECIDO:2,CHAVEPIX:3,PIX:2,AGENCIA:1,EXTRATO:2}
+};
+/* menor nº de erros (troca, falta ou sobra de letra) para achar P dentro de T */
+function xocrAprox(T,P){
+  if(T.includes(P))return 0;
+  const m=P.length;let prev=new Uint16Array(m+1),cur=new Uint16Array(m+1),best=m;
+  for(let k=0;k<=m;k++)prev[k]=k;
+  for(let j=0;j<T.length;j++){const c=T.charCodeAt(j);cur[0]=0;
+    for(let k=1;k<=m;k++){const a=prev[k]+1,b=cur[k-1]+1,d=prev[k-1]+(P.charCodeAt(k-1)===c?0:1);cur[k]=a<b?(a<d?a:d):(b<d?b:d)}
+    if(cur[m]<best)best=cur[m];const t=prev;prev=cur;cur=t}
+  return best;
+}
+function xocrTipo(TU,nomeArq){
+  const S=TU.replace(/[^A-Z0-9]/g,"").replace(/0/g,"O").replace(/1/g,"I").replace(/5/g,"S").replace(/8/g,"B"),W=" "+TU.replace(/[^A-Z0-9]+/g," ")+" ";
+  const pts={};
+  for(const[t,ps]of Object.entries(XOCR_PISTAS)){let s=0;
+    for(const[p,w]of Object.entries(ps)){
+      if(p.length<=6){if(W.includes(" "+p+" "))s+=w;continue}
+      const lim=p.length>=14?Math.floor(p.length*.15):1,e=xocrAprox(S,p);if(e<=lim)s+=w*(1-e/(lim+1)/2)}
+    pts[t]=s}
+  const h=xdcHeur(nomeArq||"");if(h)pts[h]=(pts[h]||0)+3;
+  const ord=Object.entries(pts).sort((a,b)=>b[1]-a[1]),[t1,s1]=ord[0]||["Outro",0],s2=(ord[1]||[0,0])[1];
+  /* na dúvida é melhor perguntar do que chutar: pouca pista ou empate técnico vira "Outro" para você escolher */
+  return s1>=3&&s1-s2>=1.5?t1:"Outro";
+}
 function xocrExtrai(texto,file){
   const L=String(texto).split(/\n+/).map(s=>s.replace(/\s+/g," ").trim()).filter(Boolean);
   const U=L.map(l=>l.normalize("NFD").replace(/[\u0300-\u036f]/g,"").toUpperCase()),TU=U.join("\n");
-  const tipo=(XOCR_TIPOS.find(([re])=>re.test(TU))||[])[1]||xdcHeur(file.name||"")||"Outro";
+  const tipo=xocrTipo(TU,file.name);
   // números: corrige letras que o leitor confunde com algarismos (O→0, I/l→1, S→5, B→8) só em trechos quase todos numéricos
   const limpaNum=s=>s.replace(/[0-9OoIlSB][0-9OoIlSB.\-\/ ]{6,20}[0-9OoIlSBX]/g,m=>((m.match(/\d/g)||[]).length>=m.replace(/[.\-\/ ]/g,"").length*.7)?m.replace(/[Oo]/g,"0").replace(/[Il]/g,"1").replace(/S/g,"5").replace(/B/g,"8"):m);
   const UN=U.map(limpaNum);
@@ -15583,7 +15869,7 @@ function xdcSelo(r){
   return`<span class="xdcb tipo">${esc(t)}${de}</span><span class="xdcb lado ${r.lado||"nenhum"}">${r.lado?xdcLadoNome[r.lado]:"Sem lados"}</span>${r.paginas>1?`<span class="xdcb pg">${r.paginas} páginas</span>`:""}`;
 }
 function xdcLinha(i,r){
-  const st=r.estado==="lendo"?`<span class="xdcst">Lendo…</span>`:r.estado==="erro"?`<span class="xdcst err">Não consegui ler (${esc(r.msg||"")}). Escolha o tipo.</span>`:r.estado==="ok"?`<span class="xdcst ok">Lido pelo sistema. Confira.</span>`:"";
+  const st=r.estado==="lendo"?`<span class="xdcst">Lendo…</span>`:r.estado==="erro"?`<span class="xdcst err">Não consegui ler (${esc(r.msg||"")}). Escolha o tipo.</span>`:r.estado==="ok"?`<span class="xdcst ok">Lido pelo sistema. Confira.</span>`:r.estado==="conf"?`<span class="xdcst err">Lido sem IA: confira o tipo e cada dado antes de salvar.</span>`:"";
   return `<div class="xdcrow" data-xr="${r.id}">
    <div class="xdcth">${xdcThumb(r)}</div>
    <div class="xdcf">
@@ -15657,6 +15943,8 @@ function xdcAbre(i,itens){
         const t=xdcTitular(i,leu);
         if(t.troca&&leu.dados){const d=leu.dados={...leu.dados};delete d.nomeCompleto;["mae","pai"].forEach(k=>{if(d[k]&&xdcMesmoNome(d[k],xdcNomeC(i)))delete d[k]})}
         r.quem=t.quem;r.pessoa=t.pessoa;r.parent=t.parent;r.props=xdcPropostas(S.integrantes[i.id]||i,leu.dados||{});r.dados=leu.dados||{};
+        /* leitura sem IA: nunca salva sozinha e só deixa marcados CPF e PIS (que passaram no dígito verificador) */
+        if(leu.ocr){r.estado="conf";r.props.forEach(p=>{if(p.k!=="cpf"&&p.k!=="pis")p.on=false})}
         if(!leu.legivel){r.estado="erro";r.msg="imagem difícil de ler"}
       }
       xdcRecompoe(i,r);
@@ -15928,7 +16216,7 @@ function xdcNovo(){
       const igual=ativos().find(x=>xdcMesmoNome(xdcNomeC(x),achou.nome));
       if(igual){existe=igual;ok.textContent="Enviar para "+xdcPrimeiro(nomeInteg(igual));
         info.innerHTML=`Nome lido: <b>${esc(achou.nome)}</b>. Já existe <b>${esc(nomeInteg(igual))}</b> no cadastro. Clique em "Enviar para ${esc(xdcPrimeiro(nomeInteg(igual)))}" para guardar os documentos na pasta dela(e), ou corrija o nome para criar outra pessoa.`;return}
-      info.innerHTML=`Nome lido em ${esc(achou.tipos.join(", "))}: <b>${esc(achou.nome)}</b>.${achou.outros?" Há documentos de outras pessoas também (filhos ou familiares); eles vão para a pasta como documentos de familiar.":""} Confira e clique em Criar integrante.`;
+      info.innerHTML=`Nome lido em ${esc(achou.tipos.join(", "))}: <b>${esc(achou.nome)}</b>.${res.some(x=>x&&x.ocr)?" <b>Lido sem IA: confira letra por letra.</b>":""}${achou.outros?" Há documentos de outras pessoas também (filhos ou familiares); eles vão para a pasta como documentos de familiar.":""} Confira e clique em Criar integrante.`;
       ok.textContent="Criar integrante";return;
     }
     if(nome.length<3)return toast("Informe o nome completo.",true);
@@ -16026,6 +16314,8 @@ async function xdcRelerDados(i){
     const vs=[...e.vals.values()].sort((a,b)=>b.fontes.length-a.fontes.length),top=vs[0],empate=vs[1]&&vs[1].fontes.length===top.fontes.length;
     const p={...top.p,valor:top.valor,fontes:top.fontes,outros:vs.slice(1)};
     if(empate)p.on=false;props.push(p)});
+  /* leitura sem IA erra muito: só CPF e PIS (conferidos pelo dígito verificador) vêm marcados */
+  if(lidos.some(x=>x.leu.ocr))props.forEach(p=>{if(p.k!=="cpf"&&p.k!=="pis")p.on=false});
   const fam=lidos.filter(x=>x.t.quem==="familiar"&&x.t.parent==="filho(a)").map(x=>({quem:"familiar",parent:"filho(a)",pessoa:x.t.pessoa,dados:x.leu.dados||{}}));
   const deps=xdcDepsDe(fam);
   const novosDeps=deps.filter(n=>{const a=(atual.dependentes||[]).find(x=>xdcMesmoNome(x.nome,n.nome));return !a||["nascimento","cpf"].some(k=>n[k]&&!a[k])});
@@ -16167,7 +16457,7 @@ if(window.HOST){
 const PLN={uid:null,igId:null,de:"",ate:"",dias:[],orig:[],grid:[],prev:[],prevBase:[],prevMan:[],ncol:6,sel:{r0:0,c0:0,r1:0,c1:0},undo:[],snap:"",snapUsado:false,calc:null,calcErro:"",arr:false};
 // "7", "730", "07:30", "7h30", "7.30", 0.3125 (hora do Excel) -> "07:30"; vazio -> ""; inválido -> null
 function plnHora(v){
-  if(typeof v==="number"&&isFinite(v)&&v>=0&&v<1){const m=Math.round(v*1440)%1440;return String(m/60|0).padStart(2,"0")+":"+String(m%60).padStart(2,"0")}
+  if(typeof v==="number"&&isFinite(v)&&v>=0){const m=Math.round((v%1)*1440)%1440;return String(m/60|0).padStart(2,"0")+":"+String(m%60).padStart(2,"0")}
   const s=String(v??"").trim().toLowerCase().replace(/\s+/g,"");if(!s)return "";
   const m=s.match(/^(\d{1,2})[:h.,](\d{2})(?::\d{2})?$/)||s.match(/^(\d{1,2})(\d{2})$/)||s.match(/^(\d{1,2})h?()$/);
   if(!m)return null;const h=+m[1],mi=+(m[2]||0);if(h>23||mi>59)return null;
@@ -16175,7 +16465,7 @@ function plnHora(v){
 }
 // duração do previsto: "8", "8:00", "0800", "7h20", 0.333 (Excel) -> "08:00"; aceita até 99:59 (plantão)
 function plnDur(v){
-  if(typeof v==="number"&&isFinite(v)&&v>=0&&v<1)return fmtHHMM(Math.round(v*1440));
+  if(typeof v==="number"&&isFinite(v)&&v>=0&&v*1440<6000)return fmtHHMM(Math.round(v*1440));
   const s=String(v??"").trim().toLowerCase().replace(/\s+/g,"");if(!s)return "";
   const m=s.match(/^(\d{1,2})[:h.,](\d{2})(?::\d{2})?$/)||s.match(/^(\d{1,2})(\d{2})$/)||s.match(/^(\d{1,2})h?()$/);
   if(!m)return null;const mi=+(m[2]||0);if(mi>59)return null;
@@ -16356,6 +16646,7 @@ async function plnSalva(){
     put("config",id,{...strip(doc),dias:dd});
   }
   afterOc();plnCarrega();plnPinta(false);toast(`Ponto salvo: ${ops.length+prevOps.length} alteração(ões).`);
+  if(typeof PLN.aoSalvar==="function")try{PLN.aoSalvar(ops.length+prevOps.length)}catch(e){console.error(e)}
 }
 function plnExcel(){
   if(typeof XLSX==="undefined")return toast("A biblioteca de Excel não carregou. Recarregue a página e tente de novo.",true);
@@ -16389,28 +16680,50 @@ async function plnImporta(f){
     const cols=A[hi].map((h,i)=>/^(entrada|sa[ií]da|batida)/i.test(String(h).trim())?i:-1).filter(i=>i>=0),cp=A[hi].findIndex(h=>/^previst/i.test(String(h).trim()));
     if(!cols.length&&cp<0)throw new Error("não achei as colunas de Entrada, Saída ou Previsto.");
     plnSnap();let n=0,fora=0,trav=0;
-    A.slice(hi+1).forEach(l=>{const d=plnData(l[0]);if(!d)return;const r=PLN.dias.indexOf(d);if(r<0){fora++;return}if(plnTrava(r)){trav++;return}
-      if(cols.length){plnLargura(cols.length);PLN.grid[r]=PLN.grid[r].map((_,c)=>plnCel(c,c<cols.length?l[cols[c]]:""))}
-      if(cp>=0)PLN.prev[r]=plnCel(PLN.ncol,l[cp]);n++});
+    const lin=A.slice(hi+1).map(l=>({d:plnData(l[0]),l})).filter(x=>x.d),temLinha=new Set(lin.map(x=>x.d)),porDia=new Map(),extra=new Map(),add=(M,d,v)=>{if(!M.has(d))M.set(d,[]);M.get(d).push(v)};
+    lin.forEach(({d,l})=>{if(!porDia.has(d))porDia.set(d,[]);
+      cols.forEach((ci,k)=>{const v0=l[ci],v=v0===""||v0==null?"":(plnHora(v0)??String(v0).trim());if(v==="")return;
+        // par k: coluna par = entrada, ímpar = saída; saída antes da entrada do mesmo par passa da meia-noite
+        const ent=k%2?plnHora(l[cols[k-1]]):null,vira=k%2&&ent&&plnHora(v)&&plnHora(v)<ent;
+        if(vira){const d2=addDaysIso(d,1);add(temLinha.has(d2)?porDia:extra,d2,plnHora(v))}else add(porDia,d,v)})});
+    const ordena=L=>L.slice().sort((a,b)=>(plnHora(a)||"99")<(plnHora(b)||"99")?-1:1);
+    PLN.dias.forEach((d,r)=>{
+      if(!temLinha.has(d)&&!extra.has(d))return;
+      if(plnTrava(r)){trav++;return}
+      if(cols.length){
+        let L=temLinha.has(d)?(porDia.get(d)||[]).slice():PLN.grid[r].filter(v=>v!=="");
+        // dia sem linha no arquivo que recebe a saída do plantão da véspera: a saída antiga desse plantão sai, entra a do arquivo
+        if(!temLinha.has(d)){const v=addDaysIso(d,-1),cv=temLinha.has(v)&&PLN.calc&&PLN.calc.get(v),dono=new Set();
+          if(cv)(cv.marcas&&cv.marcas.length?cv.marcas:(cv.rawIntervals||[]).flat()).forEach(t=>{if(isoDate(t)===d)dono.add(hm(t))});
+          L=L.filter(v=>!dono.has(plnHora(v)));L.push(...extra.get(d))}
+        // 1º dia do arquivo: a saída do plantão que começou na véspera não está no arquivo e continua valendo
+        else if(!temLinha.has(addDaysIso(d,-1))&&dayMarcas(PLN.uid,addDaysIso(d,-1)).length%2){const pri=ordena(L).map(plnHora).find(Boolean)||"99";
+          PLN.orig[r].filter(o=>o.h<pri&&!L.some(v=>plnHora(v)===o.h)).forEach(o=>L.push(o.h))}
+        L=ordena([...new Set(L)]);plnLargura(L.length);PLN.grid[r]=PLN.grid[r].map((_,c)=>L[c]??"");
+      }
+      const li=lin.find(x=>x.d===d);if(cp>=0&&li)PLN.prev[r]=plnCel(PLN.ncol,li.l[cp]);n++});
+    fora=[...temLinha].filter(d=>!PLN.dias.includes(d)).length;
     plnPinta(false);
     toast(`${n} dia(s) lido(s) do Excel. Confira as células amarelas e clique em Salvar alterações.`+(fora?` ${fora} dia(s) fora do período ignorado(s).`:"")+(trav?` ${trav} em mês fechado ignorado(s).`:""));
+    return true;
   }catch(e){toast("Não foi possível ler a planilha: "+e.message,true)}
 }
 document.addEventListener("mouseup",()=>{PLN.arr=false});
 xmReg("ponto","planilha","Ajustes e justificativas","Planilha do ponto (como no Excel)",()=>`<div class="card"><h2>Planilha do ponto</h2>
   <p class="sub" style="margin:0 0 12px">Veja e corrija as batidas de um integrante num período inteiro, numa grade igual à do Excel: um dia por linha, entradas e saídas nas colunas. Dá para editar vários dias de uma vez, colar direto do Excel, baixar a planilha e importar de volta. Nada é gravado até você clicar em <b>Salvar alterações</b>, e a hora original de cada batida alterada fica no histórico.</p>
   <button class="b" id="plabre" style="flex:none">${ic("sheet")} Abrir a planilha do ponto</button></div>`,()=>{const b=$("plabre");if(b)b.onclick=()=>openPlanilha()});
-function openPlanilha(uid,de,ate){
+function openPlanilha(uid,de,ate,opt){
+  opt=opt||{};PLN.aoSalvar=opt.aoSalvar||null;
   const pes=plnPessoas();if(!pes.length)return toast("Nenhum integrante com número no relógio. Cadastre no Prontuário.",true);
   PLN.uid=uid!=null&&pes.some(i=>+i.uid===+uid)?+uid:(PLN.uid!=null&&pes.some(i=>+i.uid===+PLN.uid)?+PLN.uid:+pes[0].uid);
   const R=POINT.result,hoje=hojeIso();
-  PLN.de=de||(R&&R.start)||hoje.slice(0,8)+"01";PLN.ate=ate||(R&&R.end)||hoje;
+  PLN.de=de||(R&&R.start)||refIni(refPadrao());PLN.ate=ate||(R&&R.end)||refFim(refPadrao());
   const ov=openModal(`<h3>Planilha do ponto</h3><div class="sub" style="margin-bottom:10px">Edite vários dias de uma vez, como no Excel. Nada muda até você clicar em <b>Salvar alterações</b>.</div>
    <div class="row" style="align-items:flex-end;flex-wrap:wrap">
     <div style="flex:2 1 220px"><label>Integrante</label><select id="plp">${pes.map(i=>`<option value="${esc(i.uid)}" ${+i.uid===+PLN.uid?"selected":""}>${esc(nomeInteg(i))} (nº ${esc(i.uid)})</option>`).join("")}</select></div>
     <div style="flex:1 1 140px"><label>De</label><input type="date" id="plde" value="${PLN.de}"></div>
     <div style="flex:1 1 140px"><label>Até</label><input type="date" id="plate" value="${PLN.ate}"></div>
-    <button class="b sec sm" id="plmes" style="flex:none">Este mês</button><button class="b sec sm" id="plant" style="flex:none">Mês passado</button></div>
+    <button class="b sec sm" id="plmes" style="flex:none" title="De 26 do mês anterior a 25 deste mês">Período atual (26 a 25)</button><button class="b sec sm" id="plant" style="flex:none">Período anterior</button></div>
    <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px">
     ${plnPode()?`<button class="b sec sm" id="plrep" style="flex:none">Repetir para baixo</button><button class="b sec sm" id="pllim" style="flex:none">${ic("trash")} Limpar seleção</button><button class="b sec sm" id="pldes" style="flex:none">${ic("undo")} Desfazer</button>`:""}
     <span style="flex:1"></span>
@@ -16425,7 +16738,7 @@ function openPlanilha(uid,de,ate){
   ov.querySelector(".modal").classList.add("largo","planilha");
   const $o=s=>ov.querySelector(s),g=$o("#plgrid");
   const descarta=async()=>!plnMudancas()||await askConfirm("Há alterações não salvas nesta planilha. Descartar?","Descartar");
-  const fecha=async()=>{if(await descarta())ov.remove()};
+  const fecha=async()=>{if(await descarta()){ov.remove();PLN.aoSalvar=null}};
   // clique fora da janela não pode jogar fora o que foi digitado
   ov.addEventListener("mousedown",e=>{if(e.target===ov&&plnMudancas()){e.stopImmediatePropagation();fecha()}},{capture:true});
   const recarrega=()=>{plnCarrega();plnPinta(false)};
@@ -16438,8 +16751,8 @@ function openPlanilha(uid,de,ate){
   $o("#plp").onchange=async e=>{if(!await descarta()){e.target.value=PLN.uid;return}PLN.uid=+e.target.value;recarrega()};
   $o("#plde").onchange=()=>periodo($o("#plde").value,$o("#plate").value);
   $o("#plate").onchange=()=>periodo($o("#plde").value,$o("#plate").value);
-  $o("#plmes").onclick=()=>periodo(hojeIso().slice(0,8)+"01",hojeIso());
-  $o("#plant").onclick=()=>{const ym=addDaysIso(hojeIso().slice(0,8)+"01",-1).slice(0,7);periodo(ym+"-01",mesFimIso(ym))};
+  $o("#plmes").onclick=()=>{const ym=refYm(hojeIso());periodo(refIni(ym),refFim(ym))};
+  $o("#plant").onclick=()=>{const ym=refYmAdd(refYm(hojeIso()),-1);periodo(refIni(ym),refFim(ym))};
   $o("#plcx").onclick=fecha;
   $o("#plxls").onclick=plnExcel;
   if(plnPode()){
@@ -16489,10 +16802,11 @@ function openPlanilha(uid,de,ate){
     e.preventDefault();if(k==="Enter")t.dispatchEvent(new Event("change",{bubbles:true}));plnMove(dr,dc,e.shiftKey&&k!=="Enter");
   });
   recarrega();
+  if(opt.arquivo)plnImporta(opt.arquivo).then(ok=>{if(ok&&opt.depoisImportar)opt.depoisImportar(ov)});
 }
 
 /* ================= painel do departamento pessoal: gráficos e ponto explicado ================= */
-const DPP={ym:hojeIso().slice(0,7)};
+const DPP={ym:null};
 // cores dos gráficos (validadas para daltonismo e contraste, claro e escuro): 1 verde, 2 azul, 3 âmbar.
 // "a mais" = azul, "a menos" = âmbar (par divergente); séries únicas = verde.
 const DPC={c1:[63,143,69],c2:[47,116,181],c3:[201,137,46]};
@@ -16517,7 +16831,7 @@ const dpHabs=m=>hhmm(Math.abs(m||0));
 
 /* ---------- dados ---------- */
 function dpDados(ym){
-  const ini=ym+"-01",f=fimCalc(ym);
+  const ini=refIni(ym),f=fimCalc(ym);
   if(f<ini)return{erro:"Este mês ainda não começou: escolha um mês que já teve dias trabalhados."};
   const r=calcSilencioso(ini,f);
   if(!r||r.erro)return{erro:(r&&r.erro)||"Importe o arquivo do relógio na aba Ponto."};
@@ -16530,20 +16844,20 @@ function dpDados(ym){
   const soma=k=>L.reduce((s,x)=>s+(typeof k==="function"?k(x):x.t[k]||0),0);
   const tot={prev:soma("expected"),trab:soma("worked"),mais:soma("mais"),menos:soma("menos"),faltas:soma("faltas"),atest:soma("atestados"),
     bhPos:soma(x=>Math.max(0,x.fim)),bhNeg:soma(x=>Math.min(0,x.fim))};
-  return{L,tot,ini,fim:f,parcial:f<mesFimIso(ym)};
+  return{L,tot,ini,fim:f,parcial:f<refFim(ym)};
 }
 function dpSerie(ym,n){
-  return mesesEntre(addMesesIso(ym+"-01",-(n-1)).slice(0,7),ym).map(m=>{
+  return mesesEntre(refYmAdd(ym,-(n-1)),ym).map(m=>{
     const f=fimCalc(m),o={m,mais:0,menos:0,banco:null};
-    if(f<m+"-01")return o;
-    const r=calcSilencioso(m+"-01",f);if(!r||r.erro)return o;
+    if(f<refIni(m))return o;
+    const r=calcSilencioso(refIni(m),f);if(!r||r.erro)return o;
     r.users.forEach(u=>{if(u.ig&&u.ig.id){o.mais+=u.t.mais||0;o.menos+=u.t.menos||0}});
     let b=0;bhSaldos(m).por.forEach(x=>b+=x.acum);o.banco=b;
     return o;
   });
 }
 function dpQuadro(ym){
-  const ref=mesFimIso(ym)<hojeIso()?mesFimIso(ym):hojeIso(),todos=integList();
+  const ref=refFim(ym)<hojeIso()?refFim(ym):hojeIso(),todos=integList();
   const ativos=todos.filter(i=>anivEmAtividade(i,ref)),porCargo={};
   ativos.forEach(i=>{const c=(i.cargo||"").trim()||"Sem cargo";porCargo[c]=(porCargo[c]||0)+1});
   let cargos=Object.entries(porCargo).sort((a,b)=>b[1]-a[1]||a[0].localeCompare(b[0],"pt"));
@@ -16651,9 +16965,10 @@ const dpTab=(head,rows)=>`<table><thead><tr>${head.map((h,i)=>`<th${i?' class="n
 
 /* ---------- tela ---------- */
 function dpHtml(){
+  if(!DPP.ym)DPP.ym=refPadrao();
   const ym=DPP.ym,D=dpDados(ym),Q=dpQuadro(ym),ser6=dpSerie(ym,6),mm=MESES_PT[+ym.slice(5)-1]+" de "+ym.slice(0,4);
-  const meses=mesesEntre(addMesesIso(hojeIso(),-23).slice(0,7),hojeIso().slice(0,7)).reverse();
-  const topo=`<div class="card"><div class="row" style="align-items:flex-end"><div style="flex:0 0 200px"><label>Mês</label><select id="dpmes">${meses.map(m=>`<option value="${m}" ${m===ym?"selected":""}>${MESES_PT[+m.slice(5)-1]} de ${m.slice(0,4)}</option>`).join("")}</select></div>
+  const meses=mesesEntre(refYmAdd(refYm(hojeIso()),-23),refYm(hojeIso())).reverse();
+  const topo=`<div class="card"><div class="row" style="align-items:flex-end"><div style="flex:0 0 300px"><label>Período de referência</label><select id="dpmes">${meses.map(m=>`<option value="${m}" ${m===ym?"selected":""}>${MESES_PT[+m.slice(5)-1]} de ${m.slice(0,4)} · ${refRotulo(m)}</option>`).join("")}</select></div>
     <button class="b sec" id="dppdf" style="flex:none">${ic("down")} Baixar relatório em PDF</button></div>
     ${D.parcial&&!D.erro?`<p class="sub" style="margin:8px 0 0">Mês em andamento: os números vão até ${brDate(D.fim)} (ontem).</p>`:""}</div>`;
   const C1={nome:"Horas a mais",cor:"var(--dv2)"},C2={nome:"Horas a menos",cor:"var(--dv3)"};

@@ -210,7 +210,7 @@ function pairPunches(punches,schedule,cfg,holidays,until){
         const paired=new Set(pairs.flat());strayPunch=ps.find(p=>!paired.has(p))||null;}
     }
     if(!pairs)[pairs,orphan]=sequentialPairs(ps);
-    const j=newJourney(d,OK,sh.no,{expectedMin,turnoNoturno:noturno,endsOn,rawIds:ps.map(p=>p.rawId)});
+    const j=newJourney(d,OK,sh.no,{expectedMin,turnoNoturno:noturno,endsOn,rawIds:ps.map(p=>p.rawId),marcas:ps.map(p=>p.ts)});
     j.dupIds=ps.flatMap(p=>absBy.get(p.rawId)||[]);
     j.intervals=pairs.map(([a,b])=>[a.ts,b.ts]);
     j.workedMin=j.intervals.reduce((s,[a,b])=>s+minutesBetween(a,b),0);
@@ -241,7 +241,7 @@ function pairPunches(punches,schedule,cfg,holidays,until){
     if(until&&d>until)continue;
     const ps=byDay.get(d).sort((a,b)=>a.ts-b.ts);const[pairs,orphan]=sequentialPairs(ps);
     const ivs=pairs.map(([a,b])=>[a.ts,b.ts]);const w=ivs.reduce((s,[a,b])=>s+minutesBetween(a,b),0);
-    const j=newJourney(d,SEM_ESCALA,null,{intervals:ivs,workedMin:w,extraMin:w,rawIds:ps.map(p=>p.rawId),endsOn:d});
+    const j=newJourney(d,SEM_ESCALA,null,{intervals:ivs,workedMin:w,extraMin:w,rawIds:ps.map(p=>p.rawId),marcas:ps.map(p=>p.ts),endsOn:d});
     journeys.push(j);pend.push({day:d,kind:"marcacao_sem_escala",detail:`${ps.length} marcação(ões) sem escala`});
     if(orphan){j.flags.push("falta_saida");pend.push({day:d,kind:"falta_saida",detail:`marcação ${hm(orphan.ts)} sem par`})}
   }
