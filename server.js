@@ -31,7 +31,7 @@ async function criaApp(opts = {}) {
   const MAX_ARQ = (+env.MAX_UPLOAD_MB || 25) * 1048576;
   const MAX_JSON = 8 * 1048576;
   const publico = path.join(raiz, 'public');
-  const limUser = seg.criaLimitador(), limIp = seg.criaLimitador({ max: 30 }), limConta = seg.criaLimitador({ max: 40 });
+  const limUser = seg.criaLimitador({ max: 10 }), limIp = seg.criaLimitador({ max: 30 }), limConta = seg.criaLimitador({ max: 40 });
   const limEnvio = seg.criaLimitador({ max: 300 }), limEnvioRuim = seg.criaLimitador({ max: 15 });
   const usoIa = new Map(); // uid -> [timestamps]
   const iaPorMin = +env.IA_POR_MINUTO || 20, iaPorDia = +env.IA_POR_DIA || 1500, iaPessoaDia = +env.IA_POR_PESSOA_DIA || 400;
