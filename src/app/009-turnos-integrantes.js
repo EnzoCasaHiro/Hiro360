@@ -29,6 +29,8 @@ function shiftSummary(texto){
 }
 const integList=()=>Object.values(S.integrantes).sort((a,b)=>String(a.nomeCompleto||a.nome).localeCompare(String(b.nomeCompleto||b.nome),"pt"));
 const semPonto=i=>!!i&&i.ponto==="nao";
+// ativo, ou desligado a partir de `desde` (ainda aparece no período em que trabalhou)
+const ativoEm=(i,desde)=>!!i&&((i.situacao||"Ativo")!=="Desligado"||(!!desde&&!!i.desligamento&&i.desligamento>=desde));
 const integByUid=u=>{const l=Object.values(S.integrantes).filter(i=>i.uid!=null&&+i.uid===+u);return l.find(i=>(i.situacao||"Ativo")!=="Desligado")||l[0]};
 const nomeInteg=i=>i.nomeCompleto||i.nome||"(sem nome)";
 const marcasOf=(uid,fromIso,toIso)=>Object.values(S.marcacoes).filter(m=>+m.uid===+uid&&!m.removida&&m.ts.slice(0,10)>=fromIso&&m.ts.slice(0,10)<=toIso).map(m=>({ts:parseLocalIso(m.ts),rawId:m.id}));

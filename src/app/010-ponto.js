@@ -79,6 +79,9 @@ async function loadLog(f){
     const P=POINT;P.punches=punches;P.file=f.name;P.div=divergences;P.result=null;P.err="";
     pontoSyncRef();
     const novos=new Map();for(const p of punches)if(!integByUid(p.userId)&&!novos.has(p.userId))novos.set(p.userId,p.uname);
+    // quem já tem esse "Nome no relógio" na ficha (e ainda não tem número) recebe o número; não cria cadastro novo
+    const ligados=[];for(const[u,nm]of[...novos]){const ig=integPorNomeRelogio(nm);if(ig){put("integrantes",ig.id,{...strip(ig),uid:u});ligados.push(nomeInteg(ig)+" (nº "+u+")");novos.delete(u)}}
+    if(ligados.length)toast("Identificado pelo nome no relógio: "+ligados.join(", ")+".");
     for(const[u,nm]of novos)put("integrantes","u"+u,{uid:u,nome:nm,nomeCompleto:"",depto:"Outro",turno:"",escalaModo:"semana",dias:[0,1,2,3,4],situacao:"Ativo"});
     const novasMarcas=importMarcas(punches);
     if(novos.size)toast(`${novos.size} integrante(s) cadastrado(s) a partir do relógio. Complete os dados no Prontuário.`);
@@ -87,6 +90,7 @@ async function loadLog(f){
   }catch(e){toast("Erro ao ler o arquivo: "+e.message,true)}
 }
 function calcular(show){
+  try{if(typeof autoJuntarRelogio==="function"&&autoJuntarRelogio())BHCACHE.clear()}catch(e){}
   const P=POINT;P.err="";
   try{
     if(!P.punches.length&&!Object.keys(S.marcacoes).length)throw new Error("Carregue o arquivo do relógio primeiro.");

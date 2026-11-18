@@ -14,8 +14,8 @@ function pgContadorBase(){
    ${e.cnpj?"":`<div class="callout sand" style="margin-top:10px">O site da Casa Hiro não publica o CNPJ. Preencha aqui para ele sair na capa.</div>`}</div>
   <div class="card"><h2>Conferência antes de enviar</h2>
    ${R?`<p class="sub" style="margin:0 0 8px">Período apurado: <b>${brDate(R.start)}</b> a <b>${brDate(R.end)}</b></p>`:`<div class="callout sand" style="margin-bottom:10px">Ainda não há jornadas calculadas. Vá na aba Ponto e clique em "Calcular jornadas" para incluir horas, faltas e atestados. Sem isso o relatório sai só com os dados cadastrais.</div>`}
-   ${integList().length?`<div class="wrap"><table><thead><tr><th>Integrante</th><th>CPF</th><th>Cargo</th><th>Admissão</th><th>Situação dos dados</th></tr></thead><tbody>
-   ${integList().map(i=>{const m=miss(i);return `<tr><td><b>${esc(nomeInteg(i))}</b></td><td>${esc(i.cpf||"—")}</td><td>${esc(i.cargo||"—")}</td><td>${brDate(i.admissao)||"—"}</td>
+   ${integList().filter(i=>ativoEm(i,R&&R.start)).length?`<div class="wrap"><table><thead><tr><th>Integrante</th><th>CPF</th><th>Cargo</th><th>Admissão</th><th>Situação dos dados</th></tr></thead><tbody>
+   ${integList().filter(i=>ativoEm(i,R&&R.start)).map(i=>{const m=miss(i);return `<tr><td><b>${esc(nomeInteg(i))}</b></td><td>${esc(i.cpf||"—")}</td><td>${esc(i.cargo||"—")}</td><td>${brDate(i.admissao)||"—"}</td>
     <td>${m.length?`<span class="pill s-pendencia">falta: ${m.join(", ")}</span>`:`<span class="pill s-ok">completo</span>`}</td></tr>`}).join("")}</tbody></table></div>`:`<div class="empty">Nenhum integrante cadastrado.</div>`}
    <div class="row" style="margin-top:14px"><button class="b" id="xgo" style="flex:none" ${integList().length?"":"disabled"}>${ic("sheet")} Baixar XLSX</button>
     <button class="b wood" id="pgo" style="flex:none" ${integList().length?"":"disabled"}>${ic("file")} Baixar PDF</button></div>
@@ -274,7 +274,7 @@ function buildWorkbook(opt){
   opt=opt||{};
   const abas={capa:true,integrantes:true,jornadas:true,individual:true,...(opt.abas||{})},sel=opt.uids?new Set([...opt.uids].map(String)):null;
   const wb=new ExcelJS.Workbook();wb.creator="Casa Hiro";wb.created=new Date();
-  const e=empresa(),R0=POINT.result,L=integList().filter(i=>!semPonto(i)&&(!sel||sel.has(String(i.uid))||sel.has(String(i.id))));
+  const e=empresa(),R0=POINT.result,L=integList().filter(i=>!semPonto(i)&&ativoEm(i,R0&&R0.start)&&(!sel||sel.has(String(i.uid))||sel.has(String(i.id))));
   const R=R0&&sel?{...R0,users:R0.users.filter(u=>sel.has(String(u.uid)))}:R0;
   if(abas.capa)buildCapa(wb,e,R);
   if(abas.integrantes)buildIntegrantesSheet(wb,L);

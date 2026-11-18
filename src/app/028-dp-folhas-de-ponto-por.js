@@ -5,7 +5,7 @@ const FOLHA_ABAS=[["capa","Capa"],["integrantes","Integrantes (cadastro)"],["jor
 const chaveFolha=x=>String(x.uid??x.ig.id??x.nome);
 function folhaBase(){
   const R=POINT.result;
-  return R?R.users.filter(u=>!semPonto(u.ig||integByUid(u.uid))).map(u=>({uid:u.uid,nome:u.nome,ig:u.ig||integByUid(u.uid)||{}})):integList().filter(i=>!semPonto(i)).map(i=>({uid:i.uid,nome:nomeInteg(i),ig:i}));
+  return R?R.users.filter(u=>!semPonto(u.ig||integByUid(u.uid))).map(u=>({uid:u.uid,nome:u.nome,ig:u.ig||integByUid(u.uid)||{}})):integList().filter(i=>!semPonto(i)&&ativoEm(i)).map(i=>({uid:i.uid,nome:nomeInteg(i),ig:i}));
 }
 function folhaSel(){
   const b=folhaBase();if(!(FOLHA.cargos.size||FOLHA.deptos.size||FOLHA.pessoas.size))return b;

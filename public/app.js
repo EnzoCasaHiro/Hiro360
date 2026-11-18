@@ -300,11 +300,22 @@ function pairPunches(punches,schedule,cfg,holidays,until){
     journeys.push(j);
   }
   const byDay=new Map();for(const p of loose){const d=isoDate(p.ts);if(!byDay.has(d))byDay.set(d,[]);byDay.get(d).push(p)}
+  byDay.forEach(l=>l.sort((a,b)=>a.ts-b.ts));
+  // plantão fora da escala que passa da meia-noite (troca, plantão extra): a entrada da noite fica sem par
+  // no dia e a saída da manhã seguinte cai no outro dia. Junta as duas no dia em que o plantão começou.
+  for(const d of[...byDay.keys()].sort()){
+    const ps=byDay.get(d);if(!ps||ps.length%2===0)continue;
+    const ult=ps[ps.length-1],d2=addDaysIso(d,1),nx=byDay.get(d2);
+    if(!nx||!nx.length||ult.ts.getHours()<12)continue;
+    const prim=nx[0],gap=minutesBetween(ult.ts,prim.ts);
+    if(prim.ts.getHours()>=12||gap<=0||gap>16*60)continue;
+    ps.push(nx.shift());if(!nx.length)byDay.delete(d2);
+  }
   for(const d of[...byDay.keys()].sort()){
     if(until&&d>until)continue;
-    const ps=byDay.get(d).sort((a,b)=>a.ts-b.ts);const[pairs,orphan]=sequentialPairs(ps);
+    const ps=byDay.get(d);const[pairs,orphan]=sequentialPairs(ps);
     const ivs=pairs.map(([a,b])=>[a.ts,b.ts]);const w=ivs.reduce((s,[a,b])=>s+minutesBetween(a,b),0);
-    const j=newJourney(d,SEM_ESCALA,null,{intervals:ivs,workedMin:w,extraMin:w,rawIds:ps.map(p=>p.rawId),marcas:ps.map(p=>p.ts),endsOn:d});
+    const j=newJourney(d,SEM_ESCALA,null,{intervals:ivs,workedMin:w,extraMin:w,rawIds:ps.map(p=>p.rawId),marcas:ps.map(p=>p.ts),endsOn:ps.length?isoDate(ps[ps.length-1].ts):d});
     journeys.push(j);pend.push({day:d,kind:"marcacao_sem_escala",detail:`${ps.length} marcação(ões) sem escala`});
     if(orphan){j.flags.push("falta_saida");pend.push({day:d,kind:"falta_saida",detail:`marcação ${hm(orphan.ts)} sem par`})}
   }
@@ -754,6 +765,8 @@ function shiftSummary(texto){
 }
 const integList=()=>Object.values(S.integrantes).sort((a,b)=>String(a.nomeCompleto||a.nome).localeCompare(String(b.nomeCompleto||b.nome),"pt"));
 const semPonto=i=>!!i&&i.ponto==="nao";
+// ativo, ou desligado a partir de `desde` (ainda aparece no período em que trabalhou)
+const ativoEm=(i,desde)=>!!i&&((i.situacao||"Ativo")!=="Desligado"||(!!desde&&!!i.desligamento&&i.desligamento>=desde));
 const integByUid=u=>{const l=Object.values(S.integrantes).filter(i=>i.uid!=null&&+i.uid===+u);return l.find(i=>(i.situacao||"Ativo")!=="Desligado")||l[0]};
 const nomeInteg=i=>i.nomeCompleto||i.nome||"(sem nome)";
 const marcasOf=(uid,fromIso,toIso)=>Object.values(S.marcacoes).filter(m=>+m.uid===+uid&&!m.removida&&m.ts.slice(0,10)>=fromIso&&m.ts.slice(0,10)<=toIso).map(m=>({ts:parseLocalIso(m.ts),rawId:m.id}));
@@ -847,6 +860,9 @@ async function loadLog(f){
     const P=POINT;P.punches=punches;P.file=f.name;P.div=divergences;P.result=null;P.err="";
     pontoSyncRef();
     const novos=new Map();for(const p of punches)if(!integByUid(p.userId)&&!novos.has(p.userId))novos.set(p.userId,p.uname);
+    // quem já tem esse "Nome no relógio" na ficha (e ainda não tem número) recebe o número; não cria cadastro novo
+    const ligados=[];for(const[u,nm]of[...novos]){const ig=integPorNomeRelogio(nm);if(ig){put("integrantes",ig.id,{...strip(ig),uid:u});ligados.push(nomeInteg(ig)+" (nº "+u+")");novos.delete(u)}}
+    if(ligados.length)toast("Identificado pelo nome no relógio: "+ligados.join(", ")+".");
     for(const[u,nm]of novos)put("integrantes","u"+u,{uid:u,nome:nm,nomeCompleto:"",depto:"Outro",turno:"",escalaModo:"semana",dias:[0,1,2,3,4],situacao:"Ativo"});
     const novasMarcas=importMarcas(punches);
     if(novos.size)toast(`${novos.size} integrante(s) cadastrado(s) a partir do relógio. Complete os dados no Prontuário.`);
@@ -855,6 +871,7 @@ async function loadLog(f){
   }catch(e){toast("Erro ao ler o arquivo: "+e.message,true)}
 }
 function calcular(show){
+  try{if(typeof autoJuntarRelogio==="function"&&autoJuntarRelogio())BHCACHE.clear()}catch(e){}
   const P=POINT;P.err="";
   try{
     if(!P.punches.length&&!Object.keys(S.marcacoes).length)throw new Error("Carregue o arquivo do relógio primeiro.");
@@ -1096,6 +1113,7 @@ function afterOc(){if(POINT.result)calcular(false);go(ROUTE,true)}
 /* ================= TURNOS ================= */
 let TURN_DRAFT=null;
 function pgTurnos(){
+  try{if(typeof autoJuntarRelogio==="function")autoJuntarRelogio()}catch(e){}
   TURN_DRAFT=TURN_DRAFT||turnosList().map(t=>({...t,dias:{...(t.dias||{})}}));
   const shifts=TURN_DRAFT;
   return banner("","Escalas e turnos","Turnos da casa, escala de cada integrante, folgas, trocas de plantão e alertas de cobertura.","cal")+noStore()+`
@@ -1109,8 +1127,8 @@ function pgTurnos(){
   ${pgSugestoes()}
   <div class="card" id="escint"><h2>Escala dos integrantes</h2>
    <p class="sub" style="margin:0 0 10px">Marque os dias em que cada integrante trabalha. Para plantão 12x36 (ou qualquer ciclo "trabalha X, folga Y"), use o modo Ciclo — funciona certo mesmo virando o mês. Pares/ímpares é um atalho rápido, mas falha em meses de 31 dias.</p>
-   ${integList().filter(i=>!semPonto(i)).length?`<div class="wrap"><table><thead><tr><th style="width:200px">Integrante</th><th style="width:150px">Turno</th><th>Quando trabalha</th></tr></thead><tbody>
-   ${integList().filter(i=>!semPonto(i)).map(i=>`<tr data-id="${i.id}"><td><b>${esc(nomeInteg(i))}</b><div class="sub">${esc(i.depto||"Outro")}${i.uid!=null?" · ID "+i.uid:""}</div></td>
+   ${integList().filter(i=>!semPonto(i)&&ativoEm(i)).length?`<div class="wrap"><table><thead><tr><th style="width:200px">Integrante</th><th style="width:150px">Turno</th><th>Quando trabalha</th></tr></thead><tbody>
+   ${integList().filter(i=>!semPonto(i)&&ativoEm(i)).map(i=>`<tr data-id="${i.id}"><td><b>${esc(nomeInteg(i))}</b><div class="sub">${esc(i.depto||"Outro")}${i.uid!=null?" · ID "+i.uid:""}</div></td>
     <td><select data-e="turno"><option value="">Folga / sem escala</option>${turnosList().map(t=>`<option value="${t.no}" ${String(i.turno)===String(t.no)?"selected":""}>${t.no} · ${esc(t.nome||t.texto)}</option>`).join("")}</select></td>
     <td><div class="escalabox">
      <select data-e="modo" style="max-width:220px;margin-bottom:8px"><option value="semana" ${(i.escalaModo||"semana")==="semana"?"selected":""}>Dias fixos da semana</option><option value="ciclo" ${i.escalaModo==="ciclo"?"selected":""}>Ciclo (ex.: 12x36, 6x1…)</option><option value="par" ${i.escalaModo==="par"?"selected":""}>Dias pares do mês</option><option value="impar" ${i.escalaModo==="impar"?"selected":""}>Dias ímpares do mês</option></select>
@@ -1144,7 +1162,7 @@ function pgEscalaCalendario(){
   const sy=+ESCUI.start.slice(0,4),sm=+ESCUI.start.slice(5,7)-1;
   const mesCheio=ESCUI.start===isoDate(new Date(sy,sm,1))&&ESCUI.end===isoDate(new Date(sy,sm+1,0));
   const y0=new Date().getFullYear(),anos=[];for(let y=Math.min(y0-3,sy);y<=Math.max(y0+3,sy);y++)anos.push(y);
-  let people=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
+  let people=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
   const cargos=[...new Set(people.map(cargoDe))].sort((a,b)=>a==="Sem cargo"?1:b==="Sem cargo"?-1:a.localeCompare(b,"pt"));
   if(ESCUI.cargo&&!cargos.includes(ESCUI.cargo))ESCUI.cargo="";
   if(ESCUI.cargo)people=people.filter(i=>cargoDe(i)===ESCUI.cargo);
@@ -1469,7 +1487,7 @@ function bindPront(){
       const k=el.dataset.k,cur=S.integrantes[i.id]||i,base=String(cur[k]??""),r=prRasc(i.id);
       if(el.value===base)delete r[k];else r[k]={v:el.value,base};
     };el.addEventListener("input",h);el.addEventListener("change",h)});
-    $("dsave").onclick=()=>{
+    $("dsave").onclick=async()=>{
       const o={...strip(i)};document.querySelectorAll("#pdet [data-k]").forEach(el=>{o[el.dataset.k]=el.value.trim()});
       o.uid=o.uid===""||o.uid==null?null:+o.uid;if(!o.uid&&o.uid!==0)o.uid=null;
       if(!o.nomeCompleto)return $("ferr").textContent="Informe o nome completo.";
@@ -1479,8 +1497,14 @@ function bindPront(){
       const HC={nomeCompleto:"Nome",cargo:"Cargo",depto:"Departamento",turno:"Turno",situacao:"Situação",admissao:"Admissão",desligamento:"Desligamento",escalaModo:"Escala"};
       const difs=Object.keys(HC).filter(k=>String(i[k]??"")!==String(o[k]??"")&&(i.id&&(i.nomeCompleto||i.cargo||i.admissao)));
       o.hist=[...(i.hist||[]),...difs.map(k=>({em:new Date().toISOString(),campo:HC[k],de:String(i[k]??"")||"—",para:String(o[k]??"")||"—"}))];
-      const dup=Object.values(S.integrantes).find(x=>x.id!==i.id&&o.uid!=null&&x.uid!=null&&+x.uid===+o.uid);
-      if(dup)return $("ferr").textContent=`O ID ${o.uid} já pertence a ${nomeInteg(dup)}.`;
+      let dup=Object.values(S.integrantes).find(x=>x.id!==i.id&&o.uid!=null&&x.uid!=null&&+x.uid===+o.uid);
+      // sem número, mas com o mesmo "nome no relógio" de um cadastro que o relógio criou sozinho: é a mesma pessoa
+      if(!dup&&o.uid==null&&cadRelogio(i)===false&&o.nome){const n=o.nome.trim().toLowerCase();dup=Object.values(S.integrantes).find(x=>x.id!==i.id&&cadRelogio(x)&&String(x.nome||"").trim().toLowerCase()===n)}
+      if(dup&&!cadRelogio(dup))return $("ferr").textContent=`O ID ${o.uid} já pertence a ${nomeInteg(dup)}.`;
+      if(dup){
+        if(!await askConfirm(`O nº ${dup.uid} do relógio está num cadastro que o sistema criou sozinho ao importar as batidas ("${dup.nome||"sem nome"}", sem escala). É a mesma pessoa que ${o.nomeCompleto}? Os dois viram um só: as batidas do nº ${dup.uid} passam a contar com a escala e os dados deste cadastro, e o cadastro "${dup.nome||"sem nome"}" é apagado.`,"Juntar os cadastros"))return;
+        juntarCadastro(dup.id,i.id);o.uid=+dup.uid;if(!o.nome)o.nome=dup.nome||"";
+      }
       o.cpf=fmtCPF(o.cpf);put("integrantes",i.id,o);if(PR.rasc)delete PR.rasc[i.id];toast("Dados salvos.");go("pront",true);
     };
     if($("ddel"))$("ddel").onclick=async()=>{
@@ -1506,7 +1530,70 @@ function bindPront(){
     document.querySelectorAll("[data-dxo]").forEach(b=>b.onclick=async()=>{if(await askConfirm("Excluir esta ocorrência?","Excluir")){del("ocorr",b.dataset.dxo);afterOc()}});
   }
 }
-
+/* cadastro que o relógio criou sozinho ao importar batidas: só número e nome do relógio, sem nome completo */
+const cadRelogio=i=>!!i&&i.uid!=null&&i.uid!==""&&!String(i.nomeCompleto||"").trim();
+/* junta o cadastro criado pelo relógio (deId) com o cadastro de verdade da pessoa (paraId):
+   justificativas, documentos, ajustes de escala e previstos digitados passam para paraId; deId é apagado.
+   Quem chama grava o número do relógio em paraId. */
+function juntarCadastro(deId,paraId){
+  const de=S.integrantes[deId];if(!de||!S.integrantes[paraId]||deId===paraId)return false;
+  Object.values(S.ocorr).filter(o=>o.uid===deId).forEach(o=>put("ocorr",o.id,{...strip(o),uid:paraId}));
+  Object.values(S.docs||{}).filter(d=>d.uid===deId).forEach(d=>put("docs",d.id,{...strip(d),uid:paraId}));
+  if(escalaEx().some(a=>a.uid===deId))escMutate(l=>l.map(a=>a.uid===deId?{...a,uid:paraId}:a));
+  const pv=S.config["prevm_"+deId];
+  if(pv&&pv.dias){const alvo=S.config["prevm_"+paraId]||{};put("config","prevm_"+paraId,{...strip(alvo),dias:{...pv.dias,...(alvo.dias||{})}});del("config","prevm_"+deId)}
+  del("integrantes",deId);
+  if(typeof BHCACHE!=="undefined")BHCACHE.clear();
+  return true;
+}
+/* escolher com quem juntar um cadastro criado pelo relógio (usado na aba Pendências do Ponto) */
+function abrirJuntarCadastro(deId,onDone){
+  const de=S.integrantes[deId];if(!de)return;
+  // quem tem o primeiro nome igual ao do relógio vem primeiro (sugestão)
+  const sa=t=>String(t||"").normalize("NFD").replace(/[̀-ͯ]/g,"").trim().toLowerCase(),pri=sa(de.nome).split(/\s+/)[0]||"";
+  const bate=i=>pri&&sa(nomeInteg(i)).split(/\s+/)[0]===pri?1:0;
+  const alvos=integList().filter(i=>i.id!==deId&&!cadRelogio(i)&&!semPonto(i)&&ativoEm(i)&&(i.uid==null||i.uid===""))
+    .sort((a,b)=>bate(b)-bate(a));
+  if(!alvos.length)return toast("Não há integrante ativo sem número no relógio para juntar. Cadastre a pessoa em Integrantes primeiro (ou tire o número que está errado na ficha dela).",true);
+  const ov=openModal(`<h3>Juntar cadastros</h3>
+   <p class="sub" style="margin:0 0 10px">O cadastro <b>${esc(de.nome||"(sem nome)")}</b> (nº ${esc(de.uid)} no relógio) foi criado sozinho ao importar as batidas, sem escala. Escolha o cadastro de verdade dessa pessoa: as batidas do nº ${esc(de.uid)} passam a contar com a escala e os dados dele, e o cadastro do relógio é apagado.</p>
+   <label>É a mesma pessoa que</label><select id="jcalvo">${alvos.map(i=>`<option value="${i.id}">${esc(nomeInteg(i))}${i.cargo?" — "+esc(i.cargo):""}</option>`).join("")}</select>
+   <p class="sub" style="margin:6px 0 0">Só aparecem integrantes ativos que ainda não têm número no relógio.</p>
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="jccx">Cancelar</button><button class="b" id="jcok">Juntar</button></div>`);
+  ov.querySelector("#jccx").onclick=()=>ov.remove();
+  ov.querySelector("#jcok").onclick=()=>{
+    const para=S.integrantes[ov.querySelector("#jcalvo").value];if(!para)return;
+    const uid=+de.uid,nome=para.nome||de.nome||"";
+    if(!juntarCadastro(deId,para.id))return toast("Não consegui juntar os cadastros.",true);
+    put("integrantes",para.id,{...strip(para),uid,nome,hist:[...(para.hist||[]),{em:new Date().toISOString(),campo:"Nº no relógio",de:"—",para:String(uid)}]});
+    ov.remove();toast(`Pronto: o nº ${uid} do relógio agora é de ${nomeInteg(para)}.`);if(onDone)onDone(uid);
+  };
+}
+/* ---- identificação automática pelo "Nome no relógio" ----
+   O relógio manda só número e nome (às vezes cortado, ex.: "Monica Mar"). Se um integrante de verdade, ainda sem
+   número, tem exatamente esse "Nome no relógio", é a mesma pessoa: o número vai para ele, sem cadastro duplicado. */
+const nomeChave=t=>String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim().toLowerCase();
+function integPorNomeRelogio(nome,excetoId){
+  const k=nomeChave(nome);if(!k)return null;
+  const l=Object.values(S.integrantes).filter(i=>i.id!==excetoId&&!cadRelogio(i)&&(i.uid==null||i.uid==="")&&!semPonto(i)&&(i.situacao||"Ativo")!=="Desligado"&&nomeChave(i.nome)===k);
+  return l.length===1?l[0]:null;
+}
+/* junta sozinho os cadastros criados pelo relógio que já têm dono pelo "Nome no relógio" (roda ao calcular o ponto) */
+function autoJuntarRelogio(){
+  if(!dadosCarregados()||!escritaOk("integrantes","auto"))return 0;
+  const feitos=[];
+  for(const de of Object.values(S.integrantes).filter(cadRelogio)){
+    const para=integPorNomeRelogio(de.nome,de.id);if(!para)continue;
+    // documentos e justificativas do cadastro do relógio precisam de permissão para mudar de dono
+    if(Object.values(S.docs||{}).some(d=>d.uid===de.id)&&!escritaOk("docs","auto"))continue;
+    if(Object.values(S.ocorr).some(o=>o.uid===de.id)&&!escritaOk("ocorr","auto"))continue;
+    const uid=+de.uid;if(!juntarCadastro(de.id,para.id))continue;
+    put("integrantes",para.id,{...strip(para),uid,hist:[...(para.hist||[]),{em:new Date().toISOString(),campo:"Nº no relógio",de:"—",para:String(uid)+" (identificado pelo nome no relógio)"}]});
+    feitos.push(`${nomeInteg(para)} (nº ${uid})`);
+  }
+  if(feitos.length)toast(`Identificado pelo nome no relógio: ${feitos.join(", ")}. As batidas já contam no cadastro certo.`);
+  return feitos.length;
+}
 /* ================= arquivos: envio, download, zip, pdf ================= */
 const OKTYPE=/^(application\/pdf|image\/(png|jpeg|webp|gif)|text\/(plain|csv))$/;
 function guessType(f){
@@ -1676,8 +1763,8 @@ function pgContadorBase(){
    ${e.cnpj?"":`<div class="callout sand" style="margin-top:10px">O site da Casa Hiro não publica o CNPJ. Preencha aqui para ele sair na capa.</div>`}</div>
   <div class="card"><h2>Conferência antes de enviar</h2>
    ${R?`<p class="sub" style="margin:0 0 8px">Período apurado: <b>${brDate(R.start)}</b> a <b>${brDate(R.end)}</b></p>`:`<div class="callout sand" style="margin-bottom:10px">Ainda não há jornadas calculadas. Vá na aba Ponto e clique em "Calcular jornadas" para incluir horas, faltas e atestados. Sem isso o relatório sai só com os dados cadastrais.</div>`}
-   ${integList().length?`<div class="wrap"><table><thead><tr><th>Integrante</th><th>CPF</th><th>Cargo</th><th>Admissão</th><th>Situação dos dados</th></tr></thead><tbody>
-   ${integList().map(i=>{const m=miss(i);return `<tr><td><b>${esc(nomeInteg(i))}</b></td><td>${esc(i.cpf||"—")}</td><td>${esc(i.cargo||"—")}</td><td>${brDate(i.admissao)||"—"}</td>
+   ${integList().filter(i=>ativoEm(i,R&&R.start)).length?`<div class="wrap"><table><thead><tr><th>Integrante</th><th>CPF</th><th>Cargo</th><th>Admissão</th><th>Situação dos dados</th></tr></thead><tbody>
+   ${integList().filter(i=>ativoEm(i,R&&R.start)).map(i=>{const m=miss(i);return `<tr><td><b>${esc(nomeInteg(i))}</b></td><td>${esc(i.cpf||"—")}</td><td>${esc(i.cargo||"—")}</td><td>${brDate(i.admissao)||"—"}</td>
     <td>${m.length?`<span class="pill s-pendencia">falta: ${m.join(", ")}</span>`:`<span class="pill s-ok">completo</span>`}</td></tr>`}).join("")}</tbody></table></div>`:`<div class="empty">Nenhum integrante cadastrado.</div>`}
    <div class="row" style="margin-top:14px"><button class="b" id="xgo" style="flex:none" ${integList().length?"":"disabled"}>${ic("sheet")} Baixar XLSX</button>
     <button class="b wood" id="pgo" style="flex:none" ${integList().length?"":"disabled"}>${ic("file")} Baixar PDF</button></div>
@@ -1936,7 +2023,7 @@ function buildWorkbook(opt){
   opt=opt||{};
   const abas={capa:true,integrantes:true,jornadas:true,individual:true,...(opt.abas||{})},sel=opt.uids?new Set([...opt.uids].map(String)):null;
   const wb=new ExcelJS.Workbook();wb.creator="Casa Hiro";wb.created=new Date();
-  const e=empresa(),R0=POINT.result,L=integList().filter(i=>!semPonto(i)&&(!sel||sel.has(String(i.uid))||sel.has(String(i.id))));
+  const e=empresa(),R0=POINT.result,L=integList().filter(i=>!semPonto(i)&&ativoEm(i,R0&&R0.start)&&(!sel||sel.has(String(i.uid))||sel.has(String(i.id))));
   const R=R0&&sel?{...R0,users:R0.users.filter(u=>sel.has(String(u.uid)))}:R0;
   if(abas.capa)buildCapa(wb,e,R);
   if(abas.integrantes)buildIntegrantesSheet(wb,L);
@@ -3000,7 +3087,7 @@ function openDia(iso){
   ov.querySelectorAll("[data-odel]").forEach(b=>b.onclick=()=>{ov.remove();openTarDel(b.dataset.odel)});
 }
 function openTarefa(id,dataPadrao){
-  const ed=id?tarAll().find(t=>t.id===id):null,areas=estData().areas,ints=integList();
+  const ed=id?tarAll().find(t=>t.id===id):null,areas=estData().areas,ints=integList().filter(i=>ativoEm(i)||(ed&&JSON.stringify(ed).includes(i.id)));
   const ov=openModal(`<h3>${ed?"Editar tarefa":"Nova tarefa"}</h3>
    <label>O que precisa ser feito</label><input id="ttit" value="${esc(ed?ed.titulo:"")}" placeholder="Ex.: Renovar alvará, conferir estoque da cozinha...">
    <div class="row"><div><label>Data</label><input type="date" id="tdata" value="${ed?ed.data:(dataPadrao||hojeIso())}"></div><div><label>Hora (opcional)</label><input type="time" id="thora" value="${ed?ed.hora||"":""}"></div>
@@ -3290,7 +3377,7 @@ function sugerirFolgas(ano,mes0,nMeses){
 function pgSugestoes(){
   const c=escCfg(),ini=ESCUI.start||isoDate(new Date()),sy=+ini.slice(0,4),sm=+ini.slice(5,7)-1;
   const dias=[];if(ESCUI.start&&ESCUI.end&&ESCUI.start<=ESCUI.end)for(let d=ESCUI.start;d<=ESCUI.end&&dias.length<=46;d=addDaysIso(d,1))dias.push(d);
-  const gente=integList().filter(i=>!semPonto(i)&&i.turno),cargos=[...new Set(gente.map(cargoDe))].sort((a,b)=>a.localeCompare(b,"pt"));
+  const gente=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&i.turno),cargos=[...new Set(gente.map(cargoDe))].sort((a,b)=>a.localeCompare(b,"pt"));
   const cob=cargos.length&&dias.length&&dias.length<=46?`<h2 style="margin-top:14px">Cobertura por cargo (quantas pessoas trabalham em cada dia)</h2><div class="wrap"><table style="font-size:11px"><thead><tr><th style="position:sticky;left:0;background:var(--card)">Cargo</th>${dias.map(d=>`<th class="n" style="padding:4px 2px">${d.slice(8)}</th>`).join("")}</tr></thead><tbody>
     ${cargos.map(cg=>{const ps=gente.filter(i=>cargoDe(i)===cg);return `<tr><td style="position:sticky;left:0;background:var(--card);white-space:nowrap;font-weight:700">${esc(cg)}</td>${dias.map(d=>{const n=ps.filter(p=>escalaDia(p,d).on).length;const bg=n===0?"rgba(156,74,31,.25)":n<=c.minCob?"var(--madeira-clara)":"var(--verde-palido)";return `<td style="padding:2px"><div title="${brDate(d)}: ${n} pessoa(s)" style="min-width:18px;text-align:center;border-radius:4px;background:${bg};font-weight:700">${n}</div></td>`}).join("")}</tr>`}).join("")}</tbody></table></div>`:"";
   const res=SUG.lista;
@@ -4021,7 +4108,7 @@ function specIntegrantes(sel){
 function specEscala(c){
   const mes=c.mes<0?new Date().getMonth():c.mes,n=new Date(c.ano,mes+1,0).getDate();
   const dias=Array.from({length:n},(_,i)=>isoDate(new Date(c.ano,mes,i+1)));
-  const rows=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id))).map(ig=>{
+  const rows=integList().filter(i=>!semPonto(i)&&ativoEm(i,dias[0])&&(i.turno||escalaEx().some(a=>a.uid===i.id))).map(ig=>{
     let tr=0;const cel=dias.map(d=>{const e=escalaDia(ig,d);if(e.antes||e.depois)return"—";if(e.on){tr++;return"T"}return"F"});
     return[nomeInteg(ig),cargoDe(ig),...cel,tr];
   });
@@ -5399,7 +5486,7 @@ const FOLHA_ABAS=[["capa","Capa"],["integrantes","Integrantes (cadastro)"],["jor
 const chaveFolha=x=>String(x.uid??x.ig.id??x.nome);
 function folhaBase(){
   const R=POINT.result;
-  return R?R.users.filter(u=>!semPonto(u.ig||integByUid(u.uid))).map(u=>({uid:u.uid,nome:u.nome,ig:u.ig||integByUid(u.uid)||{}})):integList().filter(i=>!semPonto(i)).map(i=>({uid:i.uid,nome:nomeInteg(i),ig:i}));
+  return R?R.users.filter(u=>!semPonto(u.ig||integByUid(u.uid))).map(u=>({uid:u.uid,nome:u.nome,ig:u.ig||integByUid(u.uid)||{}})):integList().filter(i=>!semPonto(i)&&ativoEm(i)).map(i=>({uid:i.uid,nome:nomeInteg(i),ig:i}));
 }
 function folhaSel(){
   const b=folhaBase();if(!(FOLHA.cargos.size||FOLHA.deptos.size||FOLHA.pessoas.size))return b;
@@ -11476,12 +11563,13 @@ function xmWrap(route,pg,bd){
 /* ---------- registros genéricos (lista + formulário + excluir) ---------- */
 const xmResOpts=()=>resAll().filter(r=>r.sit!=="Óbito").sort((a,b)=>resNome(a).localeCompare(resNome(b),"pt")).map(r=>[r.id,resNome(r)+((r.alergias||"").trim()?" ⚠ alergia":"")]);
 const xmResNome=id=>resNomeDe(id)||"";
-const xmColOpts=()=>[["","—"],...integList().map(i=>[i.id,nomeInteg(i)])];
+// desligados só aparecem se o registro aberto já for deles
+const xmColOpts=x=>[["","—"],...integList().filter(i=>ativoEm(i)||Object.values(x||{}).includes(i.id)).map(i=>[i.id,nomeInteg(i)])];
 const xmColNome=id=>{const i=S.integrantes[id];return i?nomeInteg(i):(id?"(removido)":"")};
 function xmRegistro(o){
   XMREG[o.mod+"|"+o.key]=o;
   const get=()=>xmcfg(o.mod)[o.key]||[];o.get=get;
-  const campos=x=>[...(o.res?[{k:"res",l:"Residente",t:"select",opts:[["","—"],...xmResOpts()],v:x.res||XM.sim["f_"+o.mod+o.key]||(o.mod==="pres"?PRES.sel:"")||""}]:[]),...o.campos.map(c=>({...c,opts:typeof c.opts==="function"?c.opts():c.opts,list:typeof c.list==="function"?c.list():c.list,v:x[c.k]!=null?x[c.k]:(c.d!=null?(typeof c.d==="function"?c.d():c.d):c.v)}))];
+  const campos=x=>[...(o.res?[{k:"res",l:"Residente",t:"select",opts:[["","—"],...xmResOpts()],v:x.res||XM.sim["f_"+o.mod+o.key]||(o.mod==="pres"?PRES.sel:"")||""}]:[]),...o.campos.map(c=>({...c,opts:typeof c.opts==="function"?c.opts(x):c.opts,list:typeof c.list==="function"?c.list():c.list,v:x[c.k]!=null?x[c.k]:(c.d!=null?(typeof c.d==="function"?c.d():c.d):c.v)}))];
   o.formCampos=campos;
   const html=()=>{
     const ed=podeEd(o.mod),F=XM.sim["f_"+o.mod+o.key]!==undefined?XM.sim["f_"+o.mod+o.key]:(o.mod==="pres"?PRES.sel||"":""),q=f7Norm(XM.sim["q_"+o.mod+o.key]||"");
@@ -12242,7 +12330,7 @@ const xeHoje=()=>hojeIso();
 const xeAgora=()=>new Date().toTimeString().slice(0,5);
 const xeQuem=()=>(typeof f4Quem==="function"&&f4Quem())||"";
 const xeCfg=()=>({maxH:10,intMin:60,interH:11,consec:6,dup:3,perc:50,perc2:100,noturno:20,tol:10,l12:[],...(xeC().cfg||{})});
-const xeCols=()=>integList().filter(i=>!semPonto(i));
+const xeCols=()=>integList().filter(i=>!semPonto(i)&&ativoEm(i,addDaysIso(hojeIso(),-62)));
 const xeMin=(a,b)=>Math.round((b-a)/60000);
 const xeHM=m=>{const s=m<0?"-":"";m=Math.abs(Math.round(m));return s+Math.floor(m/60)+"h"+String(m%60).padStart(2,"0")};
 const xeIso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");
@@ -13121,7 +13209,7 @@ xmUrg(()=>podeVer("docs")?xkL("fiscal").filter(x=>x.val&&xmDias(x.val)<=30).map(
 /* --- protocolos e POPs com leitura confirmada (344, 345) --- */
 const xkPops=xmRegistro({mod:"docs",key:"pops",titulo:"Protocolos e POPs",sub:"Procedimentos operacionais. Ao alterar o texto, use “Nova versão”: todos precisam confirmar a leitura de novo.",novo:"Novo protocolo",campos:[{k:"titulo",l:"Título"},{k:"area",l:"Área",list:["Enfermagem","Cuidadores","Cozinha","Limpeza","Administrativo","Geral"]},{k:"versao",l:"Versão",t:"number",d:1},{k:"data",l:"Data da versão",t:"date",d:xkHoje},{k:"obrig",l:"Leitura obrigatória",t:"select",opts:["Sim","Não"]},{k:"texto",l:"Texto do procedimento",t:"textarea"}],ok:v=>v.titulo.trim()&&v.texto.trim()?null:"Informe título e texto.",
   cols:[[x=>f6Esc(x.titulo),"Protocolo"],[x=>f6Esc(x.area||""),"Área"],[x=>"v"+x.versao+" · "+brDate(x.data),"Versão"],[x=>xkLidos(x)+" de "+xkAtivos().length+" leram","Leitura"]],extra:x=>`<button class="b sec sm" data-xkpr="${x.id}">Ler</button> `+(podeEd("docs")?xmAcao(XMREG["docs|pops"],x.id,"nova","Nova versão"):""),acoes:{nova:x=>({versao:(+x.versao||1)+1,data:xkHoje()})}});
-const xkAtivos=()=>integList().filter(i=>!semPonto(i));
+const xkAtivos=()=>integList().filter(i=>!semPonto(i)&&ativoEm(i));
 const xkLidos=p=>{const ids=new Set(xkL("leituras").filter(l=>l.pop===p.id&&+l.versao===+p.versao).map(l=>l.col));return xkAtivos().filter(i=>ids.has(i.id)).length};
 xmReg("docs","pops","POPs e protocolos","Protocolos e POPs",()=>xkPops(),()=>{document.querySelectorAll("[data-xkpr]").forEach(b=>b.onclick=()=>{const p=xkL("pops").find(x=>x.id===b.dataset.xkpr);const ov=openModal(`<h3>${f6Esc(p.titulo)} <span class="sub">v${p.versao}</span></h3><div style="white-space:pre-wrap;max-height:45vh;overflow:auto;padding:8px;background:#fafafa;border:1px solid #ddd">${f6Esc(p.texto)}</div><div class="row" style="margin-top:10px;align-items:flex-end"><div><label>Quem leu</label><select id="xkpc"><option value="">Escolha…</option>${xmColOpts().map(([v,l])=>`<option value="${v}">${f6Esc(l)}</option>`).join("")}</select></div><button class="b" id="xkpok">Confirmar leitura</button></div><div class="err" id="xkpe"></div>`);ov.querySelector("#xkpok").onclick=()=>{const c=ov.querySelector("#xkpc").value;if(!c)return ov.querySelector("#xkpe").textContent="Escolha quem leu.";if(xkL("leituras").some(l=>l.pop===p.id&&+l.versao===+p.versao&&l.col===c)){ov.remove();return toast("Já confirmado.")}xkSet("leituras",l=>[...l,{id:uid8(),pop:p.id,versao:+p.versao,col:c,em:new Date().toISOString(),por:xkQuem()}]);ov.remove();toast("Leitura registrada.");setTimeout(xmGo,300)}})});
 xmReg("docs","leituras","POPs e protocolos","Quem leu o quê",()=>{
@@ -14364,11 +14452,11 @@ function xfoSit(n,meta){
 }
 /* pessoas já filtradas (cargo, escala, turno) */
 function xfoOpcoes(){
-  const L=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id))),seen={};
+  const L=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id))),seen={};
   return L.map(i=>{let l=nomeInteg(i)+" — "+cargoDe(i);if(seen[l]){seen[l]++;l+=" #"+seen[l]}else seen[l]=1;return{id:i.id,label:l}});
 }
 function xfoPessoas(){
-  let p=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
+  let p=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
   const cargos=[...new Set(p.map(cargoDe))].sort((a,b)=>a==="Sem cargo"?1:b==="Sem cargo"?-1:a.localeCompare(b,"pt"));
   if(ESCUI.cargo&&!cargos.includes(ESCUI.cargo))ESCUI.cargo="";
   if(ESCUI.cargo)p=p.filter(i=>cargoDe(i)===ESCUI.cargo);
@@ -14385,7 +14473,7 @@ function pgEscalaCalendario(){
   const mesCheio=ESCUI.start===isoDate(new Date(sy,sm,1))&&ESCUI.end===isoDate(new Date(sy,sm+1,0));
   const y0=new Date().getFullYear(),anos=[];for(let y=Math.min(y0-3,sy);y<=Math.max(y0+3,sy);y++)anos.push(y);
   const ym=xfoYm(ESCUI.start),diasMes=xfoDiasMes(ym),{p:todas,cargos}=xfoPessoas();
-  const todosElegiveis=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
+  const todosElegiveis=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
   const incons=todas.filter(i=>xfoTurno12(i)&&xfoModoDe(i)==="semana");
   const linhas=todas.map(ig=>{const c=xfoConta(ig,diasMes),per=mesCheio?c:xfoConta(ig,days),mt=xfoMeta(ig.id,ym);return{ig,c,per,mt,sit:xfoSit(c.lanc,mt.v)}});
   const people=linhas.filter(l=>!ESCUI.meta||l.sit.k===ESCUI.meta).map(l=>l.ig);
@@ -14691,7 +14779,7 @@ function xmdPessoa(ig,dias){
 }
 const xmdCobCfg=()=>{const c=(xmcfg("turnos").cobMin)||{};return{d:c.d==null?1:+c.d,n:c.n==null?1:+c.n}};
 /* todo o time elegível (não só quem está filtrado) — a cobertura precisa olhar o cargo inteiro */
-const xmdTodos=()=>integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
+const xmdTodos=()=>integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
 function xmdCobertura(cargos,dias){
   const cfg=xmdCobCfg(),todos=xmdTodos();
   return cargos.map(cargo=>{
@@ -15152,7 +15240,7 @@ function xabFin(){
       marca a folha como enviada e guarda o PDF final no prontuário. */
 const PPD={tipo:"",quem:"",ver:""};
 const PPD_INFO={
-  falta:{cor:"var(--bad)",d:p=>"Não tem nenhuma batida e a pessoa estava na escala. Se faltou com motivo (atestado, folga, troca), justifique. Se trabalhou, lance as batidas."},
+  falta:{cor:"var(--bad)",d:p=>"Não tem nenhuma batida e a pessoa estava na escala. Se era folga (troca, folga combinada), lance a folga. Se faltou com motivo (atestado), justifique. Se trabalhou, lance as batidas."},
   falta_pontual:{cor:"var(--madeira)",d:p=>`${p.detail.charAt(0).toUpperCase()+p.detail.slice(1)}. Lance a batida que faltou${p.sugereHora?` (horário esperado pela escala: ${p.sugereHora})`:""}.`},
   falta_entrada:{cor:"var(--madeira)",d:p=>`Tem só uma batida (${p.detail.replace(/^marcação /,"").replace(/ sem par$/,"")}) e falta a entrada. Lance a batida que faltou ou justifique.`},
   falta_saida:{cor:"var(--madeira)",d:p=>`Tem só uma batida (${p.detail.replace(/^marcação /,"").replace(/ sem par$/,"")}) e falta a saída. Lance a batida que faltou ou justifique.`},
@@ -15229,10 +15317,23 @@ function ppdRecebeArquivo(uid,f,D){
       if(await askConfirm("O arquivo não tem nenhuma batida diferente do que já está no sistema. Marcar a folha como enviada assim mesmo?","Marcar como enviada")){ov.remove();PLN.aoSalvar=null;ppdMarcaEnviada(uid,{mud:0,arq:f.name})}
     }});
 }
+/* turno 12x36 com a escala em "dias fixos da semana": a grade não alterna e gera faltas e "dia de folga" falsos.
+   Pelas batidas, acha os dias em que a pessoa começou plantão (perto da hora de entrada do turno) e sugere o início do ciclo. */
+function ppd1236(ig,uid,D){
+  if(!ig||!ig.id||typeof xfoTurno12!=="function"||!xfoTurno12(ig)||(ig.escalaModo||"semana")!=="semana")return null;
+  const t=turnosList().find(x=>String(x.no)===String(ig.turno)),m=/(\d{1,2}):(\d{2})/.exec((t&&t.texto)||"");
+  const ent=m?+m[1]*60+ +m[2]:null,cont=[0,0],dias=[[],[]];
+  if(ent!=null)for(const x of marcasOf(uid,D.ini,D.fim)){const min=x.ts.getHours()*60+x.ts.getMinutes(),dif=Math.abs(min-ent);
+    if(Math.min(dif,1440-dif)>180)continue;const d=isoDate(x.ts),par=Math.round((parseLocalIso(d+"T12:00:00")-parseLocalIso(D.ini+"T12:00:00"))/864e5)%2;
+    if(!dias[par].includes(d)){dias[par].push(d);cont[par]++}}
+  const par=cont[1]>cont[0]?1:0,ok=cont[par]>=3&&cont[par]>=3*cont[1-par];
+  return{inicio:ok?dias[par].sort()[0]:null,n:cont[par],outros:cont[1-par]};
+}
 function ppdBotoes(u,p){
   const b=(attr,txt,sec)=>`<button type="button" class="b ${sec?"sec ":""}sm" ${attr} style="flex:none">${txt}</button>`;
   if(p.kind==="marcacao_sem_escala")return(u.ig&&u.ig.id?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho"):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
-  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
+  const folga=u.ig&&u.ig.id?b(`data-ppdfolga="${u.ig.id}" data-day="${p.day}"`,"Lançar folga",1):"";
+  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+folga+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
   return b(`data-ppdmk="${u.uid}" data-day="${p.day}" ${p.sugereHora?`data-sug="${p.sugereHora}"`:""}`,"Lançar a batida que faltou")+b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar",1);
 }
 const ppdPasso=(n,ok,titulo,corpo)=>`<div style="display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--line)">
@@ -15254,6 +15355,8 @@ function ppdPessoaHtml(D,u,lista){
     ${prox?`<button type="button" class="b sec sm" data-ppdsel="${prox.uid}" style="flex:none" title="${esc(prox.nome)}">Próximo ▶</button>`:""}</div>
    <h2 style="margin:8px 0 2px">${esc(u.nome)}</h2>
    <p class="sub" style="margin:0 0 6px">${esc(ig.cargo||"—")} · nº ${esc(u.uid)} no relógio · ${refRotulo(D.ym)}</p>
+   ${(()=>{const e=ppd1236(ig,u.uid,D);return e?`<div class="callout sand" style="margin:8px 0"><b>Escala errada:</b> o turno é 12x36, mas a escala está em “dias fixos da semana”: ${esc(escalasTexto(ig,D.ini,D.fim))}. Por isso aparecem faltas e “bateu ponto em dia de folga” que não existiram. ${e.inicio?`Pelas batidas, os plantões começam em ${brDate(e.inicio)} e seguem dia sim, dia não (${e.n} plantões${e.outros?`, ${e.outros} fora desse padrão`:""}).`:"Não deu para descobrir pelas batidas em que dias são os plantões."} ${ed?(e.inicio?`<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="b sm" data-ppd1236="${ig.id}" data-ini="${e.inicio}" style="flex:none">Mudar para 12x36 alternado a partir de ${brDate(e.inicio).slice(0,5)}</button><button type="button" class="b sec sm" data-ppdescala="1" style="flex:none">Arrumar em Escalas</button></div>`:`<button type="button" class="b sm" data-ppdescala="1" style="flex:none;margin-top:6px">Arrumar em Escalas</button>`):""}</div>`:""})()}
+   ${cadRelogio(ig)?`<div class="callout sand" style="margin:8px 0">Este cadastro foi <b>criado sozinho pelo relógio</b> (só com o nome “${esc(ig.nome||"")}”, sem escala), por isso as batidas aparecem como dia de folga. Se é alguém que já está em Integrantes, junte os dois cadastros. ${ed?`<button type="button" class="b sm" data-ppdjunta="${ig.id}" style="flex:none;margin-top:6px">Juntar com o cadastro da pessoa</button>`:""}</div>`:""}
    ${ppdPasso(1,!pend.length,`Resolver as pendências ${pend.length?`<span style="color:var(--bad)">(${pend.length})</span>`:""}`,
      (pend.length?`<p class="sub" style="margin:0 0 10px">Cada linha diz o que aconteceu e tem o botão que resolve. Resolvida, a linha sai da lista.</p>
       ${Object.keys(conta).length>1?`<div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">${chip("","Todas",pend.length)}${Object.keys(PEND_TIPO).filter(k=>conta[k]).map(k=>chip(k,PEND_TIPO[k],conta[k])).join("")}</div>`:""}
@@ -15312,6 +15415,13 @@ function ppdBind(){
   document.querySelectorAll("[data-ppdtipo]").forEach(b=>b.onclick=()=>{PPD.tipo=b.dataset.ppdtipo;re()});
   document.querySelectorAll("[data-ppdoc]").forEach(b=>b.onclick=()=>openOcorr(+b.dataset.ppdoc,b.dataset.day));
   document.querySelectorAll("[data-ppdmk]").forEach(b=>b.onclick=()=>openMarcas(+b.dataset.ppdmk,b.dataset.day,{suggest:b.dataset.sug}));
+  document.querySelectorAll("[data-ppd1236]").forEach(b=>b.onclick=async()=>{const ig=S.integrantes[b.dataset.ppd1236];if(!ig)return;
+    if(!await askConfirm(`Mudar a escala de ${nomeInteg(ig)} para 12x36 (trabalha um dia, folga no outro), com plantão em ${brDate(b.dataset.ini)}? Vale para todos os dias. Se antes de alguma data a escala era outra, lance depois em Escalas → “Mudou de escala? Lançar a escala que valia antes”.`,"Mudar a escala"))return;
+    put("integrantes",ig.id,{...strip(ig),escalaModo:"ciclo",cicloTrab:1,cicloFolga:1,cicloInicio:b.dataset.ini,hist:[...(ig.hist||[]),{em:new Date().toISOString(),campo:"Escala",de:"Dias fixos da semana",para:"12x36 a partir de "+brDate(b.dataset.ini)}]});
+    toast("Escala mudada para 12x36.");afterOc()});
+  document.querySelectorAll("[data-ppdescala]").forEach(b=>b.onclick=()=>go("turnos"));
+  document.querySelectorAll("[data-ppdfolga]").forEach(b=>b.onclick=()=>openEscalaAjuste(b.dataset.ppdfolga,b.dataset.day,{tipo:"folga"}));
+  document.querySelectorAll("[data-ppdjunta]").forEach(b=>b.onclick=()=>abrirJuntarCadastro(b.dataset.ppdjunta,uid=>{PPD.quem=String(uid);re()}));
   document.querySelectorAll("[data-ppdesc]").forEach(b=>b.onclick=()=>openEscalaAjuste(b.dataset.ppdesc,b.dataset.day,{tipo:"trabalho"}));
   document.querySelectorAll("[data-ppdpln]").forEach(b=>b.onclick=()=>{const d=D();openPlanilha(+b.dataset.ppdpln,d.ini,d.fim,{aoSalvar:()=>re()})});
   document.querySelectorAll("[data-ppdxls]").forEach(b=>b.onclick=()=>{const d=D(),u=d.U.find(x=>+x.uid===+b.dataset.ppdxls);if(u)ppdBaixaExcel(u,d)});
@@ -16491,7 +16601,7 @@ function plnData(v){
   const y=m[3]?(m[3].length===2?"20"+m[3]:m[3]):PLN.de.slice(0,4);
   return y+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0");
 }
-const plnPessoas=()=>integList().filter(i=>i.uid!=null&&i.uid!==""&&!semPonto(i));
+const plnPessoas=(desde,uid)=>integList().filter(i=>i.uid!=null&&i.uid!==""&&!semPonto(i)&&(ativoEm(i,desde)||(uid!=null&&+i.uid===+uid)));
 const plnPode=()=>podeEd("ponto");
 const plnTrava=r=>!plnPode()||!!mesFechado(PLN.dias[r]);
 const plnColNome=c=>c===PLN.ncol?"Previsto":`${c%2?"Saída":"Entrada"} ${(c>>1)+1}`;
@@ -16714,7 +16824,7 @@ xmReg("ponto","planilha","Ajustes e justificativas","Planilha do ponto (como no 
   <button class="b" id="plabre" style="flex:none">${ic("sheet")} Abrir a planilha do ponto</button></div>`,()=>{const b=$("plabre");if(b)b.onclick=()=>openPlanilha()});
 function openPlanilha(uid,de,ate,opt){
   opt=opt||{};PLN.aoSalvar=opt.aoSalvar||null;
-  const pes=plnPessoas();if(!pes.length)return toast("Nenhum integrante com número no relógio. Cadastre no Prontuário.",true);
+  const pes=plnPessoas(de||(POINT.result&&POINT.result.start)||refIni(refPadrao()),uid);if(!pes.length)return toast("Nenhum integrante com número no relógio. Cadastre no Prontuário.",true);
   PLN.uid=uid!=null&&pes.some(i=>+i.uid===+uid)?+uid:(PLN.uid!=null&&pes.some(i=>+i.uid===+PLN.uid)?+PLN.uid:+pes[0].uid);
   const R=POINT.result,hoje=hojeIso();
   PLN.de=de||(R&&R.start)||refIni(refPadrao());PLN.ate=ate||(R&&R.end)||refFim(refPadrao());

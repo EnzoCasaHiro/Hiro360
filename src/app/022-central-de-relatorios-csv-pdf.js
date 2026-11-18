@@ -38,7 +38,7 @@ function specIntegrantes(sel){
 function specEscala(c){
   const mes=c.mes<0?new Date().getMonth():c.mes,n=new Date(c.ano,mes+1,0).getDate();
   const dias=Array.from({length:n},(_,i)=>isoDate(new Date(c.ano,mes,i+1)));
-  const rows=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id))).map(ig=>{
+  const rows=integList().filter(i=>!semPonto(i)&&ativoEm(i,dias[0])&&(i.turno||escalaEx().some(a=>a.uid===i.id))).map(ig=>{
     let tr=0;const cel=dias.map(d=>{const e=escalaDia(ig,d);if(e.antes||e.depois)return"—";if(e.on){tr++;return"T"}return"F"});
     return[nomeInteg(ig),cargoDe(ig),...cel,tr];
   });

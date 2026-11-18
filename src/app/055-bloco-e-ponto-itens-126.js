@@ -5,7 +5,7 @@ const xeHoje=()=>hojeIso();
 const xeAgora=()=>new Date().toTimeString().slice(0,5);
 const xeQuem=()=>(typeof f4Quem==="function"&&f4Quem())||"";
 const xeCfg=()=>({maxH:10,intMin:60,interH:11,consec:6,dup:3,perc:50,perc2:100,noturno:20,tol:10,l12:[],...(xeC().cfg||{})});
-const xeCols=()=>integList().filter(i=>!semPonto(i));
+const xeCols=()=>integList().filter(i=>!semPonto(i)&&ativoEm(i,addDaysIso(hojeIso(),-62)));
 const xeMin=(a,b)=>Math.round((b-a)/60000);
 const xeHM=m=>{const s=m<0?"-":"";m=Math.abs(Math.round(m));return s+Math.floor(m/60)+"h"+String(m%60).padStart(2,"0")};
 const xeIso=d=>d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");

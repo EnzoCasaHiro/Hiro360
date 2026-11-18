@@ -237,11 +237,22 @@ function pairPunches(punches,schedule,cfg,holidays,until){
     journeys.push(j);
   }
   const byDay=new Map();for(const p of loose){const d=isoDate(p.ts);if(!byDay.has(d))byDay.set(d,[]);byDay.get(d).push(p)}
+  byDay.forEach(l=>l.sort((a,b)=>a.ts-b.ts));
+  // plantão fora da escala que passa da meia-noite (troca, plantão extra): a entrada da noite fica sem par
+  // no dia e a saída da manhã seguinte cai no outro dia. Junta as duas no dia em que o plantão começou.
+  for(const d of[...byDay.keys()].sort()){
+    const ps=byDay.get(d);if(!ps||ps.length%2===0)continue;
+    const ult=ps[ps.length-1],d2=addDaysIso(d,1),nx=byDay.get(d2);
+    if(!nx||!nx.length||ult.ts.getHours()<12)continue;
+    const prim=nx[0],gap=minutesBetween(ult.ts,prim.ts);
+    if(prim.ts.getHours()>=12||gap<=0||gap>16*60)continue;
+    ps.push(nx.shift());if(!nx.length)byDay.delete(d2);
+  }
   for(const d of[...byDay.keys()].sort()){
     if(until&&d>until)continue;
-    const ps=byDay.get(d).sort((a,b)=>a.ts-b.ts);const[pairs,orphan]=sequentialPairs(ps);
+    const ps=byDay.get(d);const[pairs,orphan]=sequentialPairs(ps);
     const ivs=pairs.map(([a,b])=>[a.ts,b.ts]);const w=ivs.reduce((s,[a,b])=>s+minutesBetween(a,b),0);
-    const j=newJourney(d,SEM_ESCALA,null,{intervals:ivs,workedMin:w,extraMin:w,rawIds:ps.map(p=>p.rawId),marcas:ps.map(p=>p.ts),endsOn:d});
+    const j=newJourney(d,SEM_ESCALA,null,{intervals:ivs,workedMin:w,extraMin:w,rawIds:ps.map(p=>p.rawId),marcas:ps.map(p=>p.ts),endsOn:ps.length?isoDate(ps[ps.length-1].ts):d});
     journeys.push(j);pend.push({day:d,kind:"marcacao_sem_escala",detail:`${ps.length} marcação(ões) sem escala`});
     if(orphan){j.flags.push("falta_saida");pend.push({day:d,kind:"falta_saida",detail:`marcação ${hm(orphan.ts)} sem par`})}
   }

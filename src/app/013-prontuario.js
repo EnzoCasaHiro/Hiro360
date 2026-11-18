@@ -97,7 +97,7 @@ function bindPront(){
       const k=el.dataset.k,cur=S.integrantes[i.id]||i,base=String(cur[k]??""),r=prRasc(i.id);
       if(el.value===base)delete r[k];else r[k]={v:el.value,base};
     };el.addEventListener("input",h);el.addEventListener("change",h)});
-    $("dsave").onclick=()=>{
+    $("dsave").onclick=async()=>{
       const o={...strip(i)};document.querySelectorAll("#pdet [data-k]").forEach(el=>{o[el.dataset.k]=el.value.trim()});
       o.uid=o.uid===""||o.uid==null?null:+o.uid;if(!o.uid&&o.uid!==0)o.uid=null;
       if(!o.nomeCompleto)return $("ferr").textContent="Informe o nome completo.";
@@ -107,8 +107,14 @@ function bindPront(){
       const HC={nomeCompleto:"Nome",cargo:"Cargo",depto:"Departamento",turno:"Turno",situacao:"Situação",admissao:"Admissão",desligamento:"Desligamento",escalaModo:"Escala"};
       const difs=Object.keys(HC).filter(k=>String(i[k]??"")!==String(o[k]??"")&&(i.id&&(i.nomeCompleto||i.cargo||i.admissao)));
       o.hist=[...(i.hist||[]),...difs.map(k=>({em:new Date().toISOString(),campo:HC[k],de:String(i[k]??"")||"—",para:String(o[k]??"")||"—"}))];
-      const dup=Object.values(S.integrantes).find(x=>x.id!==i.id&&o.uid!=null&&x.uid!=null&&+x.uid===+o.uid);
-      if(dup)return $("ferr").textContent=`O ID ${o.uid} já pertence a ${nomeInteg(dup)}.`;
+      let dup=Object.values(S.integrantes).find(x=>x.id!==i.id&&o.uid!=null&&x.uid!=null&&+x.uid===+o.uid);
+      // sem número, mas com o mesmo "nome no relógio" de um cadastro que o relógio criou sozinho: é a mesma pessoa
+      if(!dup&&o.uid==null&&cadRelogio(i)===false&&o.nome){const n=o.nome.trim().toLowerCase();dup=Object.values(S.integrantes).find(x=>x.id!==i.id&&cadRelogio(x)&&String(x.nome||"").trim().toLowerCase()===n)}
+      if(dup&&!cadRelogio(dup))return $("ferr").textContent=`O ID ${o.uid} já pertence a ${nomeInteg(dup)}.`;
+      if(dup){
+        if(!await askConfirm(`O nº ${dup.uid} do relógio está num cadastro que o sistema criou sozinho ao importar as batidas ("${dup.nome||"sem nome"}", sem escala). É a mesma pessoa que ${o.nomeCompleto}? Os dois viram um só: as batidas do nº ${dup.uid} passam a contar com a escala e os dados deste cadastro, e o cadastro "${dup.nome||"sem nome"}" é apagado.`,"Juntar os cadastros"))return;
+        juntarCadastro(dup.id,i.id);o.uid=+dup.uid;if(!o.nome)o.nome=dup.nome||"";
+      }
       o.cpf=fmtCPF(o.cpf);put("integrantes",i.id,o);if(PR.rasc)delete PR.rasc[i.id];toast("Dados salvos.");go("pront",true);
     };
     if($("ddel"))$("ddel").onclick=async()=>{
@@ -134,4 +140,67 @@ function bindPront(){
     document.querySelectorAll("[data-dxo]").forEach(b=>b.onclick=async()=>{if(await askConfirm("Excluir esta ocorrência?","Excluir")){del("ocorr",b.dataset.dxo);afterOc()}});
   }
 }
-
+/* cadastro que o relógio criou sozinho ao importar batidas: só número e nome do relógio, sem nome completo */
+const cadRelogio=i=>!!i&&i.uid!=null&&i.uid!==""&&!String(i.nomeCompleto||"").trim();
+/* junta o cadastro criado pelo relógio (deId) com o cadastro de verdade da pessoa (paraId):
+   justificativas, documentos, ajustes de escala e previstos digitados passam para paraId; deId é apagado.
+   Quem chama grava o número do relógio em paraId. */
+function juntarCadastro(deId,paraId){
+  const de=S.integrantes[deId];if(!de||!S.integrantes[paraId]||deId===paraId)return false;
+  Object.values(S.ocorr).filter(o=>o.uid===deId).forEach(o=>put("ocorr",o.id,{...strip(o),uid:paraId}));
+  Object.values(S.docs||{}).filter(d=>d.uid===deId).forEach(d=>put("docs",d.id,{...strip(d),uid:paraId}));
+  if(escalaEx().some(a=>a.uid===deId))escMutate(l=>l.map(a=>a.uid===deId?{...a,uid:paraId}:a));
+  const pv=S.config["prevm_"+deId];
+  if(pv&&pv.dias){const alvo=S.config["prevm_"+paraId]||{};put("config","prevm_"+paraId,{...strip(alvo),dias:{...pv.dias,...(alvo.dias||{})}});del("config","prevm_"+deId)}
+  del("integrantes",deId);
+  if(typeof BHCACHE!=="undefined")BHCACHE.clear();
+  return true;
+}
+/* escolher com quem juntar um cadastro criado pelo relógio (usado na aba Pendências do Ponto) */
+function abrirJuntarCadastro(deId,onDone){
+  const de=S.integrantes[deId];if(!de)return;
+  // quem tem o primeiro nome igual ao do relógio vem primeiro (sugestão)
+  const sa=t=>String(t||"").normalize("NFD").replace(/[̀-ͯ]/g,"").trim().toLowerCase(),pri=sa(de.nome).split(/\s+/)[0]||"";
+  const bate=i=>pri&&sa(nomeInteg(i)).split(/\s+/)[0]===pri?1:0;
+  const alvos=integList().filter(i=>i.id!==deId&&!cadRelogio(i)&&!semPonto(i)&&ativoEm(i)&&(i.uid==null||i.uid===""))
+    .sort((a,b)=>bate(b)-bate(a));
+  if(!alvos.length)return toast("Não há integrante ativo sem número no relógio para juntar. Cadastre a pessoa em Integrantes primeiro (ou tire o número que está errado na ficha dela).",true);
+  const ov=openModal(`<h3>Juntar cadastros</h3>
+   <p class="sub" style="margin:0 0 10px">O cadastro <b>${esc(de.nome||"(sem nome)")}</b> (nº ${esc(de.uid)} no relógio) foi criado sozinho ao importar as batidas, sem escala. Escolha o cadastro de verdade dessa pessoa: as batidas do nº ${esc(de.uid)} passam a contar com a escala e os dados dele, e o cadastro do relógio é apagado.</p>
+   <label>É a mesma pessoa que</label><select id="jcalvo">${alvos.map(i=>`<option value="${i.id}">${esc(nomeInteg(i))}${i.cargo?" — "+esc(i.cargo):""}</option>`).join("")}</select>
+   <p class="sub" style="margin:6px 0 0">Só aparecem integrantes ativos que ainda não têm número no relógio.</p>
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="jccx">Cancelar</button><button class="b" id="jcok">Juntar</button></div>`);
+  ov.querySelector("#jccx").onclick=()=>ov.remove();
+  ov.querySelector("#jcok").onclick=()=>{
+    const para=S.integrantes[ov.querySelector("#jcalvo").value];if(!para)return;
+    const uid=+de.uid,nome=para.nome||de.nome||"";
+    if(!juntarCadastro(deId,para.id))return toast("Não consegui juntar os cadastros.",true);
+    put("integrantes",para.id,{...strip(para),uid,nome,hist:[...(para.hist||[]),{em:new Date().toISOString(),campo:"Nº no relógio",de:"—",para:String(uid)}]});
+    ov.remove();toast(`Pronto: o nº ${uid} do relógio agora é de ${nomeInteg(para)}.`);if(onDone)onDone(uid);
+  };
+}
+/* ---- identificação automática pelo "Nome no relógio" ----
+   O relógio manda só número e nome (às vezes cortado, ex.: "Monica Mar"). Se um integrante de verdade, ainda sem
+   número, tem exatamente esse "Nome no relógio", é a mesma pessoa: o número vai para ele, sem cadastro duplicado. */
+const nomeChave=t=>String(t||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/\s+/g," ").trim().toLowerCase();
+function integPorNomeRelogio(nome,excetoId){
+  const k=nomeChave(nome);if(!k)return null;
+  const l=Object.values(S.integrantes).filter(i=>i.id!==excetoId&&!cadRelogio(i)&&(i.uid==null||i.uid==="")&&!semPonto(i)&&(i.situacao||"Ativo")!=="Desligado"&&nomeChave(i.nome)===k);
+  return l.length===1?l[0]:null;
+}
+/* junta sozinho os cadastros criados pelo relógio que já têm dono pelo "Nome no relógio" (roda ao calcular o ponto) */
+function autoJuntarRelogio(){
+  if(!dadosCarregados()||!escritaOk("integrantes","auto"))return 0;
+  const feitos=[];
+  for(const de of Object.values(S.integrantes).filter(cadRelogio)){
+    const para=integPorNomeRelogio(de.nome,de.id);if(!para)continue;
+    // documentos e justificativas do cadastro do relógio precisam de permissão para mudar de dono
+    if(Object.values(S.docs||{}).some(d=>d.uid===de.id)&&!escritaOk("docs","auto"))continue;
+    if(Object.values(S.ocorr).some(o=>o.uid===de.id)&&!escritaOk("ocorr","auto"))continue;
+    const uid=+de.uid;if(!juntarCadastro(de.id,para.id))continue;
+    put("integrantes",para.id,{...strip(para),uid,hist:[...(para.hist||[]),{em:new Date().toISOString(),campo:"Nº no relógio",de:"—",para:String(uid)+" (identificado pelo nome no relógio)"}]});
+    feitos.push(`${nomeInteg(para)} (nº ${uid})`);
+  }
+  if(feitos.length)toast(`Identificado pelo nome no relógio: ${feitos.join(", ")}. As batidas já contam no cadastro certo.`);
+  return feitos.length;
+}

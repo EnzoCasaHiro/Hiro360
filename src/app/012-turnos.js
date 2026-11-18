@@ -1,6 +1,7 @@
 /* ================= TURNOS ================= */
 let TURN_DRAFT=null;
 function pgTurnos(){
+  try{if(typeof autoJuntarRelogio==="function")autoJuntarRelogio()}catch(e){}
   TURN_DRAFT=TURN_DRAFT||turnosList().map(t=>({...t,dias:{...(t.dias||{})}}));
   const shifts=TURN_DRAFT;
   return banner("","Escalas e turnos","Turnos da casa, escala de cada integrante, folgas, trocas de plantão e alertas de cobertura.","cal")+noStore()+`
@@ -14,8 +15,8 @@ function pgTurnos(){
   ${pgSugestoes()}
   <div class="card" id="escint"><h2>Escala dos integrantes</h2>
    <p class="sub" style="margin:0 0 10px">Marque os dias em que cada integrante trabalha. Para plantão 12x36 (ou qualquer ciclo "trabalha X, folga Y"), use o modo Ciclo — funciona certo mesmo virando o mês. Pares/ímpares é um atalho rápido, mas falha em meses de 31 dias.</p>
-   ${integList().filter(i=>!semPonto(i)).length?`<div class="wrap"><table><thead><tr><th style="width:200px">Integrante</th><th style="width:150px">Turno</th><th>Quando trabalha</th></tr></thead><tbody>
-   ${integList().filter(i=>!semPonto(i)).map(i=>`<tr data-id="${i.id}"><td><b>${esc(nomeInteg(i))}</b><div class="sub">${esc(i.depto||"Outro")}${i.uid!=null?" · ID "+i.uid:""}</div></td>
+   ${integList().filter(i=>!semPonto(i)&&ativoEm(i)).length?`<div class="wrap"><table><thead><tr><th style="width:200px">Integrante</th><th style="width:150px">Turno</th><th>Quando trabalha</th></tr></thead><tbody>
+   ${integList().filter(i=>!semPonto(i)&&ativoEm(i)).map(i=>`<tr data-id="${i.id}"><td><b>${esc(nomeInteg(i))}</b><div class="sub">${esc(i.depto||"Outro")}${i.uid!=null?" · ID "+i.uid:""}</div></td>
     <td><select data-e="turno"><option value="">Folga / sem escala</option>${turnosList().map(t=>`<option value="${t.no}" ${String(i.turno)===String(t.no)?"selected":""}>${t.no} · ${esc(t.nome||t.texto)}</option>`).join("")}</select></td>
     <td><div class="escalabox">
      <select data-e="modo" style="max-width:220px;margin-bottom:8px"><option value="semana" ${(i.escalaModo||"semana")==="semana"?"selected":""}>Dias fixos da semana</option><option value="ciclo" ${i.escalaModo==="ciclo"?"selected":""}>Ciclo (ex.: 12x36, 6x1…)</option><option value="par" ${i.escalaModo==="par"?"selected":""}>Dias pares do mês</option><option value="impar" ${i.escalaModo==="impar"?"selected":""}>Dias ímpares do mês</option></select>
@@ -49,7 +50,7 @@ function pgEscalaCalendario(){
   const sy=+ESCUI.start.slice(0,4),sm=+ESCUI.start.slice(5,7)-1;
   const mesCheio=ESCUI.start===isoDate(new Date(sy,sm,1))&&ESCUI.end===isoDate(new Date(sy,sm+1,0));
   const y0=new Date().getFullYear(),anos=[];for(let y=Math.min(y0-3,sy);y<=Math.max(y0+3,sy);y++)anos.push(y);
-  let people=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
+  let people=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
   const cargos=[...new Set(people.map(cargoDe))].sort((a,b)=>a==="Sem cargo"?1:b==="Sem cargo"?-1:a.localeCompare(b,"pt"));
   if(ESCUI.cargo&&!cargos.includes(ESCUI.cargo))ESCUI.cargo="";
   if(ESCUI.cargo)people=people.filter(i=>cargoDe(i)===ESCUI.cargo);

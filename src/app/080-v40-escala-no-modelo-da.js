@@ -80,7 +80,7 @@ function xmdPessoa(ig,dias){
 }
 const xmdCobCfg=()=>{const c=(xmcfg("turnos").cobMin)||{};return{d:c.d==null?1:+c.d,n:c.n==null?1:+c.n}};
 /* todo o time elegível (não só quem está filtrado) — a cobertura precisa olhar o cargo inteiro */
-const xmdTodos=()=>integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
+const xmdTodos=()=>integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
 function xmdCobertura(cargos,dias){
   const cfg=xmdCobCfg(),todos=xmdTodos();
   return cargos.map(cargo=>{

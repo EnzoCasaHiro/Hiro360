@@ -47,12 +47,13 @@ function xmWrap(route,pg,bd){
 /* ---------- registros genéricos (lista + formulário + excluir) ---------- */
 const xmResOpts=()=>resAll().filter(r=>r.sit!=="Óbito").sort((a,b)=>resNome(a).localeCompare(resNome(b),"pt")).map(r=>[r.id,resNome(r)+((r.alergias||"").trim()?" ⚠ alergia":"")]);
 const xmResNome=id=>resNomeDe(id)||"";
-const xmColOpts=()=>[["","—"],...integList().map(i=>[i.id,nomeInteg(i)])];
+// desligados só aparecem se o registro aberto já for deles
+const xmColOpts=x=>[["","—"],...integList().filter(i=>ativoEm(i)||Object.values(x||{}).includes(i.id)).map(i=>[i.id,nomeInteg(i)])];
 const xmColNome=id=>{const i=S.integrantes[id];return i?nomeInteg(i):(id?"(removido)":"")};
 function xmRegistro(o){
   XMREG[o.mod+"|"+o.key]=o;
   const get=()=>xmcfg(o.mod)[o.key]||[];o.get=get;
-  const campos=x=>[...(o.res?[{k:"res",l:"Residente",t:"select",opts:[["","—"],...xmResOpts()],v:x.res||XM.sim["f_"+o.mod+o.key]||(o.mod==="pres"?PRES.sel:"")||""}]:[]),...o.campos.map(c=>({...c,opts:typeof c.opts==="function"?c.opts():c.opts,list:typeof c.list==="function"?c.list():c.list,v:x[c.k]!=null?x[c.k]:(c.d!=null?(typeof c.d==="function"?c.d():c.d):c.v)}))];
+  const campos=x=>[...(o.res?[{k:"res",l:"Residente",t:"select",opts:[["","—"],...xmResOpts()],v:x.res||XM.sim["f_"+o.mod+o.key]||(o.mod==="pres"?PRES.sel:"")||""}]:[]),...o.campos.map(c=>({...c,opts:typeof c.opts==="function"?c.opts(x):c.opts,list:typeof c.list==="function"?c.list():c.list,v:x[c.k]!=null?x[c.k]:(c.d!=null?(typeof c.d==="function"?c.d():c.d):c.v)}))];
   o.formCampos=campos;
   const html=()=>{
     const ed=podeEd(o.mod),F=XM.sim["f_"+o.mod+o.key]!==undefined?XM.sim["f_"+o.mod+o.key]:(o.mod==="pres"?PRES.sel||"":""),q=f7Norm(XM.sim["q_"+o.mod+o.key]||"");

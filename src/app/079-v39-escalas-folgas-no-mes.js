@@ -37,11 +37,11 @@ function xfoSit(n,meta){
 }
 /* pessoas já filtradas (cargo, escala, turno) */
 function xfoOpcoes(){
-  const L=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id))),seen={};
+  const L=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id))),seen={};
   return L.map(i=>{let l=nomeInteg(i)+" — "+cargoDe(i);if(seen[l]){seen[l]++;l+=" #"+seen[l]}else seen[l]=1;return{id:i.id,label:l}});
 }
 function xfoPessoas(){
-  let p=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
+  let p=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
   const cargos=[...new Set(p.map(cargoDe))].sort((a,b)=>a==="Sem cargo"?1:b==="Sem cargo"?-1:a.localeCompare(b,"pt"));
   if(ESCUI.cargo&&!cargos.includes(ESCUI.cargo))ESCUI.cargo="";
   if(ESCUI.cargo)p=p.filter(i=>cargoDe(i)===ESCUI.cargo);
@@ -58,7 +58,7 @@ function pgEscalaCalendario(){
   const mesCheio=ESCUI.start===isoDate(new Date(sy,sm,1))&&ESCUI.end===isoDate(new Date(sy,sm+1,0));
   const y0=new Date().getFullYear(),anos=[];for(let y=Math.min(y0-3,sy);y<=Math.max(y0+3,sy);y++)anos.push(y);
   const ym=xfoYm(ESCUI.start),diasMes=xfoDiasMes(ym),{p:todas,cargos}=xfoPessoas();
-  const todosElegiveis=integList().filter(i=>!semPonto(i)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
+  const todosElegiveis=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&(i.turno||escalaEx().some(a=>a.uid===i.id)));
   const incons=todas.filter(i=>xfoTurno12(i)&&xfoModoDe(i)==="semana");
   const linhas=todas.map(ig=>{const c=xfoConta(ig,diasMes),per=mesCheio?c:xfoConta(ig,days),mt=xfoMeta(ig.id,ym);return{ig,c,per,mt,sit:xfoSit(c.lanc,mt.v)}});
   const people=linhas.filter(l=>!ESCUI.meta||l.sit.k===ESCUI.meta).map(l=>l.ig);

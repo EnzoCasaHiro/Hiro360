@@ -37,7 +37,7 @@ function plnData(v){
   const y=m[3]?(m[3].length===2?"20"+m[3]:m[3]):PLN.de.slice(0,4);
   return y+"-"+m[2].padStart(2,"0")+"-"+m[1].padStart(2,"0");
 }
-const plnPessoas=()=>integList().filter(i=>i.uid!=null&&i.uid!==""&&!semPonto(i));
+const plnPessoas=(desde,uid)=>integList().filter(i=>i.uid!=null&&i.uid!==""&&!semPonto(i)&&(ativoEm(i,desde)||(uid!=null&&+i.uid===+uid)));
 const plnPode=()=>podeEd("ponto");
 const plnTrava=r=>!plnPode()||!!mesFechado(PLN.dias[r]);
 const plnColNome=c=>c===PLN.ncol?"Previsto":`${c%2?"Saída":"Entrada"} ${(c>>1)+1}`;
@@ -260,7 +260,7 @@ xmReg("ponto","planilha","Ajustes e justificativas","Planilha do ponto (como no 
   <button class="b" id="plabre" style="flex:none">${ic("sheet")} Abrir a planilha do ponto</button></div>`,()=>{const b=$("plabre");if(b)b.onclick=()=>openPlanilha()});
 function openPlanilha(uid,de,ate,opt){
   opt=opt||{};PLN.aoSalvar=opt.aoSalvar||null;
-  const pes=plnPessoas();if(!pes.length)return toast("Nenhum integrante com número no relógio. Cadastre no Prontuário.",true);
+  const pes=plnPessoas(de||(POINT.result&&POINT.result.start)||refIni(refPadrao()),uid);if(!pes.length)return toast("Nenhum integrante com número no relógio. Cadastre no Prontuário.",true);
   PLN.uid=uid!=null&&pes.some(i=>+i.uid===+uid)?+uid:(PLN.uid!=null&&pes.some(i=>+i.uid===+PLN.uid)?+PLN.uid:+pes[0].uid);
   const R=POINT.result,hoje=hojeIso();
   PLN.de=de||(R&&R.start)||refIni(refPadrao());PLN.ate=ate||(R&&R.end)||refFim(refPadrao());

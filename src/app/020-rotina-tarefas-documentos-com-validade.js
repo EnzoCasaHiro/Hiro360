@@ -121,7 +121,7 @@ function openDia(iso){
   ov.querySelectorAll("[data-odel]").forEach(b=>b.onclick=()=>{ov.remove();openTarDel(b.dataset.odel)});
 }
 function openTarefa(id,dataPadrao){
-  const ed=id?tarAll().find(t=>t.id===id):null,areas=estData().areas,ints=integList();
+  const ed=id?tarAll().find(t=>t.id===id):null,areas=estData().areas,ints=integList().filter(i=>ativoEm(i)||(ed&&JSON.stringify(ed).includes(i.id)));
   const ov=openModal(`<h3>${ed?"Editar tarefa":"Nova tarefa"}</h3>
    <label>O que precisa ser feito</label><input id="ttit" value="${esc(ed?ed.titulo:"")}" placeholder="Ex.: Renovar alvará, conferir estoque da cozinha...">
    <div class="row"><div><label>Data</label><input type="date" id="tdata" value="${ed?ed.data:(dataPadrao||hojeIso())}"></div><div><label>Hora (opcional)</label><input type="time" id="thora" value="${ed?ed.hora||"":""}"></div>
@@ -411,7 +411,7 @@ function sugerirFolgas(ano,mes0,nMeses){
 function pgSugestoes(){
   const c=escCfg(),ini=ESCUI.start||isoDate(new Date()),sy=+ini.slice(0,4),sm=+ini.slice(5,7)-1;
   const dias=[];if(ESCUI.start&&ESCUI.end&&ESCUI.start<=ESCUI.end)for(let d=ESCUI.start;d<=ESCUI.end&&dias.length<=46;d=addDaysIso(d,1))dias.push(d);
-  const gente=integList().filter(i=>!semPonto(i)&&i.turno),cargos=[...new Set(gente.map(cargoDe))].sort((a,b)=>a.localeCompare(b,"pt"));
+  const gente=integList().filter(i=>!semPonto(i)&&ativoEm(i,ESCUI.start)&&i.turno),cargos=[...new Set(gente.map(cargoDe))].sort((a,b)=>a.localeCompare(b,"pt"));
   const cob=cargos.length&&dias.length&&dias.length<=46?`<h2 style="margin-top:14px">Cobertura por cargo (quantas pessoas trabalham em cada dia)</h2><div class="wrap"><table style="font-size:11px"><thead><tr><th style="position:sticky;left:0;background:var(--card)">Cargo</th>${dias.map(d=>`<th class="n" style="padding:4px 2px">${d.slice(8)}</th>`).join("")}</tr></thead><tbody>
     ${cargos.map(cg=>{const ps=gente.filter(i=>cargoDe(i)===cg);return `<tr><td style="position:sticky;left:0;background:var(--card);white-space:nowrap;font-weight:700">${esc(cg)}</td>${dias.map(d=>{const n=ps.filter(p=>escalaDia(p,d).on).length;const bg=n===0?"rgba(156,74,31,.25)":n<=c.minCob?"var(--madeira-clara)":"var(--verde-palido)";return `<td style="padding:2px"><div title="${brDate(d)}: ${n} pessoa(s)" style="min-width:18px;text-align:center;border-radius:4px;background:${bg};font-weight:700">${n}</div></td>`}).join("")}</tr>`}).join("")}</tbody></table></div>`:"";
   const res=SUG.lista;
