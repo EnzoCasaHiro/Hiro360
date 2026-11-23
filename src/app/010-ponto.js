@@ -135,31 +135,42 @@ function calcular(show){
         const ajd=ig.id?ajusteDe(ig.id,r.day):null;
         if(ajd&&ajd.tipo==="trabalho")r.flags.push("escala_lancada");
         {const pm=ig.id?prevManual(ig.id,r.day):null;if(pm!=null)aplicaPrevManual(r,pm)}
-        const o=ocs.find(x=>x.de<=r.day&&r.day<=x.ate);
+        const o=ocs.find(x=>x.de<=r.day&&r.day<=x.ate&&OC_FALTA.has(x.tipo))||ocs.find(x=>x.de<=r.day&&r.day<=x.ate);
         if(o){
           r.oc=o;
           const credita=o.tipo==="atestado"||o.tipo==="esquecimento"||o.tipo==="falta_justificada";
-          if(r.status===FALTA){r.status=o.tipo==="atestado"?"atestado":o.tipo==="esquecimento"?"esquecido":"justificada";if(credita){r.workedMin=r.expectedMin;r.late=0;r.early=0;r.extra=0}}
+          // falta confirmada: continua falta (desconta e conta como falta), só sai das pendências.
+          // falta compensada: deixa de ser falta; o dia fica com saldo −previsto e o dia trabalhado a mais cobre.
+          if(OC_FALTA.has(o.tipo)){if(r.status===FALTA){r.flags=r.flags.filter(f=>f!=="justificar");if(o.tipo==="falta_confirmada")r.flags.push("falta_confirmada");else r.status="compensada"}}
+          else if(r.status===FALTA){r.status=o.tipo==="atestado"?"atestado":o.tipo==="esquecimento"?"esquecido":"justificada";if(credita){r.workedMin=r.expectedMin;r.late=0;r.early=0;r.extra=0}}
           else if(r.status===PENDENCIA&&(o.tipo==="esquecimento"||o.tipo==="falta_justificada")){r.status="esquecido";if(credita){r.workedMin=r.expectedMin;r.late=0;r.early=0;r.extra=0}}
           else r.flags.push(o.tipo==="atestado"?"atestado":"justificativa");
         }
         r.saldo=saldoDia(r);
         return r;
       });
-      const okDays=new Set(rows.filter(r=>["atestado","justificada","esquecido"].includes(r.status)).map(r=>r.day));
-      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!okDays.has(p.day));
+      // dia trabalhado a mais para compensar uma falta: sai a pendência de "dia de folga" e a hora extra
+      // desse dia diminui no tamanho da falta (não é paga, já cobre a falta)
+      const compDias=new Set();
+      ocs.filter(o=>o.tipo==="falta_compensada"&&o.comp).forEach(o=>{
+        compDias.add(o.comp);const c=rows.find(x=>x.day===o.comp);if(!c)return;
+        (c.compensa=c.compensa||[]).push(o.de);if(!c.flags.includes("compensa_falta"))c.flags.push("compensa_falta");
+        const f=rows.find(x=>x.day===o.de&&x.status==="compensada");if(f){const ab=Math.min(c.extra||0,f.expectedMin||0);c.extra=(c.extra||0)-ab}});
+      const okDays=new Set(rows.filter(r=>["atestado","justificada","esquecido","compensada"].includes(r.status)).map(r=>r.day));
+      const confDias=new Set(rows.filter(r=>r.status===FALTA&&r.flags.includes("falta_confirmada")).map(r=>r.day));
+      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&compDias.has(p.day)));
       const sum=k=>rows.reduce((s,r)=>s+r[k],0),cnt=s=>rows.filter(r=>r.status===s).length;
       users.push({uid,ig,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
         t:{worked:sum("workedMin"),expected:sum("expectedMin"),late:sum("late"),early:sum("early"),extra:sum("extra"),
            saldo:sum("saldo"),mais:rows.reduce((s,r)=>s+Math.max(0,r.saldo),0),menos:rows.reduce((s,r)=>s+Math.min(0,r.saldo),0),nightReal:sum("nightReal"),nightFicta:sum("nightFicta"),
            escalados:rows.filter(r=>r.expectedMin>0).length,trab:rows.filter(r=>r.workedMin>0).length,
-           faltas:cnt("falta"),atestados:cnt("atestado"),justificadas:cnt("justificada"),esquecidos:cnt("esquecido")}});
+           faltas:cnt("falta"),atestados:cnt("atestado"),justificadas:cnt("justificada"),esquecidos:cnt("esquecido"),compensadas:cnt("compensada")}});
     }
     P.result={users,start:P.start,end:P.end,semCadastro};
   }catch(e){P.err=e.message;P.result=null}
   if(show)go("ponto",true);
 }
-const CLR={ok:"var(--verde-medio)",falta:"var(--bad)",pendencia:"var(--madeira)",atestado:"var(--azul-mar)",justificada:"#5f9d62",esquecido:"var(--madeira-clara)",sem_escala:"var(--areia-esc)",feriado:"var(--areia-esc)"};
+const CLR={ok:"var(--verde-medio)",falta:"var(--bad)",pendencia:"var(--madeira)",atestado:"var(--azul-mar)",justificada:"#5f9d62",esquecido:"var(--madeira-clara)",compensada:"#8a7fb5",sem_escala:"var(--areia-esc)",feriado:"var(--areia-esc)"};
 function heatmap(R){
   const days=[];for(let d=R.start;d<=R.end;d=addDaysIso(d,1))days.push(d);
   if(days.length>62)return "";
@@ -182,7 +193,7 @@ function renderResult(R){
    <button class="stat" data-stat="extra"><b>${fmtHHMM(tot("extra"))}</b><span>horas extras</span></button>
    <button class="stat ${tot("late")?"warn":""}" data-stat="atraso"><b>${tot("late")}</b><span>min. de atraso</span></button></div>
   ${(R.semCadastro||[]).length?`<div class="callout sand" style="margin:10px 0">Números do relógio <b>sem cadastro</b> (ficam fora do cálculo e do fechamento): ${R.semCadastro.map(x=>`nº ${x.uid}${x.nome?" ("+esc(x.nome)+")":""} — ${x.n} batida(s)`).join("; ")}. Se for alguém da casa, cadastre em Integrantes com esse número no relógio, ou ligue em Ponto → Cadastro e conferência → De-para.</div>`:""}
-  <div class="legend">${["ok","falta","pendencia","atestado","justificada","esquecido","sem_escala"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
+  <div class="legend">${["ok","falta","pendencia","atestado","justificada","compensada","esquecido","sem_escala"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
    <span style="margin-left:auto;font-style:italic">Clique num card, num dia ou no nome para ver detalhes e resolver.</span></div>`+
   heatmap(R)+
   U.map(u=>{

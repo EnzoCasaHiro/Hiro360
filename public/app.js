@@ -363,9 +363,10 @@ const fmtCPF=v=>{v=String(v||"").replace(/\D/g,"");return v.length===11?v.replac
 const DEPTOS=["Administrativo","Cuidadores(a)","Enfermagem","Fisioterapia","Cozinheiras(o)","Aux de Limpeza","Recepção","Outro"];
 const deptoClass=d=>/limpeza/i.test(d)?"d-limpeza":/cozinh/i.test(d)?"d-cozinha":/admin/i.test(d)?"d-admin":/recep/i.test(d)?"d-recepcao":/enferm|fisio|cuidad/i.test(d)?"":"d-outro";
 const CATS=["Documentos pessoais","Contrato e admissão","ASO e exames","Atestados","Certificados e treinamentos","Outros"];
-const OC={atestado:"Atestado médico",falta_justificada:"Falta justificada",esquecimento:"Esquecimento de ponto",outro:"Outro registro"};
-const STL={ok:"OK",falta:"Falta",pendencia:"Pendência",atestado:"Atestado",justificada:"Justificada",esquecido:"Ponto esquecido",sem_escala:"Sem escala",feriado:"Feriado"};
-const FLAG_LABEL={tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trabalhou no feriado",multiplos_periodos:"múltiplos períodos",intervalo_preassinalado:"intervalo descontado",justificar:"a justificar",falta_saida:"falta marcação de saída",falta_entrada:"falta marcação de entrada",falta_pontual:"marcação pontual ausente",escala_lancada:"escala lançada manualmente"};
+const OC={atestado:"Atestado médico",falta_justificada:"Falta justificada",esquecimento:"Esquecimento de ponto",outro:"Outro registro",falta_confirmada:"Falta sem justificativa (confirmada)",falta_compensada:"Falta compensada em outro dia"};
+const OC_FALTA=new Set(["falta_confirmada","falta_compensada"]);
+const STL={ok:"OK",falta:"Falta",pendencia:"Pendência",atestado:"Atestado",justificada:"Justificada",esquecido:"Ponto esquecido",sem_escala:"Sem escala",feriado:"Feriado",compensada:"Falta compensada"};
+const FLAG_LABEL={falta_confirmada:"falta confirmada",compensa_falta:"compensa falta",tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trabalhou no feriado",multiplos_periodos:"múltiplos períodos",intervalo_preassinalado:"intervalo descontado",justificar:"a justificar",falta_saida:"falta marcação de saída",falta_entrada:"falta marcação de entrada",falta_pontual:"marcação pontual ausente",escala_lancada:"escala lançada manualmente"};
 // ajustes feitos à mão (previsto/escala do dia) não aparecem como aviso na folha nem na tela do ponto; o histórico continua guardando quem mudou
 const FLAG_OCULTA=new Set(["escala_lancada","previsto_manual"]);
 const flagsVisiveis=r=>((r&&r.flags)||[]).filter(f=>!FLAG_OCULTA.has(f));
@@ -916,31 +917,42 @@ function calcular(show){
         const ajd=ig.id?ajusteDe(ig.id,r.day):null;
         if(ajd&&ajd.tipo==="trabalho")r.flags.push("escala_lancada");
         {const pm=ig.id?prevManual(ig.id,r.day):null;if(pm!=null)aplicaPrevManual(r,pm)}
-        const o=ocs.find(x=>x.de<=r.day&&r.day<=x.ate);
+        const o=ocs.find(x=>x.de<=r.day&&r.day<=x.ate&&OC_FALTA.has(x.tipo))||ocs.find(x=>x.de<=r.day&&r.day<=x.ate);
         if(o){
           r.oc=o;
           const credita=o.tipo==="atestado"||o.tipo==="esquecimento"||o.tipo==="falta_justificada";
-          if(r.status===FALTA){r.status=o.tipo==="atestado"?"atestado":o.tipo==="esquecimento"?"esquecido":"justificada";if(credita){r.workedMin=r.expectedMin;r.late=0;r.early=0;r.extra=0}}
+          // falta confirmada: continua falta (desconta e conta como falta), só sai das pendências.
+          // falta compensada: deixa de ser falta; o dia fica com saldo −previsto e o dia trabalhado a mais cobre.
+          if(OC_FALTA.has(o.tipo)){if(r.status===FALTA){r.flags=r.flags.filter(f=>f!=="justificar");if(o.tipo==="falta_confirmada")r.flags.push("falta_confirmada");else r.status="compensada"}}
+          else if(r.status===FALTA){r.status=o.tipo==="atestado"?"atestado":o.tipo==="esquecimento"?"esquecido":"justificada";if(credita){r.workedMin=r.expectedMin;r.late=0;r.early=0;r.extra=0}}
           else if(r.status===PENDENCIA&&(o.tipo==="esquecimento"||o.tipo==="falta_justificada")){r.status="esquecido";if(credita){r.workedMin=r.expectedMin;r.late=0;r.early=0;r.extra=0}}
           else r.flags.push(o.tipo==="atestado"?"atestado":"justificativa");
         }
         r.saldo=saldoDia(r);
         return r;
       });
-      const okDays=new Set(rows.filter(r=>["atestado","justificada","esquecido"].includes(r.status)).map(r=>r.day));
-      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!okDays.has(p.day));
+      // dia trabalhado a mais para compensar uma falta: sai a pendência de "dia de folga" e a hora extra
+      // desse dia diminui no tamanho da falta (não é paga, já cobre a falta)
+      const compDias=new Set();
+      ocs.filter(o=>o.tipo==="falta_compensada"&&o.comp).forEach(o=>{
+        compDias.add(o.comp);const c=rows.find(x=>x.day===o.comp);if(!c)return;
+        (c.compensa=c.compensa||[]).push(o.de);if(!c.flags.includes("compensa_falta"))c.flags.push("compensa_falta");
+        const f=rows.find(x=>x.day===o.de&&x.status==="compensada");if(f){const ab=Math.min(c.extra||0,f.expectedMin||0);c.extra=(c.extra||0)-ab}});
+      const okDays=new Set(rows.filter(r=>["atestado","justificada","esquecido","compensada"].includes(r.status)).map(r=>r.day));
+      const confDias=new Set(rows.filter(r=>r.status===FALTA&&r.flags.includes("falta_confirmada")).map(r=>r.day));
+      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&compDias.has(p.day)));
       const sum=k=>rows.reduce((s,r)=>s+r[k],0),cnt=s=>rows.filter(r=>r.status===s).length;
       users.push({uid,ig,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
         t:{worked:sum("workedMin"),expected:sum("expectedMin"),late:sum("late"),early:sum("early"),extra:sum("extra"),
            saldo:sum("saldo"),mais:rows.reduce((s,r)=>s+Math.max(0,r.saldo),0),menos:rows.reduce((s,r)=>s+Math.min(0,r.saldo),0),nightReal:sum("nightReal"),nightFicta:sum("nightFicta"),
            escalados:rows.filter(r=>r.expectedMin>0).length,trab:rows.filter(r=>r.workedMin>0).length,
-           faltas:cnt("falta"),atestados:cnt("atestado"),justificadas:cnt("justificada"),esquecidos:cnt("esquecido")}});
+           faltas:cnt("falta"),atestados:cnt("atestado"),justificadas:cnt("justificada"),esquecidos:cnt("esquecido"),compensadas:cnt("compensada")}});
     }
     P.result={users,start:P.start,end:P.end,semCadastro};
   }catch(e){P.err=e.message;P.result=null}
   if(show)go("ponto",true);
 }
-const CLR={ok:"var(--verde-medio)",falta:"var(--bad)",pendencia:"var(--madeira)",atestado:"var(--azul-mar)",justificada:"#5f9d62",esquecido:"var(--madeira-clara)",sem_escala:"var(--areia-esc)",feriado:"var(--areia-esc)"};
+const CLR={ok:"var(--verde-medio)",falta:"var(--bad)",pendencia:"var(--madeira)",atestado:"var(--azul-mar)",justificada:"#5f9d62",esquecido:"var(--madeira-clara)",compensada:"#8a7fb5",sem_escala:"var(--areia-esc)",feriado:"var(--areia-esc)"};
 function heatmap(R){
   const days=[];for(let d=R.start;d<=R.end;d=addDaysIso(d,1))days.push(d);
   if(days.length>62)return "";
@@ -963,7 +975,7 @@ function renderResult(R){
    <button class="stat" data-stat="extra"><b>${fmtHHMM(tot("extra"))}</b><span>horas extras</span></button>
    <button class="stat ${tot("late")?"warn":""}" data-stat="atraso"><b>${tot("late")}</b><span>min. de atraso</span></button></div>
   ${(R.semCadastro||[]).length?`<div class="callout sand" style="margin:10px 0">Números do relógio <b>sem cadastro</b> (ficam fora do cálculo e do fechamento): ${R.semCadastro.map(x=>`nº ${x.uid}${x.nome?" ("+esc(x.nome)+")":""} — ${x.n} batida(s)`).join("; ")}. Se for alguém da casa, cadastre em Integrantes com esse número no relógio, ou ligue em Ponto → Cadastro e conferência → De-para.</div>`:""}
-  <div class="legend">${["ok","falta","pendencia","atestado","justificada","esquecido","sem_escala"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
+  <div class="legend">${["ok","falta","pendencia","atestado","justificada","compensada","esquecido","sem_escala"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
    <span style="margin-left:auto;font-style:italic">Clique num card, num dia ou no nome para ver detalhes e resolver.</span></div>`+
   heatmap(R)+
   U.map(u=>{
@@ -1082,7 +1094,7 @@ function openOcorr(uid,day){
   const d0=day||POINT.start||isoDate(new Date());
   const ocs=Object.values(S.ocorr).filter(o=>o.uid===ig.id).sort((a,b)=>b.de.localeCompare(a.de));
   const ov=openModal(`<h3>${esc(nomeInteg(ig))}</h3><div class="sub" style="margin-bottom:10px">Lançar ocorrência no ponto</div>
-   <label>Tipo</label><select id="otipo">${Object.entries(OC).map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select>
+   <label>Tipo</label><select id="otipo">${Object.entries(OC).filter(([k])=>k!=="falta_compensada").map(([k,v])=>`<option value="${k}">${v}</option>`).join("")}</select>
    <div class="row"><div><label>De</label><input type="date" id="ode" value="${d0}"></div><div><label>Até (igual ao "De" se for um dia só)</label><input type="date" id="oate" value="${d0}"></div></div>
    <label>Observação</label><textarea id="otxt" placeholder="Ex.: esqueceu de bater a saída; atestado de 2 dias."></textarea>
    <div class="callout blue" style="margin-top:8px">Não registre diagnóstico ou CID. Anexe o atestado abaixo: ele fica no Prontuário, na pasta Atestados.</div>
@@ -1090,7 +1102,7 @@ function openOcorr(uid,day){
    <div class="sub" style="margin-top:8px">Precisa mudar a escala desse dia (folga ou dia trabalhado fora do padrão)? <button type="button" class="lnk" id="oesc">Ajustar escala</button></div>
    <div class="err" id="oerr"></div>
    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="ocx">Fechar</button><button class="b" id="osv">Lançar</button></div>
-   ${ocs.length?`<h2 style="margin-top:20px">Lançamentos deste integrante</h2>`+ocs.map(o=>`<div class="doc"><div class="grow"><div class="nm">${OC[o.tipo]} · ${brDate(o.de)}${o.ate!==o.de?" a "+brDate(o.ate):""}</div><div class="sub">${esc(o.texto||"")}</div></div><button class="b sec sm" data-del="${o.id}" title="Excluir">${ic("trash")}</button></div>`).join(""):""}`);
+   ${ocs.length?`<h2 style="margin-top:20px">Lançamentos deste integrante</h2>`+ocs.map(o=>`<div class="doc"><div class="grow"><div class="nm">${OC[o.tipo]} · ${brDate(o.de)}${o.ate!==o.de?" a "+brDate(o.ate):""}</div><div class="sub">${o.comp?"trabalhou a mais em "+brDate(o.comp)+(o.texto?" · ":""):""}${esc(o.texto||"")}</div></div><button class="b sec sm" data-del="${o.id}" title="Excluir">${ic("trash")}</button></div>`).join(""):""}`);
   ov.querySelector("#ocx").onclick=()=>ov.remove();
   ov.querySelector("#oesc").onclick=()=>{ov.remove();openEscalaAjuste(ig.id,ov.querySelector("#ode").value||d0)};
   ov.querySelectorAll("[data-del]").forEach(b=>b.onclick=async()=>{if(await askConfirm("Excluir este lançamento?","Excluir")){del("ocorr",b.dataset.del);ov.remove();afterOc()}});
@@ -1808,7 +1820,10 @@ function xlSerial(d){
 function xlDur(mins){return Math.max(0,Math.round(mins||0))/1440}
 function xlDateOnly(iso){if(!iso)return null;const[y,m,d]=iso.split("-").map(Number);return Math.round((Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000)}
 function obsText(r){
-  if(r.oc){
+  if(r.oc&&r.status==="falta"&&r.oc.tipo==="falta_confirmada")return "Falta"+(r.oc.texto?": "+r.oc.texto:"");
+  if(r.oc&&r.status==="compensada")return "Compensada com o trabalho de "+brDate(r.oc.comp)+(r.oc.texto?": "+r.oc.texto:"");
+  if(r.compensa&&r.compensa.length)return "Trabalhou para compensar a falta de "+r.compensa.map(brDate).join(", ");
+  if(r.oc&&!OC_FALTA.has(r.oc.tipo)){
     const base=r.oc.tipo==="atestado"?"Atestado":r.oc.tipo==="falta_justificada"?"Justificada":r.oc.tipo==="esquecimento"?"Esquecimento de ponto":"Observação";
     return base+(r.oc.texto?": "+r.oc.texto:"");
   }
@@ -15243,12 +15258,52 @@ function xabFin(){
       marca a folha como enviada e guarda o PDF final no prontuário. */
 const PPD={tipo:"",quem:"",ver:""};
 const PPD_INFO={
-  falta:{cor:"var(--bad)",d:p=>"Não tem nenhuma batida e a pessoa estava na escala. Se era folga (troca, folga combinada), lance a folga. Se faltou com motivo (atestado), justifique. Se trabalhou, lance as batidas."},
+  falta:{cor:"var(--bad)",d:p=>"Não tem nenhuma batida e a pessoa estava na escala. Se era folga (troca, folga combinada), lance a folga. Se faltou com motivo (atestado), justifique. Se faltou mesmo, confirme a falta. Se trabalhou a mais em outro dia para cobrir, lance a compensação. Se trabalhou, lance as batidas."},
   falta_pontual:{cor:"var(--madeira)",d:p=>`${p.detail.charAt(0).toUpperCase()+p.detail.slice(1)}. Lance a batida que faltou${p.sugereHora?` (horário esperado pela escala: ${p.sugereHora})`:""}.`},
   falta_entrada:{cor:"var(--madeira)",d:p=>`Tem só uma batida (${p.detail.replace(/^marcação /,"").replace(/ sem par$/,"")}) e falta a entrada. Lance a batida que faltou ou justifique.`},
   falta_saida:{cor:"var(--madeira)",d:p=>`Tem só uma batida (${p.detail.replace(/^marcação /,"").replace(/ sem par$/,"")}) e falta a saída. Lance a batida que faltou ou justifique.`},
-  marcacao_sem_escala:{cor:"var(--azul-mar)",d:p=>"A pessoa bateu ponto num dia em que não estava na escala. Se trabalhou nesse dia (troca ou plantão extra), marque como dia de trabalho. Se foi engano, apague a batida."}
+  marcacao_sem_escala:{cor:"var(--azul-mar)",d:p=>"A pessoa bateu ponto num dia em que não estava na escala. Se trabalhou nesse dia (troca ou plantão extra), marque como dia de trabalho. Se veio para cobrir uma falta, lance a compensação. Se foi engano, apague a batida."}
 };
+const ppdDia=d=>`${brDate(d).slice(0,5)} (${WD_FULL[pyWeekday(d)]})`;
+// falta sem justificativa confirmada: o dia continua falta (desconta e aparece na folha), só sai das pendências
+function ppdConfirmaFalta(u,dia){
+  const ig=u.ig;if(!ig||!ig.id)return toast("Integrante sem cadastro.",true);
+  const ov=openModal(`<h3>${esc(nomeInteg(ig))}</h3><div class="sub" style="margin-bottom:10px">Confirmar a falta de ${ppdDia(dia)}</div>
+   <div class="callout sand">O dia continua como <b>falta sem justificativa</b>: as horas são descontadas e a falta aparece na folha de ponto e no relatório do contador. Ele só sai da lista de pendências.</div>
+   <label>Observação (opcional)</label><input id="pfobs" placeholder="Ex.: não avisou">
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="pfcx">Fechar</button><button class="b" id="pfsv">Confirmar falta</button></div>`);
+  ov.querySelector("#pfcx").onclick=()=>ov.remove();
+  ov.querySelector("#pfsv").onclick=()=>{
+    put("ocorr",uid8(),{uid:ig.id,tipo:"falta_confirmada",de:dia,ate:dia,texto:ov.querySelector("#pfobs").value.trim(),docId:null,em:new Date().toISOString()});
+    ov.remove();toast(`Falta de ${brDate(dia).slice(0,5)} confirmada.`);afterOc()};
+}
+// liga uma falta ao dia em que a pessoa trabalhou a mais para cobrir. lado "falta": `dia` é a falta; "extra": `dia` é o dia trabalhado
+function ppdCompensa(u,dia,lado){
+  const ig=u.ig;if(!ig||!ig.id)return toast("Integrante sem cadastro.",true);
+  const rows=u.rows||[],ehFalta=lado==="falta";
+  const cand=ehFalta
+    ?rows.filter(r=>r.day!==dia&&r.workedMin>0&&(r.status==="sem_escala"||r.extra>0)).map(r=>[r.day,`${ppdDia(r.day)} · ${r.status==="sem_escala"?`trabalhou ${fmtHHMM(r.workedMin)} em dia de folga`:`${fmtHHMM(r.extra)} além do horário`}`])
+    :rows.filter(r=>r.day!==dia&&r.status==="falta").map(r=>[r.day,`${ppdDia(r.day)} · falta de ${fmtHHMM(r.expectedMin)}`]);
+  const ov=openModal(`<h3>${esc(nomeInteg(ig))}</h3>
+   <div class="sub" style="margin-bottom:10px">${ehFalta?`Falta de ${ppdDia(dia)}: em que dia a pessoa trabalhou a mais para compensar?`:`Trabalhou a mais em ${ppdDia(dia)}: qual falta isso compensa?`}</div>
+   <label>${ehFalta?"Dia trabalhado a mais":"Dia da falta"}</label>
+   <select id="pcsel">${cand.map(([d,t])=>`<option value="${d}">${esc(t)}</option>`).join("")}<option value="">Outro dia…</option></select>
+   <div id="pcoutro" style="display:${cand.length?"none":"block"}"><label>Data</label><input type="date" id="pcdia"></div>
+   <label>Observação (opcional)</label><input id="pcobs" placeholder="Ex.: combinado com a coordenação">
+   <div class="callout blue" style="margin-top:8px">A falta deixa de contar como falta. No dia da falta as horas ficam negativas e as horas trabalhadas a mais cobrem esse saldo, sem virar hora extra paga. Se o dia a mais estiver marcado como “dia de trabalho”, tire essa marcação em Escalas, senão as horas dele não sobram para cobrir a falta.</div>
+   <div class="err" id="pcerr"></div>
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="pccx">Fechar</button><button class="b" id="pcsv">Lançar compensação</button></div>`);
+  ov.querySelector("#pcsel").onchange=e=>{ov.querySelector("#pcoutro").style.display=e.target.value?"none":"block"};
+  ov.querySelector("#pccx").onclick=()=>ov.remove();
+  ov.querySelector("#pcsv").onclick=()=>{
+    const outro=ov.querySelector("#pcsel").value||ov.querySelector("#pcdia").value,er=m=>ov.querySelector("#pcerr").textContent=m;
+    if(!outro)return er("Escolha o dia.");if(outro===dia)return er("Escolha um dia diferente.");
+    const falta=ehFalta?dia:outro,extra=ehFalta?outro:dia;
+    // troca o que já havia sido lançado para essa falta (confirmada ou outra compensação)
+    Object.values(S.ocorr).filter(o=>o.uid===ig.id&&o.de===falta&&o.ate===falta&&OC_FALTA.has(o.tipo)).forEach(o=>del("ocorr",o.id));
+    put("ocorr",uid8(),{uid:ig.id,tipo:"falta_compensada",de:falta,ate:falta,comp:extra,texto:ov.querySelector("#pcobs").value.trim(),docId:null,em:new Date().toISOString()});
+    ov.remove();toast(`Falta de ${brDate(falta).slice(0,5)} compensada com ${brDate(extra).slice(0,5)}.`);afterOc()};
+}
 if(!CATS.includes("Folhas de ponto"))CATS.splice(CATS.length-1,0,"Folhas de ponto");
 function ppdDados(){
   const ym=pontoRef(),ini=refIni(ym),fim=fimCalc(ym);
@@ -15340,9 +15395,10 @@ function ppd1236(ig,uid,D){
 }
 function ppdBotoes(u,p){
   const b=(attr,txt,sec)=>`<button type="button" class="b ${sec?"sec ":""}sm" ${attr} style="flex:none">${txt}</button>`;
-  if(p.kind==="marcacao_sem_escala")return(u.ig&&u.ig.id?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho"):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
-  const folga=u.ig&&u.ig.id?b(`data-ppdfolga="${u.ig.id}" data-day="${p.day}"`,"Lançar folga",1):"";
-  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+folga+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
+  const cad=u.ig&&u.ig.id;
+  if(p.kind==="marcacao_sem_escala")return(cad?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho")+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="extra"`,"Trabalhou para compensar falta",1):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
+  const folga=cad?b(`data-ppdfolga="${u.ig.id}" data-day="${p.day}"`,"Lançar folga",1):"";
+  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+(cad?b(`data-ppdconf="${u.uid}" data-day="${p.day}"`,"Confirmar falta",1)+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="falta"`,"Compensou em outro dia",1):"")+folga+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
   return b(`data-ppdmk="${u.uid}" data-day="${p.day}" ${p.sugereHora?`data-sug="${p.sugereHora}"`:""}`,"Lançar a batida que faltou")+b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar",1);
 }
 const ppdPasso=(n,ok,titulo,corpo)=>`<div style="display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--line)">
@@ -15423,6 +15479,9 @@ function ppdBind(){
   document.querySelectorAll("[data-ppdsel]").forEach(b=>b.onclick=()=>{PPD.quem=b.dataset.ppdsel;PPD.tipo="";re();const c=$("ppdpessoa");if(c)c.scrollIntoView({block:"start"});else window.scrollTo(0,0)});
   document.querySelectorAll("[data-ppdtipo]").forEach(b=>b.onclick=()=>{PPD.tipo=b.dataset.ppdtipo;re()});
   document.querySelectorAll("[data-ppdoc]").forEach(b=>b.onclick=()=>openOcorr(+b.dataset.ppdoc,b.dataset.day));
+  const pessoa=uid=>D().U.find(x=>+x.uid===+uid);
+  document.querySelectorAll("[data-ppdconf]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdconf);if(u)ppdConfirmaFalta(u,b.dataset.day)});
+  document.querySelectorAll("[data-ppdcomp]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdcomp);if(u)ppdCompensa(u,b.dataset.day,b.dataset.lado)});
   document.querySelectorAll("[data-ppdmk]").forEach(b=>b.onclick=()=>openMarcas(+b.dataset.ppdmk,b.dataset.day,{suggest:b.dataset.sug}));
   document.querySelectorAll("[data-ppd1236]").forEach(b=>b.onclick=async()=>{const ig=S.integrantes[b.dataset.ppd1236];if(!ig)return;
     if(!await askConfirm(`Mudar a escala de ${nomeInteg(ig)} para 12x36 (trabalha um dia, folga no outro), com plantão em ${brDate(b.dataset.ini)}? Vale para todos os dias. Se antes de alguma data a escala era outra, lance depois em Escalas → “Mudou de escala? Lançar a escala que valia antes”.`,"Mudar a escala"))return;
@@ -17009,6 +17068,8 @@ function dpQuadro(ym){
 /* ---------- explicação do ponto de cada pessoa ---------- */
 function dpMotivo(r){
   if(r.status==="falta")return"Falta sem justificativa";
+  if(r.status==="compensada")return`Falta compensada com o trabalho de ${brDate(r.oc.comp)}`;
+  if(r.compensa&&r.compensa.length)return`Trabalhou para compensar a falta de ${r.compensa.map(brDate).join(", ")}`;
   const m=[],semEsc=r.status==="sem_escala";
   if(semEsc&&r.workedMin)m.push("trabalhou em dia sem escala");
   if((r.flags||[]).includes("trabalhou_feriado"))m.push("trabalhou no feriado");

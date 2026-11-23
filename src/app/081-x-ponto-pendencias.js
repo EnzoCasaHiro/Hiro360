@@ -6,12 +6,52 @@
       marca a folha como enviada e guarda o PDF final no prontuário. */
 const PPD={tipo:"",quem:"",ver:""};
 const PPD_INFO={
-  falta:{cor:"var(--bad)",d:p=>"Não tem nenhuma batida e a pessoa estava na escala. Se era folga (troca, folga combinada), lance a folga. Se faltou com motivo (atestado), justifique. Se trabalhou, lance as batidas."},
+  falta:{cor:"var(--bad)",d:p=>"Não tem nenhuma batida e a pessoa estava na escala. Se era folga (troca, folga combinada), lance a folga. Se faltou com motivo (atestado), justifique. Se faltou mesmo, confirme a falta. Se trabalhou a mais em outro dia para cobrir, lance a compensação. Se trabalhou, lance as batidas."},
   falta_pontual:{cor:"var(--madeira)",d:p=>`${p.detail.charAt(0).toUpperCase()+p.detail.slice(1)}. Lance a batida que faltou${p.sugereHora?` (horário esperado pela escala: ${p.sugereHora})`:""}.`},
   falta_entrada:{cor:"var(--madeira)",d:p=>`Tem só uma batida (${p.detail.replace(/^marcação /,"").replace(/ sem par$/,"")}) e falta a entrada. Lance a batida que faltou ou justifique.`},
   falta_saida:{cor:"var(--madeira)",d:p=>`Tem só uma batida (${p.detail.replace(/^marcação /,"").replace(/ sem par$/,"")}) e falta a saída. Lance a batida que faltou ou justifique.`},
-  marcacao_sem_escala:{cor:"var(--azul-mar)",d:p=>"A pessoa bateu ponto num dia em que não estava na escala. Se trabalhou nesse dia (troca ou plantão extra), marque como dia de trabalho. Se foi engano, apague a batida."}
+  marcacao_sem_escala:{cor:"var(--azul-mar)",d:p=>"A pessoa bateu ponto num dia em que não estava na escala. Se trabalhou nesse dia (troca ou plantão extra), marque como dia de trabalho. Se veio para cobrir uma falta, lance a compensação. Se foi engano, apague a batida."}
 };
+const ppdDia=d=>`${brDate(d).slice(0,5)} (${WD_FULL[pyWeekday(d)]})`;
+// falta sem justificativa confirmada: o dia continua falta (desconta e aparece na folha), só sai das pendências
+function ppdConfirmaFalta(u,dia){
+  const ig=u.ig;if(!ig||!ig.id)return toast("Integrante sem cadastro.",true);
+  const ov=openModal(`<h3>${esc(nomeInteg(ig))}</h3><div class="sub" style="margin-bottom:10px">Confirmar a falta de ${ppdDia(dia)}</div>
+   <div class="callout sand">O dia continua como <b>falta sem justificativa</b>: as horas são descontadas e a falta aparece na folha de ponto e no relatório do contador. Ele só sai da lista de pendências.</div>
+   <label>Observação (opcional)</label><input id="pfobs" placeholder="Ex.: não avisou">
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="pfcx">Fechar</button><button class="b" id="pfsv">Confirmar falta</button></div>`);
+  ov.querySelector("#pfcx").onclick=()=>ov.remove();
+  ov.querySelector("#pfsv").onclick=()=>{
+    put("ocorr",uid8(),{uid:ig.id,tipo:"falta_confirmada",de:dia,ate:dia,texto:ov.querySelector("#pfobs").value.trim(),docId:null,em:new Date().toISOString()});
+    ov.remove();toast(`Falta de ${brDate(dia).slice(0,5)} confirmada.`);afterOc()};
+}
+// liga uma falta ao dia em que a pessoa trabalhou a mais para cobrir. lado "falta": `dia` é a falta; "extra": `dia` é o dia trabalhado
+function ppdCompensa(u,dia,lado){
+  const ig=u.ig;if(!ig||!ig.id)return toast("Integrante sem cadastro.",true);
+  const rows=u.rows||[],ehFalta=lado==="falta";
+  const cand=ehFalta
+    ?rows.filter(r=>r.day!==dia&&r.workedMin>0&&(r.status==="sem_escala"||r.extra>0)).map(r=>[r.day,`${ppdDia(r.day)} · ${r.status==="sem_escala"?`trabalhou ${fmtHHMM(r.workedMin)} em dia de folga`:`${fmtHHMM(r.extra)} além do horário`}`])
+    :rows.filter(r=>r.day!==dia&&r.status==="falta").map(r=>[r.day,`${ppdDia(r.day)} · falta de ${fmtHHMM(r.expectedMin)}`]);
+  const ov=openModal(`<h3>${esc(nomeInteg(ig))}</h3>
+   <div class="sub" style="margin-bottom:10px">${ehFalta?`Falta de ${ppdDia(dia)}: em que dia a pessoa trabalhou a mais para compensar?`:`Trabalhou a mais em ${ppdDia(dia)}: qual falta isso compensa?`}</div>
+   <label>${ehFalta?"Dia trabalhado a mais":"Dia da falta"}</label>
+   <select id="pcsel">${cand.map(([d,t])=>`<option value="${d}">${esc(t)}</option>`).join("")}<option value="">Outro dia…</option></select>
+   <div id="pcoutro" style="display:${cand.length?"none":"block"}"><label>Data</label><input type="date" id="pcdia"></div>
+   <label>Observação (opcional)</label><input id="pcobs" placeholder="Ex.: combinado com a coordenação">
+   <div class="callout blue" style="margin-top:8px">A falta deixa de contar como falta. No dia da falta as horas ficam negativas e as horas trabalhadas a mais cobrem esse saldo, sem virar hora extra paga. Se o dia a mais estiver marcado como “dia de trabalho”, tire essa marcação em Escalas, senão as horas dele não sobram para cobrir a falta.</div>
+   <div class="err" id="pcerr"></div>
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="pccx">Fechar</button><button class="b" id="pcsv">Lançar compensação</button></div>`);
+  ov.querySelector("#pcsel").onchange=e=>{ov.querySelector("#pcoutro").style.display=e.target.value?"none":"block"};
+  ov.querySelector("#pccx").onclick=()=>ov.remove();
+  ov.querySelector("#pcsv").onclick=()=>{
+    const outro=ov.querySelector("#pcsel").value||ov.querySelector("#pcdia").value,er=m=>ov.querySelector("#pcerr").textContent=m;
+    if(!outro)return er("Escolha o dia.");if(outro===dia)return er("Escolha um dia diferente.");
+    const falta=ehFalta?dia:outro,extra=ehFalta?outro:dia;
+    // troca o que já havia sido lançado para essa falta (confirmada ou outra compensação)
+    Object.values(S.ocorr).filter(o=>o.uid===ig.id&&o.de===falta&&o.ate===falta&&OC_FALTA.has(o.tipo)).forEach(o=>del("ocorr",o.id));
+    put("ocorr",uid8(),{uid:ig.id,tipo:"falta_compensada",de:falta,ate:falta,comp:extra,texto:ov.querySelector("#pcobs").value.trim(),docId:null,em:new Date().toISOString()});
+    ov.remove();toast(`Falta de ${brDate(falta).slice(0,5)} compensada com ${brDate(extra).slice(0,5)}.`);afterOc()};
+}
 if(!CATS.includes("Folhas de ponto"))CATS.splice(CATS.length-1,0,"Folhas de ponto");
 function ppdDados(){
   const ym=pontoRef(),ini=refIni(ym),fim=fimCalc(ym);
@@ -103,9 +143,10 @@ function ppd1236(ig,uid,D){
 }
 function ppdBotoes(u,p){
   const b=(attr,txt,sec)=>`<button type="button" class="b ${sec?"sec ":""}sm" ${attr} style="flex:none">${txt}</button>`;
-  if(p.kind==="marcacao_sem_escala")return(u.ig&&u.ig.id?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho"):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
-  const folga=u.ig&&u.ig.id?b(`data-ppdfolga="${u.ig.id}" data-day="${p.day}"`,"Lançar folga",1):"";
-  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+folga+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
+  const cad=u.ig&&u.ig.id;
+  if(p.kind==="marcacao_sem_escala")return(cad?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho")+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="extra"`,"Trabalhou para compensar falta",1):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
+  const folga=cad?b(`data-ppdfolga="${u.ig.id}" data-day="${p.day}"`,"Lançar folga",1):"";
+  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+(cad?b(`data-ppdconf="${u.uid}" data-day="${p.day}"`,"Confirmar falta",1)+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="falta"`,"Compensou em outro dia",1):"")+folga+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
   return b(`data-ppdmk="${u.uid}" data-day="${p.day}" ${p.sugereHora?`data-sug="${p.sugereHora}"`:""}`,"Lançar a batida que faltou")+b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar",1);
 }
 const ppdPasso=(n,ok,titulo,corpo)=>`<div style="display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--line)">
@@ -186,6 +227,9 @@ function ppdBind(){
   document.querySelectorAll("[data-ppdsel]").forEach(b=>b.onclick=()=>{PPD.quem=b.dataset.ppdsel;PPD.tipo="";re();const c=$("ppdpessoa");if(c)c.scrollIntoView({block:"start"});else window.scrollTo(0,0)});
   document.querySelectorAll("[data-ppdtipo]").forEach(b=>b.onclick=()=>{PPD.tipo=b.dataset.ppdtipo;re()});
   document.querySelectorAll("[data-ppdoc]").forEach(b=>b.onclick=()=>openOcorr(+b.dataset.ppdoc,b.dataset.day));
+  const pessoa=uid=>D().U.find(x=>+x.uid===+uid);
+  document.querySelectorAll("[data-ppdconf]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdconf);if(u)ppdConfirmaFalta(u,b.dataset.day)});
+  document.querySelectorAll("[data-ppdcomp]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdcomp);if(u)ppdCompensa(u,b.dataset.day,b.dataset.lado)});
   document.querySelectorAll("[data-ppdmk]").forEach(b=>b.onclick=()=>openMarcas(+b.dataset.ppdmk,b.dataset.day,{suggest:b.dataset.sug}));
   document.querySelectorAll("[data-ppd1236]").forEach(b=>b.onclick=async()=>{const ig=S.integrantes[b.dataset.ppd1236];if(!ig)return;
     if(!await askConfirm(`Mudar a escala de ${nomeInteg(ig)} para 12x36 (trabalha um dia, folga no outro), com plantão em ${brDate(b.dataset.ini)}? Vale para todos os dias. Se antes de alguma data a escala era outra, lance depois em Escalas → “Mudou de escala? Lançar a escala que valia antes”.`,"Mudar a escala"))return;
