@@ -227,15 +227,55 @@ async function plnSalva(){
   afterOc();plnCarrega();plnPinta(false);toast(`Ponto salvo: ${ops.length+prevOps.length} alteração(ões).`);
   if(typeof PLN.aoSalvar==="function")try{PLN.aoSalvar(ops.length+prevOps.length)}catch(e){console.error(e)}
 }
-function plnExcel(){
-  if(typeof XLSX==="undefined")return toast("A biblioteca de Excel não carregou. Recarregue a página e tente de novo.",true);
-  const ig=integByUid(PLN.uid),nome=ig?nomeInteg(ig):"ID "+PLN.uid,n=PLN.ncol;
-  const cab=["Data","Dia",...Array.from({length:n},(_,c)=>plnColNome(c)),"Previsto","Trabalhado","Saldo","Situação"];
-  const linhas=PLN.dias.map((d,r)=>{const cr=PLN.calc&&PLN.calc.get(d),t=plnTrab(r),p=plnPrevMin(r);return[brDate(d),WD[pyWeekday(d)],...PLN.grid[r].map(v=>plnHora(v)??v),plnDur(PLN.prev[r])??PLN.prev[r],fmtHHMM(t),fmtHHMM(t-p),cr?STL[cr.status]||cr.status:""]});
-  const ws=XLSX.utils.aoa_to_sheet([["Integrante",nome,"Nº no relógio",String(PLN.uid)],["Período",brDate(PLN.de)+" a "+brDate(PLN.ate)],["Altere as colunas de Entrada, Saída e Previsto (formato 07:30). Depois use \"Importar Excel\" na Planilha do ponto e confira antes de salvar."],[],cab,...linhas]);
-  ws["!cols"]=cab.map((_,i)=>({wch:i===0?12:i===1?5:11}));
-  const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Ponto");
-  XLSX.writeFile(wb,safe(`Ponto ${nome} ${PLN.de} a ${PLN.ate}`)+".xlsx");
+// Excel de verdade: datas e horas como números (dá para digitar 07:30 e somar), Trabalhado e Saldo com fórmula,
+// cabeçalho travado e cores. Continua sendo lido pelo "Importar Excel" (linha "Integrante" no topo e coluna "Data").
+async function plnExcel(){
+  if(typeof ExcelJS==="undefined")return toast("A biblioteca de Excel não carregou. Recarregue a página e tente de novo.",true);
+  try{
+    const ig=integByUid(PLN.uid),nome=ig?nomeInteg(ig):"ID "+PLN.uid,n=PLN.ncol;
+    const cab=["Data","Dia",...Array.from({length:n},(_,c)=>plnColNome(c)),"Previsto","Trabalhado","Saldo","Situação"],nC=cab.length;
+    const cP=3+n,cT=cP+1,cS=cP+2,L=c=>colLetter(c),HR=6,R0=HR+1,RF=R0+PLN.dias.length-1;
+    const VERDE="FF1E5C2A",VMED="FF2E7D32",AREIA="FFF5EFE0",LINHA="FFE8DFCC",BR="FFFFFFFF",AZUL="FF1F4E79",F=a=>({type:"pattern",pattern:"solid",fgColor:{argb:a}});
+    const wb=new ExcelJS.Workbook();wb.creator="Casa Hiro";wb.created=new Date();wb.calcProperties.fullCalcOnLoad=true;
+    const ws=wb.addWorksheet("Ponto",{views:[{state:"frozen",xSplit:2,ySplit:HR,showGridLines:false}]});
+    ws.pageSetup={orientation:"landscape",fitToPage:true,fitToWidth:1,fitToHeight:0,margins:{left:.4,right:.4,top:.5,bottom:.5,header:.3,footer:.3},printTitlesRow:`${HR}:${HR}`};
+    ws.columns=cab.map((_,i)=>({width:i===0?12:i===1?6:i===nC-1?20:11}));
+    const rot=(r,t,v)=>{const a=ws.getCell(r,1),b=ws.getCell(r,2);a.value=t;a.font={bold:true,color:{argb:VERDE}};b.value=v;ws.mergeCells(r,2,r,Math.min(nC,6));b.font={bold:true}};
+    rot(1,"Integrante",nome);rot(2,"Nº no relógio",String(PLN.uid));rot(3,"Período",brDate(PLN.de)+" a "+brDate(PLN.ate));
+    ws.mergeCells(4,1,4,nC);const ins=ws.getCell(4,1);
+    ins.value="Altere só Entrada, Saída e Previsto (digite 07:30). Trabalhado e Saldo se refazem sozinhos. Hora menor que a anterior na mesma linha é do dia seguinte (plantão noturno). Azul = batida lançada à mão. Depois use \"Importar Excel\" na Planilha do ponto e confira antes de salvar.";
+    ins.font={italic:true,size:9,color:{argb:"FF6B6455"}};ins.alignment={wrapText:true,vertical:"top"};ws.getRow(4).height=30;
+    cab.forEach((h,i)=>{const c=ws.getCell(HR,i+1);c.value=h;c.font={bold:true,color:{argb:BR}};c.fill=F(VMED);c.alignment={horizontal:"center",vertical:"middle"};c.border=thinBorder(LINHA)});
+    ws.getRow(HR).height=20;
+    // Trabalhado = soma de cada par entrada→saída; MOD(...;1) cuida da saída depois da meia-noite
+    const trabF=r=>Array.from({length:n/2},(_,k)=>{const e=L(3+2*k)+r,s=L(4+2*k)+r;return `IF(AND(ISNUMBER(${e}),ISNUMBER(${s})),MOD(${s}-${e},1),0)`}).join("+");
+    const saldoF=(t,p)=>`IF(ROUND((${t}-N(${p}))*1440,0)=0,"00:00",IF(${t}<N(${p}),"-"&TEXT(N(${p})-${t},"[h]:mm"),"+"&TEXT(${t}-N(${p}),"[h]:mm")))`;
+    let somaT=0,somaP=0;const saldoTxt=m=>m?(m<0?"-":"+")+fmtHHMM(Math.abs(m)):"00:00";
+    PLN.dias.forEach((d,r)=>{
+      const R=R0+r,row=ws.getRow(R),cr=PLN.calc&&PLN.calc.get(d),fds=pyWeekday(d)>=5;
+      const hs=PLN.grid[r].map(v=>plnHora(v)??v);
+      row.getCell(1).value=xlDateOnly(d);row.getCell(1).numFmt="dd/mm/yyyy";
+      row.getCell(2).value=WD[pyWeekday(d)];
+      let tMin=0;
+      hs.forEach((h,c)=>{const x=row.getCell(3+c);if(!h)return;
+        if(/^\d{2}:\d{2}$/.test(h)){x.value=plnMin(h)/1440;x.numFmt="hh:mm";if((PLN.orig[r][c]||{}).manual&&h===plnBase(r,c))x.font={italic:true,color:{argb:AZUL}}}
+        else x.value=String(h)});
+      for(let k=0;k+1<hs.length;k+=2){const a=plnHora(hs[k]),b=plnHora(hs[k+1]);if(a&&b)tMin+=((plnMin(b)-plnMin(a))%1440+1440)%1440}
+      const pv=plnDur(PLN.prev[r]),pMin=plnPrevMin(r);
+      const xp=row.getCell(cP);if(pv)xp.value=pMin/1440;else if(pv===null)xp.value=String(PLN.prev[r]);xp.numFmt="[h]:mm";
+      if(PLN.prevMan[r]!=null&&!plnPrevMudou(r))xp.font={italic:true,color:{argb:AZUL}};
+      somaT+=tMin;somaP+=pMin;row.getCell(cT).value={formula:trabF(R),result:tMin/1440};row.getCell(cT).numFmt="[h]:mm";
+      row.getCell(cS).value={formula:saldoF(L(cT)+R,L(cP)+R),result:saldoTxt(tMin-pMin)};
+      row.getCell(nC).value=cr?STL[cr.status]||cr.status:"";
+      for(let c=1;c<=nC;c++){const x=row.getCell(c);x.border=thinBorder(LINHA);if(c>1&&c<nC)x.alignment={horizontal:"center"};if(fds)x.fill=F(AREIA);if(c>=cT&&c<nC)x.font={...(x.font||{}),bold:c===cS}}
+    });
+    const RT=RF+1,tot=ws.getRow(RT);
+    tot.getCell(1).value="Total";
+    tot.getCell(cP).value={formula:`SUM(${L(cP)}${R0}:${L(cP)}${RF})`,result:somaP/1440};tot.getCell(cT).value={formula:`SUM(${L(cT)}${R0}:${L(cT)}${RF})`,result:somaT/1440};
+    tot.getCell(cS).value={formula:saldoF(L(cT)+RT,L(cP)+RT),result:saldoTxt(somaT-somaP)};
+    for(let c=1;c<=nC;c++){const x=tot.getCell(c);x.font={bold:true,color:{argb:BR}};x.fill=F(VERDE);x.border=thinBorder(LINHA);if(c===cP||c===cT){x.numFmt="[h]:mm";x.alignment={horizontal:"center"}}if(c===cS)x.alignment={horizontal:"center"}}
+    await saveFile(safe(`Ponto ${nome} ${PLN.de} a ${PLN.ate}`)+".xlsx",new Blob([await wb.xlsx.writeBuffer()],{type:"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"}));
+  }catch(e){console.error(e);toast("Não foi possível gerar o Excel: "+e.message,true)}
 }
 // arquivo com uma aba por integrante (ex.: fechamento do mês inteiro): usa a aba do integrante aberto,
 // achada pelo nome da aba ou pela linha "Integrante" no topo; arquivo de uma aba só vale como antes
