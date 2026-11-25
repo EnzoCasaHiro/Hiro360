@@ -95,8 +95,49 @@ function specFolhaIndividual(u,R){
   return{titulo:`Folha de ponto — ${u.nome}`,sub:`${(u.ig&&u.ig.cargo)||"—"} · ${brDate(R.start)} a ${brDate(R.end)}${u.ig&&u.ig.id?" · Escala: "+escalasTexto(u.ig,R.start,R.end):""}`,sensivel:true,cols,rows,tot,tint,quadro,assinatura:{esq:`Integrante: ${u.nome}`,dir:"Casa Hiro — responsável"}};
 }
 
-function pgContador(){return pgContadorBase()+pgFolhasFiltro()}
-function bindContador(){bindContadorBase();bindFolhas()}
+/* ---------- folha de ponto de vários meses de uma integrante só (um arquivo, uma folha por mês) ---------- */
+const FMM={pessoa:"",de:"",ate:"",fmt:"pdf"};
+const fmmRot=m=>m.slice(5)+"/"+m.slice(0,4);
+function pgFolhaMeses(){
+  const hoje=refYm(hojeIso()),meses=mesesEntre(refYmAdd(hoje,-35),hoje).reverse();
+  if(!FMM.de)FMM.de=refYmAdd(hoje,-2);if(!FMM.ate)FMM.ate=refPadrao();
+  const pes=integList().filter(i=>i.uid!=null&&i.uid!==""&&!semPonto(i));
+  const opM=v=>meses.map(m=>`<option value="${m}" ${m===v?"selected":""}>${fmmRot(m)} · ${refRotulo(m)}</option>`).join("");
+  return `<div class="card"><h2>Folhas de ponto de vários meses (uma integrante)</h2>
+   <p class="sub" style="margin:0 0 10px">Escolha a pessoa e os meses: sai um arquivo só, com a folha de ponto de cada mês (dia 26 ao dia 25), com banco de horas e assinatura.</p>
+   <div class="row" style="align-items:flex-end"><div style="flex:2 1 240px"><label>Integrante</label><select id="fmmp"><option value="">— escolha —</option>${pes.map(i=>`<option value="${esc(i.id)}" ${i.id===FMM.pessoa?"selected":""}>${esc(nomeInteg(i))}${(i.situacao||"")==="Desligado"?" (desligada)":""}</option>`).join("")}</select></div>
+    <div style="flex:1 1 200px"><label>Do mês</label><select id="fmmde">${opM(FMM.de)}</select></div>
+    <div style="flex:1 1 200px"><label>Até o mês</label><select id="fmmate">${opM(FMM.ate)}</select></div>
+    <div style="flex:0 0 150px"><label>Formato</label><select id="fmmfmt"><option value="pdf" ${FMM.fmt==="pdf"?"selected":""}>PDF</option><option value="xlsx" ${FMM.fmt==="xlsx"?"selected":""}>XLSX (Excel)</option></select></div>
+    <div style="flex:none"><button class="b" id="fmmgo" ${FMM.pessoa?"":"disabled"}>${ic("down")} Baixar</button></div></div></div>`;
+}
+function bindFolhaMeses(){
+  const s=(id,k)=>{const e=$(id);if(e)e.onchange=()=>{FMM[k]=e.value;go("contador",true)}};
+  s("fmmp","pessoa");s("fmmde","de");s("fmmate","ate");s("fmmfmt","fmt");
+  const g=$("fmmgo");if(g)g.onclick=()=>folhaMesesBaixar();
+}
+async function folhaMesesBaixar(){
+  const ig=S.integrantes[FMM.pessoa];if(!ig)return toast("Escolha a integrante.",true);
+  const de=FMM.de<=FMM.ate?FMM.de:FMM.ate,ate=FMM.de<=FMM.ate?FMM.ate:FMM.de,meses=mesesEntre(de,ate);
+  toast(`Calculando ${meses.length} mês(es)…`);
+  try{
+    const specs=[],sem=[];
+    for(const m of meses){
+      const ini=refIni(m),fim=fimCalc(m);if(fim<ini){sem.push(m);continue}
+      const r=calcSilencioso(ini,fim);
+      if(!r||r.erro)throw new Error(`${fmmRot(m)}: ${(r&&r.erro)||"não foi possível calcular"}`);
+      const u=r.users.find(x=>x.ig&&x.ig.id===ig.id);if(!u){sem.push(m);continue}
+      const sp=specFolhaIndividual(u,{users:r.users,start:ini,end:fim});sp.titulo=`Folha de ponto ${fmmRot(m)} — ${u.nome}`;specs.push(sp);
+    }
+    if(!specs.length)return toast(`Não há ponto de ${nomeInteg(ig)} entre ${fmmRot(de)} e ${fmmRot(ate)}.`,true);
+    const blob=FMM.fmt==="xlsx"?await relXlsx(specs):await relPdf(specs,{});
+    const ok=await saveFile(`folha-ponto_${safe(nomeInteg(ig))}_${de}_a_${ate}.${FMM.fmt}`,blob);
+    if(ok&&sem.length)toast(`Sem ponto (fora do contrato ou mês ainda não começou): ${sem.map(fmmRot).join(", ")}.`,true);
+  }catch(e){console.error(e);toast("Não foi possível gerar a folha: "+(e&&e.message?e.message:e),true)}
+}
+
+function pgContador(){return pgContadorBase()+pgFolhasFiltro()+pgFolhaMeses()}
+function bindContador(){bindContadorBase();bindFolhas();bindFolhaMeses()}
 
 function asoInfoHtml(i){
   if(!i.id)return"";

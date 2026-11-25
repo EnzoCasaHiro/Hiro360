@@ -60,6 +60,7 @@ function xlDur(mins){return Math.max(0,Math.round(mins||0))/1440}
 function xlDateOnly(iso){if(!iso)return null;const[y,m,d]=iso.split("-").map(Number);return Math.round((Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000)}
 function obsText(r){
   if(r.oc&&r.status==="falta"&&r.oc.tipo==="falta_confirmada")return "Falta"+(r.oc.texto?": "+r.oc.texto:"");
+  if(r.oc&&(r.oc.tipo==="banco_horas"||r.oc.tipo==="dobra"))return OC[r.oc.tipo]+(r.oc.texto?": "+r.oc.texto:"");
   if(r.oc&&r.status==="compensada")return "Compensada com o trabalho de "+brDate(r.oc.comp)+(r.oc.texto?": "+r.oc.texto:"");
   if(r.compensa&&r.compensa.length)return "Trabalhou para compensar a falta de "+r.compensa.map(brDate).join(", ");
   if(r.oc&&!OC_FALTA.has(r.oc.tipo)){

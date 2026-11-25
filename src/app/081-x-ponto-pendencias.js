@@ -25,6 +25,20 @@ function ppdConfirmaFalta(u,dia){
     put("ocorr",uid8(),{uid:ig.id,tipo:"falta_confirmada",de:dia,ate:dia,texto:ov.querySelector("#pfobs").value.trim(),docId:null,em:new Date().toISOString()});
     ov.remove();toast(`Falta de ${brDate(dia).slice(0,5)} confirmada.`);afterOc()};
 }
+// lançamento rápido de um dia: "banco_horas" (falta abatida no banco) ou "dobra" (dobrou horário)
+function ppdLancaDia(u,dia,tipo){
+  const ig=u.ig;if(!ig||!ig.id)return toast("Integrante sem cadastro.",true);
+  const bh=tipo==="banco_horas";
+  const ov=openModal(`<h3>${esc(nomeInteg(ig))}</h3><div class="sub" style="margin-bottom:10px">${OC[tipo]} — ${ppdDia(dia)}</div>
+   <div class="callout ${bh?"sand":""}">${bh?"O dia deixa de contar como <b>falta</b> (sai das pendências e não aparece como falta na folha), e as horas previstas desse dia <b>saem do banco de horas</b>.":"O dia fica marcado como <b>dobra</b> e sai das pendências. As horas trabalhadas nesse dia <b>entram no banco de horas</b>."}</div>
+   <label>Observação (opcional)</label><input id="pldobs" placeholder="${bh?"Ex.: combinado com a coordenação":"Ex.: cobriu o plantão da Maria"}">
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="pldcx">Fechar</button><button class="b" id="pldsv">Lançar</button></div>`);
+  ov.querySelector("#pldcx").onclick=()=>ov.remove();
+  ov.querySelector("#pldsv").onclick=()=>{
+    if(bh)Object.values(S.ocorr).filter(o=>o.uid===ig.id&&o.de===dia&&o.ate===dia&&OC_FALTA.has(o.tipo)).forEach(o=>del("ocorr",o.id));
+    put("ocorr",uid8(),{uid:ig.id,tipo,de:dia,ate:dia,texto:ov.querySelector("#pldobs").value.trim(),docId:null,em:new Date().toISOString()});
+    ov.remove();toast(`${OC[tipo]}: ${brDate(dia).slice(0,5)} lançado.`);afterOc()};
+}
 // liga uma falta ao dia em que a pessoa trabalhou a mais para cobrir. lado "falta": `dia` é a falta; "extra": `dia` é o dia trabalhado
 function ppdCompensa(u,dia,lado){
   const ig=u.ig;if(!ig||!ig.id)return toast("Integrante sem cadastro.",true);
@@ -144,9 +158,9 @@ function ppd1236(ig,uid,D){
 function ppdBotoes(u,p){
   const b=(attr,txt,sec)=>`<button type="button" class="b ${sec?"sec ":""}sm" ${attr} style="flex:none">${txt}</button>`;
   const cad=u.ig&&u.ig.id;
-  if(p.kind==="marcacao_sem_escala")return(cad?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho")+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="extra"`,"Trabalhou para compensar falta",1):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
+  if(p.kind==="marcacao_sem_escala")return(cad?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho")+b(`data-ppdlanc="${u.uid}" data-day="${p.day}" data-tipo="dobra"`,"Dobrou horário",1)+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="extra"`,"Trabalhou para compensar falta",1):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
   const folga=cad?b(`data-ppdfolga="${u.ig.id}" data-day="${p.day}"`,"Lançar folga",1):"";
-  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+(cad?b(`data-ppdconf="${u.uid}" data-day="${p.day}"`,"Confirmar falta",1)+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="falta"`,"Compensou em outro dia",1):"")+folga+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
+  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+(cad?b(`data-ppdconf="${u.uid}" data-day="${p.day}"`,"Confirmar falta",1)+b(`data-ppdlanc="${u.uid}" data-day="${p.day}" data-tipo="banco_horas"`,"Abateu no banco de horas",1)+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="falta"`,"Compensou em outro dia",1):"")+folga+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
   return b(`data-ppdmk="${u.uid}" data-day="${p.day}" ${p.sugereHora?`data-sug="${p.sugereHora}"`:""}`,"Lançar a batida que faltou")+b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar",1);
 }
 const ppdPasso=(n,ok,titulo,corpo)=>`<div style="display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--line)">
@@ -229,6 +243,7 @@ function ppdBind(){
   document.querySelectorAll("[data-ppdoc]").forEach(b=>b.onclick=()=>openOcorr(+b.dataset.ppdoc,b.dataset.day));
   const pessoa=uid=>D().U.find(x=>+x.uid===+uid);
   document.querySelectorAll("[data-ppdconf]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdconf);if(u)ppdConfirmaFalta(u,b.dataset.day)});
+  document.querySelectorAll("[data-ppdlanc]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdlanc);if(u)ppdLancaDia(u,b.dataset.day,b.dataset.tipo)});
   document.querySelectorAll("[data-ppdcomp]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdcomp);if(u)ppdCompensa(u,b.dataset.day,b.dataset.lado)});
   document.querySelectorAll("[data-ppdmk]").forEach(b=>b.onclick=()=>openMarcas(+b.dataset.ppdmk,b.dataset.day,{suggest:b.dataset.sug}));
   document.querySelectorAll("[data-ppd1236]").forEach(b=>b.onclick=async()=>{const ig=S.integrantes[b.dataset.ppd1236];if(!ig)return;

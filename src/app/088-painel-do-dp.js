@@ -62,10 +62,12 @@ function dpQuadro(ym){
 /* ---------- explicação do ponto de cada pessoa ---------- */
 function dpMotivo(r){
   if(r.status==="falta")return"Falta sem justificativa";
+  if(r.status==="compensada"&&r.oc&&r.oc.tipo==="banco_horas")return"Falta abatida no banco de horas";
   if(r.status==="compensada")return`Falta compensada com o trabalho de ${brDate(r.oc.comp)}`;
   if(r.compensa&&r.compensa.length)return`Trabalhou para compensar a falta de ${r.compensa.map(brDate).join(", ")}`;
   const m=[],semEsc=r.status==="sem_escala";
   if(semEsc&&r.workedMin)m.push("trabalhou em dia sem escala");
+  if(r.oc&&r.oc.tipo==="dobra")m.push("dobrou horário");
   if((r.flags||[]).includes("trabalhou_feriado"))m.push("trabalhou no feriado");
   if((r.flags||[]).includes("previsto_manual"))m.push("previsto alterado à mão na planilha do ponto");
   else{

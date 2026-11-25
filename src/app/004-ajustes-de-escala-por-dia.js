@@ -14,14 +14,15 @@ function ajusteDe(igId,iso){
 }
 // diz se o integrante trabalha em `iso` e com qual turno, considerando admissão e ajustes lançados à mão
 function escalaDia(ig,iso){
+  // antes da admissão e depois do desligamento não há escala, nem com dia de trabalho lançado à mão
+  if(ig.admissao&&iso<ig.admissao)return{on:false,turno:null,ajuste:null,antes:true};
+  if(ig.desligamento&&iso>ig.desligamento)return{on:false,turno:null,ajuste:null,depois:true};
   const aj=ig.id?ajusteDe(ig.id,iso):null;
   if(aj){
     if(aj.tipo==="folga")return{on:false,turno:null,ajuste:aj};
     const t=+(aj.turno||igNaData(ig,iso).turno)||null;
     return{on:!!t,turno:t,ajuste:aj};
   }
-  if(ig.admissao&&iso<ig.admissao)return{on:false,turno:null,ajuste:null,antes:true};
-  if(ig.desligamento&&iso>ig.desligamento)return{on:false,turno:null,ajuste:null,depois:true};
   const g=igNaData(ig,iso);
   return{on:!!g.turno&&scheduledOn(g,iso),turno:g.turno?+g.turno:null,ajuste:null};
 }
@@ -246,7 +247,15 @@ function pairPunches(punches,schedule,cfg,holidays,until){
     if(!nx||!nx.length||ult.ts.getHours()<12)continue;
     const prim=nx[0],gap=minutesBetween(ult.ts,prim.ts);
     if(prim.ts.getHours()>=12||gap<=0||gap>16*60)continue;
-    ps.push(nx.shift());if(!nx.length)byDay.delete(d2);
+    ps.push(nx.shift());
+    // intervalo depois da meia-noite (ex.: 13:00–01:00, 02:00–05:35): o par seguinte da madrugada é o mesmo plantão
+    // se começa até 3 h depois da última batida, termina antes do meio-dia e o plantão inteiro cabe em 24 h
+    while(nx.length>=2){
+      const a=nx[0],b=nx[1],ultimo=ps[ps.length-1];
+      if(minutesBetween(ultimo.ts,a.ts)>180||b.ts.getHours()>=12||minutesBetween(ps[0].ts,b.ts)>24*60)break;
+      ps.push(nx.shift(),nx.shift());
+    }
+    if(!nx.length)byDay.delete(d2);
   }
   for(const d of[...byDay.keys()].sort()){
     if(until&&d>until)continue;

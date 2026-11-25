@@ -77,14 +77,15 @@ function ajusteDe(igId,iso){
 }
 // diz se o integrante trabalha em `iso` e com qual turno, considerando admissão e ajustes lançados à mão
 function escalaDia(ig,iso){
+  // antes da admissão e depois do desligamento não há escala, nem com dia de trabalho lançado à mão
+  if(ig.admissao&&iso<ig.admissao)return{on:false,turno:null,ajuste:null,antes:true};
+  if(ig.desligamento&&iso>ig.desligamento)return{on:false,turno:null,ajuste:null,depois:true};
   const aj=ig.id?ajusteDe(ig.id,iso):null;
   if(aj){
     if(aj.tipo==="folga")return{on:false,turno:null,ajuste:aj};
     const t=+(aj.turno||igNaData(ig,iso).turno)||null;
     return{on:!!t,turno:t,ajuste:aj};
   }
-  if(ig.admissao&&iso<ig.admissao)return{on:false,turno:null,ajuste:null,antes:true};
-  if(ig.desligamento&&iso>ig.desligamento)return{on:false,turno:null,ajuste:null,depois:true};
   const g=igNaData(ig,iso);
   return{on:!!g.turno&&scheduledOn(g,iso),turno:g.turno?+g.turno:null,ajuste:null};
 }
@@ -309,7 +310,15 @@ function pairPunches(punches,schedule,cfg,holidays,until){
     if(!nx||!nx.length||ult.ts.getHours()<12)continue;
     const prim=nx[0],gap=minutesBetween(ult.ts,prim.ts);
     if(prim.ts.getHours()>=12||gap<=0||gap>16*60)continue;
-    ps.push(nx.shift());if(!nx.length)byDay.delete(d2);
+    ps.push(nx.shift());
+    // intervalo depois da meia-noite (ex.: 13:00–01:00, 02:00–05:35): o par seguinte da madrugada é o mesmo plantão
+    // se começa até 3 h depois da última batida, termina antes do meio-dia e o plantão inteiro cabe em 24 h
+    while(nx.length>=2){
+      const a=nx[0],b=nx[1],ultimo=ps[ps.length-1];
+      if(minutesBetween(ultimo.ts,a.ts)>180||b.ts.getHours()>=12||minutesBetween(ps[0].ts,b.ts)>24*60)break;
+      ps.push(nx.shift(),nx.shift());
+    }
+    if(!nx.length)byDay.delete(d2);
   }
   for(const d of[...byDay.keys()].sort()){
     if(until&&d>until)continue;
@@ -363,8 +372,9 @@ const fmtCPF=v=>{v=String(v||"").replace(/\D/g,"");return v.length===11?v.replac
 const DEPTOS=["Administrativo","Cuidadores(a)","Enfermagem","Fisioterapia","Cozinheiras(o)","Aux de Limpeza","Recepção","Outro"];
 const deptoClass=d=>/limpeza/i.test(d)?"d-limpeza":/cozinh/i.test(d)?"d-cozinha":/admin/i.test(d)?"d-admin":/recep/i.test(d)?"d-recepcao":/enferm|fisio|cuidad/i.test(d)?"":"d-outro";
 const CATS=["Documentos pessoais","Contrato e admissão","ASO e exames","Atestados","Certificados e treinamentos","Outros"];
-const OC={atestado:"Atestado médico",falta_justificada:"Falta justificada",esquecimento:"Esquecimento de ponto",outro:"Outro registro",falta_confirmada:"Falta sem justificativa (confirmada)",falta_compensada:"Falta compensada em outro dia"};
-const OC_FALTA=new Set(["falta_confirmada","falta_compensada"]);
+const OC={atestado:"Atestado médico",falta_justificada:"Falta justificada",esquecimento:"Esquecimento de ponto",outro:"Outro registro",falta_confirmada:"Falta sem justificativa (confirmada)",falta_compensada:"Falta compensada em outro dia",banco_horas:"Abateu no banco de horas",dobra:"Dobrou horário"};
+// banco_horas: a falta deixa de ser falta e as horas do dia saem do banco de horas
+const OC_FALTA=new Set(["falta_confirmada","falta_compensada","banco_horas"]);
 const STL={ok:"OK",falta:"Falta",pendencia:"Pendência",atestado:"Atestado",justificada:"Justificada",esquecido:"Ponto esquecido",sem_escala:"Sem escala",feriado:"Feriado",compensada:"Falta compensada"};
 const FLAG_LABEL={falta_confirmada:"falta confirmada",compensa_falta:"compensa falta",tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trabalhou no feriado",multiplos_periodos:"múltiplos períodos",intervalo_preassinalado:"intervalo descontado",justificar:"a justificar",falta_saida:"falta marcação de saída",falta_entrada:"falta marcação de entrada",falta_pontual:"marcação pontual ausente",escala_lancada:"escala lançada manualmente"};
 // ajustes feitos à mão (previsto/escala do dia) não aparecem como aviso na folha nem na tela do ponto; o histórico continua guardando quem mudou
@@ -768,7 +778,8 @@ const integList=()=>Object.values(S.integrantes).sort((a,b)=>String(a.nomeComple
 const semPonto=i=>!!i&&i.ponto==="nao";
 // ativo, ou desligado a partir de `desde` (ainda aparece no período em que trabalhou)
 const ativoEm=(i,desde)=>!!i&&((i.situacao||"Ativo")!=="Desligado"||(!!desde&&!!i.desligamento&&i.desligamento>=desde));
-const integByUid=u=>{const l=Object.values(S.integrantes).filter(i=>i.uid!=null&&+i.uid===+u);return l.find(i=>(i.situacao||"Ativo")!=="Desligado")||l[0]};
+// número repetido: a ficha de verdade (com nome completo) vale antes do cadastro que o relógio criou sozinho
+const integByUid=u=>{const l=Object.values(S.integrantes).filter(i=>i.uid!=null&&+i.uid===+u),at=i=>(i.situacao||"Ativo")!=="Desligado",rel=i=>typeof cadRelogio==="function"&&cadRelogio(i);return l.find(i=>at(i)&&!rel(i))||l.find(at)||l[0]};
 const nomeInteg=i=>i.nomeCompleto||i.nome||"(sem nome)";
 const marcasOf=(uid,fromIso,toIso)=>Object.values(S.marcacoes).filter(m=>+m.uid===+uid&&!m.removida&&m.ts.slice(0,10)>=fromIso&&m.ts.slice(0,10)<=toIso).map(m=>({ts:parseLocalIso(m.ts),rawId:m.id}));
 function importMarcas(punches){
@@ -871,6 +882,8 @@ async function loadLog(f){
     BHCACHE.clear();calcular(true);
   }catch(e){toast("Erro ao ler o arquivo: "+e.message,true)}
 }
+// antes da admissão e depois do desligamento a pessoa não tem contrato: esses dias não entram em horas, faltas nem pendências
+const foraDoContrato=(ig,d)=>!!ig&&((!!ig.admissao&&d<ig.admissao)||(!!ig.desligamento&&d>ig.desligamento));
 function calcular(show){
   try{if(typeof autoJuntarRelogio==="function"&&autoJuntarRelogio())BHCACHE.clear()}catch(e){}
   const P=POINT;P.err="";
@@ -883,12 +896,12 @@ function calcular(show){
     const span=[];for(let d=P.start;d<=P.end;d=addDaysIso(d,1))span.push(d);
     const uids=new Set([...P.punches.map(p=>p.userId),...Object.values(S.marcacoes).map(m=>+m.uid)]);
     Object.values(S.integrantes).forEach(i=>{if(i.uid!=null&&i.turno)uids.add(+i.uid)});
-    const users=[],semCadastro=[];
+    const users=[],semCadastro=[],foraContrato=[];
     for(const uid of[...uids].sort((a,b)=>a-b)){
       const ig=integByUid(uid)||{};
       if(semPonto(ig))continue;
       // desligado antes do período não entra; número sem cadastro vira aviso, não cartão
-      if(ig.id&&((ig.desligamento&&ig.desligamento<P.start)||(ig.situacao==="Desligado"&&!ig.desligamento)))continue;
+      if(ig.id&&((ig.desligamento&&ig.desligamento<P.start)||(ig.situacao==="Desligado"&&!ig.desligamento)||(ig.admissao&&ig.admissao>P.end)))continue;
       if(!ig.id){const n=marcasOf(uid,P.start,P.end).length;if(n)semCadastro.push({uid,n,nome:(P.punches.find(p=>p.userId===uid)||{}).uname||""});continue}
       if(ig.turno&&!shifts.get(+ig.turno))throw new Error(`${nomeInteg(ig)}: o turno ${ig.turno} não existe. Ajuste na aba Turnos.`);
       const schedule=new Map();
@@ -903,11 +916,12 @@ function calcular(show){
       const res=pairPunches(pun,schedule,cfg,holidays,P.end<hojeIso()?P.end:addDaysIso(hojeIso(),-1));
       // dia com previsto digitado à mão mas sem escala nem batida: entra no cálculo (pode virar falta)
       if(ig.id){const lim=P.end<hojeIso()?P.end:addDaysIso(hojeIso(),-1),tem=new Set(res.journeys.map(j=>j.day));
-        Object.keys(((S.config["prevm_"+ig.id]||{}).dias)||{}).forEach(d=>{if(d>=P.start&&d<=lim&&!tem.has(d))res.journeys.push({day:d,status:"sem_escala",shiftNo:null,intervals:[],workedMin:0,expectedMin:0,lateMin:0,earlyLeaveMin:0,extraMin:0,feriadoMin:0,turnoNoturno:false,endsOn:d,flags:[]})});
+        Object.keys(((S.config["prevm_"+ig.id]||{}).dias)||{}).forEach(d=>{if(d>=P.start&&d<=lim&&!tem.has(d)&&!foraDoContrato(ig,d))res.journeys.push({day:d,status:"sem_escala",shiftNo:null,intervals:[],workedMin:0,expectedMin:0,lateMin:0,earlyLeaveMin:0,extraMin:0,feriadoMin:0,turnoNoturno:false,endsOn:d,flags:[]})});
         res.journeys.sort((a,b)=>a.day.localeCompare(b.day))}
       const nome=ig.id?nomeInteg(ig):((P.punches.find(p=>p.userId===uid)||{}).uname||String(uid));
       const ocs=Object.values(S.ocorr).filter(o=>ig.id&&o.uid===ig.id);
-      const rows=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end).map(j=>{
+      {const fd=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&foraDoContrato(ig,j.day)&&(j.workedMin>0||j.intervals.length||(j.marcas&&j.marcas.length)));if(fd.length)foraContrato.push({uid,nome:nomeInteg(ig),dias:fd.map(j=>j.day),adm:ig.admissao||"",desl:ig.desligamento||""})}
+      const rows=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&!foraDoContrato(ig,j.day)).map(j=>{
         const r={day:j.day,wd:WD[pyWeekday(j.day)],status:j.status,shift:j.shiftNo,
           intervals:j.intervals.map(([a,b])=>hm(a)+"–"+hm(b)+(isoDate(b)!==isoDate(a)?" (+1)":"")),
           rawIntervals:j.intervals,marcas:j.marcas||null,
@@ -940,7 +954,9 @@ function calcular(show){
         const f=rows.find(x=>x.day===o.de&&x.status==="compensada");if(f){const ab=Math.min(c.extra||0,f.expectedMin||0);c.extra=(c.extra||0)-ab}});
       const okDays=new Set(rows.filter(r=>["atestado","justificada","esquecido","compensada"].includes(r.status)).map(r=>r.day));
       const confDias=new Set(rows.filter(r=>r.status===FALTA&&r.flags.includes("falta_confirmada")).map(r=>r.day));
-      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&compDias.has(p.day)));
+      // "dobrou horário": o dia trabalhado fora da escala é dobra; as horas continuam indo para o banco
+      const dobrou=d=>ocs.some(o=>o.tipo==="dobra"&&o.de<=d&&d<=o.ate);
+      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!foraDoContrato(ig,p.day)&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&(compDias.has(p.day)||dobrou(p.day))));
       const sum=k=>rows.reduce((s,r)=>s+r[k],0),cnt=s=>rows.filter(r=>r.status===s).length;
       users.push({uid,ig,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
         t:{worked:sum("workedMin"),expected:sum("expectedMin"),late:sum("late"),early:sum("early"),extra:sum("extra"),
@@ -948,7 +964,7 @@ function calcular(show){
            escalados:rows.filter(r=>r.expectedMin>0).length,trab:rows.filter(r=>r.workedMin>0).length,
            faltas:cnt("falta"),atestados:cnt("atestado"),justificadas:cnt("justificada"),esquecidos:cnt("esquecido"),compensadas:cnt("compensada")}});
     }
-    P.result={users,start:P.start,end:P.end,semCadastro};
+    P.result={users,start:P.start,end:P.end,semCadastro,foraContrato};
   }catch(e){P.err=e.message;P.result=null}
   if(show)go("ponto",true);
 }
@@ -975,6 +991,7 @@ function renderResult(R){
    <button class="stat" data-stat="extra"><b>${fmtHHMM(tot("extra"))}</b><span>horas extras</span></button>
    <button class="stat ${tot("late")?"warn":""}" data-stat="atraso"><b>${tot("late")}</b><span>min. de atraso</span></button></div>
   ${(R.semCadastro||[]).length?`<div class="callout sand" style="margin:10px 0">Números do relógio <b>sem cadastro</b> (ficam fora do cálculo e do fechamento): ${R.semCadastro.map(x=>`nº ${x.uid}${x.nome?" ("+esc(x.nome)+")":""} — ${x.n} batida(s)`).join("; ")}. Se for alguém da casa, cadastre em Integrantes com esse número no relógio, ou ligue em Ponto → Cadastro e conferência → De-para.</div>`:""}
+  ${(R.foraContrato||[]).length?`<div class="callout sand" style="margin:10px 0">Batidas <b>fora do contrato</b> (ficam fora das horas, faltas e banco de horas): ${R.foraContrato.map(x=>`${esc(x.nome)} — ${x.dias.map(d=>brDate(d).slice(0,5)).join(", ")} (${x.adm&&x.dias.some(d=>d<x.adm)?"admissão em "+brDate(x.adm):"desligamento em "+brDate(x.desl)})`).join("; ")}. Se a pessoa já trabalhava nesses dias, corrija a data de admissão na ficha.</div>`:""}
   <div class="legend">${["ok","falta","pendencia","atestado","justificada","compensada","esquecido","sem_escala"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
    <span style="margin-left:auto;font-style:italic">Clique num card, num dia ou no nome para ver detalhes e resolver.</span></div>`+
   heatmap(R)+
@@ -1821,6 +1838,7 @@ function xlDur(mins){return Math.max(0,Math.round(mins||0))/1440}
 function xlDateOnly(iso){if(!iso)return null;const[y,m,d]=iso.split("-").map(Number);return Math.round((Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000)}
 function obsText(r){
   if(r.oc&&r.status==="falta"&&r.oc.tipo==="falta_confirmada")return "Falta"+(r.oc.texto?": "+r.oc.texto:"");
+  if(r.oc&&(r.oc.tipo==="banco_horas"||r.oc.tipo==="dobra"))return OC[r.oc.tipo]+(r.oc.texto?": "+r.oc.texto:"");
   if(r.oc&&r.status==="compensada")return "Compensada com o trabalho de "+brDate(r.oc.comp)+(r.oc.texto?": "+r.oc.texto:"");
   if(r.compensa&&r.compensa.length)return "Trabalhou para compensar a falta de "+r.compensa.map(brDate).join(", ");
   if(r.oc&&!OC_FALTA.has(r.oc.tipo)){
@@ -5591,8 +5609,49 @@ function specFolhaIndividual(u,R){
   return{titulo:`Folha de ponto — ${u.nome}`,sub:`${(u.ig&&u.ig.cargo)||"—"} · ${brDate(R.start)} a ${brDate(R.end)}${u.ig&&u.ig.id?" · Escala: "+escalasTexto(u.ig,R.start,R.end):""}`,sensivel:true,cols,rows,tot,tint,quadro,assinatura:{esq:`Integrante: ${u.nome}`,dir:"Casa Hiro — responsável"}};
 }
 
-function pgContador(){return pgContadorBase()+pgFolhasFiltro()}
-function bindContador(){bindContadorBase();bindFolhas()}
+/* ---------- folha de ponto de vários meses de uma integrante só (um arquivo, uma folha por mês) ---------- */
+const FMM={pessoa:"",de:"",ate:"",fmt:"pdf"};
+const fmmRot=m=>m.slice(5)+"/"+m.slice(0,4);
+function pgFolhaMeses(){
+  const hoje=refYm(hojeIso()),meses=mesesEntre(refYmAdd(hoje,-35),hoje).reverse();
+  if(!FMM.de)FMM.de=refYmAdd(hoje,-2);if(!FMM.ate)FMM.ate=refPadrao();
+  const pes=integList().filter(i=>i.uid!=null&&i.uid!==""&&!semPonto(i));
+  const opM=v=>meses.map(m=>`<option value="${m}" ${m===v?"selected":""}>${fmmRot(m)} · ${refRotulo(m)}</option>`).join("");
+  return `<div class="card"><h2>Folhas de ponto de vários meses (uma integrante)</h2>
+   <p class="sub" style="margin:0 0 10px">Escolha a pessoa e os meses: sai um arquivo só, com a folha de ponto de cada mês (dia 26 ao dia 25), com banco de horas e assinatura.</p>
+   <div class="row" style="align-items:flex-end"><div style="flex:2 1 240px"><label>Integrante</label><select id="fmmp"><option value="">— escolha —</option>${pes.map(i=>`<option value="${esc(i.id)}" ${i.id===FMM.pessoa?"selected":""}>${esc(nomeInteg(i))}${(i.situacao||"")==="Desligado"?" (desligada)":""}</option>`).join("")}</select></div>
+    <div style="flex:1 1 200px"><label>Do mês</label><select id="fmmde">${opM(FMM.de)}</select></div>
+    <div style="flex:1 1 200px"><label>Até o mês</label><select id="fmmate">${opM(FMM.ate)}</select></div>
+    <div style="flex:0 0 150px"><label>Formato</label><select id="fmmfmt"><option value="pdf" ${FMM.fmt==="pdf"?"selected":""}>PDF</option><option value="xlsx" ${FMM.fmt==="xlsx"?"selected":""}>XLSX (Excel)</option></select></div>
+    <div style="flex:none"><button class="b" id="fmmgo" ${FMM.pessoa?"":"disabled"}>${ic("down")} Baixar</button></div></div></div>`;
+}
+function bindFolhaMeses(){
+  const s=(id,k)=>{const e=$(id);if(e)e.onchange=()=>{FMM[k]=e.value;go("contador",true)}};
+  s("fmmp","pessoa");s("fmmde","de");s("fmmate","ate");s("fmmfmt","fmt");
+  const g=$("fmmgo");if(g)g.onclick=()=>folhaMesesBaixar();
+}
+async function folhaMesesBaixar(){
+  const ig=S.integrantes[FMM.pessoa];if(!ig)return toast("Escolha a integrante.",true);
+  const de=FMM.de<=FMM.ate?FMM.de:FMM.ate,ate=FMM.de<=FMM.ate?FMM.ate:FMM.de,meses=mesesEntre(de,ate);
+  toast(`Calculando ${meses.length} mês(es)…`);
+  try{
+    const specs=[],sem=[];
+    for(const m of meses){
+      const ini=refIni(m),fim=fimCalc(m);if(fim<ini){sem.push(m);continue}
+      const r=calcSilencioso(ini,fim);
+      if(!r||r.erro)throw new Error(`${fmmRot(m)}: ${(r&&r.erro)||"não foi possível calcular"}`);
+      const u=r.users.find(x=>x.ig&&x.ig.id===ig.id);if(!u){sem.push(m);continue}
+      const sp=specFolhaIndividual(u,{users:r.users,start:ini,end:fim});sp.titulo=`Folha de ponto ${fmmRot(m)} — ${u.nome}`;specs.push(sp);
+    }
+    if(!specs.length)return toast(`Não há ponto de ${nomeInteg(ig)} entre ${fmmRot(de)} e ${fmmRot(ate)}.`,true);
+    const blob=FMM.fmt==="xlsx"?await relXlsx(specs):await relPdf(specs,{});
+    const ok=await saveFile(`folha-ponto_${safe(nomeInteg(ig))}_${de}_a_${ate}.${FMM.fmt}`,blob);
+    if(ok&&sem.length)toast(`Sem ponto (fora do contrato ou mês ainda não começou): ${sem.map(fmmRot).join(", ")}.`,true);
+  }catch(e){console.error(e);toast("Não foi possível gerar a folha: "+(e&&e.message?e.message:e),true)}
+}
+
+function pgContador(){return pgContadorBase()+pgFolhasFiltro()+pgFolhaMeses()}
+function bindContador(){bindContadorBase();bindFolhas();bindFolhaMeses()}
 
 function asoInfoHtml(i){
   if(!i.id)return"";
@@ -15277,6 +15336,20 @@ function ppdConfirmaFalta(u,dia){
     put("ocorr",uid8(),{uid:ig.id,tipo:"falta_confirmada",de:dia,ate:dia,texto:ov.querySelector("#pfobs").value.trim(),docId:null,em:new Date().toISOString()});
     ov.remove();toast(`Falta de ${brDate(dia).slice(0,5)} confirmada.`);afterOc()};
 }
+// lançamento rápido de um dia: "banco_horas" (falta abatida no banco) ou "dobra" (dobrou horário)
+function ppdLancaDia(u,dia,tipo){
+  const ig=u.ig;if(!ig||!ig.id)return toast("Integrante sem cadastro.",true);
+  const bh=tipo==="banco_horas";
+  const ov=openModal(`<h3>${esc(nomeInteg(ig))}</h3><div class="sub" style="margin-bottom:10px">${OC[tipo]} — ${ppdDia(dia)}</div>
+   <div class="callout ${bh?"sand":""}">${bh?"O dia deixa de contar como <b>falta</b> (sai das pendências e não aparece como falta na folha), e as horas previstas desse dia <b>saem do banco de horas</b>.":"O dia fica marcado como <b>dobra</b> e sai das pendências. As horas trabalhadas nesse dia <b>entram no banco de horas</b>."}</div>
+   <label>Observação (opcional)</label><input id="pldobs" placeholder="${bh?"Ex.: combinado com a coordenação":"Ex.: cobriu o plantão da Maria"}">
+   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px"><button class="b sec" id="pldcx">Fechar</button><button class="b" id="pldsv">Lançar</button></div>`);
+  ov.querySelector("#pldcx").onclick=()=>ov.remove();
+  ov.querySelector("#pldsv").onclick=()=>{
+    if(bh)Object.values(S.ocorr).filter(o=>o.uid===ig.id&&o.de===dia&&o.ate===dia&&OC_FALTA.has(o.tipo)).forEach(o=>del("ocorr",o.id));
+    put("ocorr",uid8(),{uid:ig.id,tipo,de:dia,ate:dia,texto:ov.querySelector("#pldobs").value.trim(),docId:null,em:new Date().toISOString()});
+    ov.remove();toast(`${OC[tipo]}: ${brDate(dia).slice(0,5)} lançado.`);afterOc()};
+}
 // liga uma falta ao dia em que a pessoa trabalhou a mais para cobrir. lado "falta": `dia` é a falta; "extra": `dia` é o dia trabalhado
 function ppdCompensa(u,dia,lado){
   const ig=u.ig;if(!ig||!ig.id)return toast("Integrante sem cadastro.",true);
@@ -15396,9 +15469,9 @@ function ppd1236(ig,uid,D){
 function ppdBotoes(u,p){
   const b=(attr,txt,sec)=>`<button type="button" class="b ${sec?"sec ":""}sm" ${attr} style="flex:none">${txt}</button>`;
   const cad=u.ig&&u.ig.id;
-  if(p.kind==="marcacao_sem_escala")return(cad?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho")+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="extra"`,"Trabalhou para compensar falta",1):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
+  if(p.kind==="marcacao_sem_escala")return(cad?b(`data-ppdesc="${u.ig.id}" data-day="${p.day}"`,"Era dia de trabalho")+b(`data-ppdlanc="${u.uid}" data-day="${p.day}" data-tipo="dobra"`,"Dobrou horário",1)+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="extra"`,"Trabalhou para compensar falta",1):"")+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Ver ou apagar batidas",1);
   const folga=cad?b(`data-ppdfolga="${u.ig.id}" data-day="${p.day}"`,"Lançar folga",1):"";
-  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+(cad?b(`data-ppdconf="${u.uid}" data-day="${p.day}"`,"Confirmar falta",1)+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="falta"`,"Compensou em outro dia",1):"")+folga+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
+  if(p.kind==="falta")return b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar ou lançar atestado")+(cad?b(`data-ppdconf="${u.uid}" data-day="${p.day}"`,"Confirmar falta",1)+b(`data-ppdlanc="${u.uid}" data-day="${p.day}" data-tipo="banco_horas"`,"Abateu no banco de horas",1)+b(`data-ppdcomp="${u.uid}" data-day="${p.day}" data-lado="falta"`,"Compensou em outro dia",1):"")+folga+b(`data-ppdmk="${u.uid}" data-day="${p.day}"`,"Lançar batidas",1);
   return b(`data-ppdmk="${u.uid}" data-day="${p.day}" ${p.sugereHora?`data-sug="${p.sugereHora}"`:""}`,"Lançar a batida que faltou")+b(`data-ppdoc="${u.uid}" data-day="${p.day}"`,"Justificar",1);
 }
 const ppdPasso=(n,ok,titulo,corpo)=>`<div style="display:flex;gap:12px;padding:14px 0;border-top:1px solid var(--line)">
@@ -15481,6 +15554,7 @@ function ppdBind(){
   document.querySelectorAll("[data-ppdoc]").forEach(b=>b.onclick=()=>openOcorr(+b.dataset.ppdoc,b.dataset.day));
   const pessoa=uid=>D().U.find(x=>+x.uid===+uid);
   document.querySelectorAll("[data-ppdconf]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdconf);if(u)ppdConfirmaFalta(u,b.dataset.day)});
+  document.querySelectorAll("[data-ppdlanc]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdlanc);if(u)ppdLancaDia(u,b.dataset.day,b.dataset.tipo)});
   document.querySelectorAll("[data-ppdcomp]").forEach(b=>b.onclick=()=>{const u=pessoa(b.dataset.ppdcomp);if(u)ppdCompensa(u,b.dataset.day,b.dataset.lado)});
   document.querySelectorAll("[data-ppdmk]").forEach(b=>b.onclick=()=>openMarcas(+b.dataset.ppdmk,b.dataset.day,{suggest:b.dataset.sug}));
   document.querySelectorAll("[data-ppd1236]").forEach(b=>b.onclick=async()=>{const ig=S.integrantes[b.dataset.ppd1236];if(!ig)return;
@@ -17108,10 +17182,12 @@ function dpQuadro(ym){
 /* ---------- explicação do ponto de cada pessoa ---------- */
 function dpMotivo(r){
   if(r.status==="falta")return"Falta sem justificativa";
+  if(r.status==="compensada"&&r.oc&&r.oc.tipo==="banco_horas")return"Falta abatida no banco de horas";
   if(r.status==="compensada")return`Falta compensada com o trabalho de ${brDate(r.oc.comp)}`;
   if(r.compensa&&r.compensa.length)return`Trabalhou para compensar a falta de ${r.compensa.map(brDate).join(", ")}`;
   const m=[],semEsc=r.status==="sem_escala";
   if(semEsc&&r.workedMin)m.push("trabalhou em dia sem escala");
+  if(r.oc&&r.oc.tipo==="dobra")m.push("dobrou horário");
   if((r.flags||[]).includes("trabalhou_feriado"))m.push("trabalhou no feriado");
   if((r.flags||[]).includes("previsto_manual"))m.push("previsto alterado à mão na planilha do ponto");
   else{
@@ -17370,6 +17446,86 @@ async function dpPdf(){
 
 /* ---------- aba "Painel" em Gestão de pessoas (primeira aba) ---------- */
 if(PGX.gp){PGX.gp.tabs.unshift({k:"painel",l:"Painel e gráficos",html:dpHtml,bind:bindDp});PGX.gp.st.tab="painel"}
+/* ================= PATRIMÔNIO PARA CONCORRÊNCIA PÚBLICA =================
+   Uma lista só com os bens da casa (fogão, sofá, armários, camas…), juntando:
+   - o cadastro de Patrimônio (Estrutura e qualidade) e os bens do Financeiro (Patrimônio e depreciação), sem os baixados;
+   - os itens das notas fiscais de compra que são móveis, eletrodomésticos e equipamentos (categoria
+     "Equipamentos e mobiliário" ou aparelhos como computador, TV e extintor).
+   Cada linha pode ser tirada ou incluída à mão; a escolha fica em config/x_infra (patConc). */
+const PCONC={q:"",cat:"",ver:"lista"}; // ver: "lista" = só o patrimônio | "notas" = todos os itens das notas, para incluir o que faltou
+const PCONC_EXTRA=/computador|notebook|impressora|nobreak|smartphone|celular|tablet|camera de seguranca|\bdvr\b|extintor|televis|\btv\b/;
+const PCONC_MAX=300;
+const pconcMarcas=()=>xcfg("infra").patConc||{};
+function pconcNfCat(r){
+  const c=r.categoria;
+  if(c&&!/^(sem categoria|a classificar|outros)$/i.test(c))return{cat:c,sub:r.subcategoria||""};
+  const k=typeof nfClassificaX==="function"?nfClassificaX(r):null;
+  return k?{cat:k.cat,sub:k.sub}:{cat:c||"",sub:""};
+}
+function pconcTodos(){
+  const L=[];
+  xs("ativos").filter(a=>a.estado!=="baixado").forEach(a=>L.push({k:"a:"+a.id,nome:a.nome,cat:(a.cat||"").split(" (")[0]||"Outro",qtd:1,unit:+a.valor||0,total:+a.valor||0,data:a.compra||"",
+    onde:[a.local,a.serie].filter(Boolean).join(" · "),origem:"Cadastro de patrimônio",auto:true}));
+  if(typeof f11Bens==="function")f11Bens().filter(b=>!b.baixa).forEach(b=>L.push({k:"b:"+b.id,nome:b.nome,cat:b.cat||"",qtd:1,unit:+b.valor||0,total:+b.valor||0,data:b.data||"",
+    onde:[b.local,b.serie?"série "+b.serie:""].filter(Boolean).join(" · "),origem:"Financeiro (bens)",auto:true}));
+  ((S.config.nf&&S.config.nf.rows)||[]).forEach(r=>{
+    const c=pconcNfCat(r),equip=c.cat==="Equipamentos e mobiliário",auto=equip||PCONC_EXTRA.test(NFN(r.item));
+    L.push({k:"n:"+nfKey(r)+"|"+NFN(r.item),nome:r.item,cat:(equip?c.sub:c.cat)||"Sem categoria",qtd:+r.qtd||1,unit:+r.valor||0,total:+r.total||0,data:r.date||"",
+      onde:r.local?"Local na nota: "+r.local:"",origem:"Nota fiscal"+(r.nota?" nº "+r.nota:""),auto});
+  });
+  const M=pconcMarcas();L.forEach(x=>{x.inc=M[x.k]!==undefined?!!M[x.k]:x.auto});
+  return L;
+}
+function pconcVisiveis(T){
+  const q=estNorm(PCONC.q),base=PCONC.ver==="notas"?T.filter(x=>x.k.startsWith("n:")):T.filter(x=>x.inc);
+  return base.filter(x=>(!PCONC.cat||x.cat===PCONC.cat)&&(!q||estNorm(x.nome+" "+x.onde+" "+x.origem+" "+x.cat).includes(q)))
+    .sort((a,b)=>a.cat.localeCompare(b.cat,"pt")||a.nome.localeCompare(b.nome,"pt"));
+}
+function pconcHtml(){
+  const T=pconcTodos(),ed=podeEd("infra"),inc=T.filter(x=>x.inc),notas=PCONC.ver==="notas";
+  const base=notas?T.filter(x=>x.k.startsWith("n:")):inc,cats=[...new Set(base.map(x=>x.cat))].sort((a,b)=>a.localeCompare(b,"pt"));
+  if(PCONC.cat&&!cats.includes(PCONC.cat))PCONC.cat="";
+  const vis=pconcVisiveis(T),mostra=vis.slice(0,PCONC_MAX),semNf=!podeVer("nf"),semFin=!podeVer("fin");
+  const chip=(v,t)=>`<button type="button" class="daypill ${PCONC.cat===v?"on":""}" data-pccat="${esc(v)}" style="width:auto;padding:0 10px">${esc(t)}</button>`;
+  return `<div class="card"><h2>Patrimônio para concorrência pública</h2>
+   <p class="sub" style="margin:0 0 10px">Junta numa lista só os bens da casa — móveis, eletrodomésticos, camas e equipamentos — vindos do cadastro de Patrimônio, dos bens do Financeiro e dos itens das notas fiscais de compra. Comida, fralda, remédio e outros itens de consumo ficam de fora. Se algo entrou errado ou faltou, desmarque ou marque a linha.</p>
+   ${semNf||semFin?`<div class="callout sand" style="margin-bottom:10px">Seu perfil não enxerga ${[semNf?"as notas fiscais":"",semFin?"os bens do Financeiro":""].filter(Boolean).join(" nem ")}: a lista mostra só o que você pode ver.</div>`:""}
+   <div class="stats"><div class="stat"><b>${inc.length}</b><span>linhas no patrimônio</span></div><div class="stat"><b>${NUMF(soma(inc,x=>x.qtd),0)}</b><span>unidades</span></div><div class="stat"><b>${fmtBRL(soma(inc,x=>x.total))}</b><span>valor de compra</span></div></div>
+   <div class="row" style="margin:12px 0 8px;align-items:flex-end">
+    <div style="flex:0 0 260px"><label>Mostrar</label><select id="pcver"><option value="lista" ${notas?"":"selected"}>Só o que é patrimônio</option><option value="notas" ${notas?"selected":""}>Todos os itens das notas (marcar o que faltou)</option></select></div>
+    <div style="flex:1 1 220px"><label>Buscar</label><input id="pcq" placeholder="Ex.: cama, fogão, armário" value="${esc(PCONC.q)}"></div>
+    <div style="flex:none"><button class="b sec" id="pcxls" ${vis.length?"":"disabled"}>${ic("down")} Excel</button></div>
+    <div style="flex:none"><button class="b sec" id="pcpdf" ${vis.length?"":"disabled"}>${ic("down")} PDF</button></div></div>
+   <div class="daypicker" style="flex-wrap:wrap;margin-bottom:10px">${chip("","Todas as categorias")}${cats.map(c=>chip(c,c)).join("")}</div>
+   ${notas?`<p class="sub" style="margin:0 0 8px">Marcado = entra no patrimônio. O download leva só as linhas marcadas desta busca.</p>`:""}
+   ${vis.length?`<div class="wrap"><table><thead><tr>${ed?"<th>Patrimônio?</th>":""}<th>Bem</th><th>Categoria</th><th>Qtd</th><th>Valor</th><th>Aquisição</th><th>Origem</th></tr></thead><tbody>${mostra.map(x=>`<tr style="${x.inc?"":"opacity:.6"}">${ed?`<td><input type="checkbox" data-pck="${esc(x.k)}" data-auto="${x.auto?1:0}" ${x.inc?"checked":""}></td>`:""}<td><b>${esc(x.nome)}</b>${x.onde?`<div class="sub">${esc(x.onde)}</div>`:""}</td><td>${esc(x.cat)}</td><td class="n">${NUMF(x.qtd,0)}</td><td class="n">${fmtBRL(x.total)}</td><td class="n">${x.data?brDate(x.data):"—"}</td><td>${esc(x.origem)}${x.auto!==x.inc?` <span class="sub">(marcado à mão)</span>`:""}</td></tr>`).join("")}</tbody></table></div>
+     ${vis.length>PCONC_MAX?`<p class="sub" style="margin:8px 0 0">Mostrando ${PCONC_MAX} de ${vis.length} linhas. Use a busca ou a categoria para achar as outras (o download leva todas).</p>`:""}`:`<div class="empty">Nada encontrado.</div>`}</div>`;
+}
+function pconcBaixar(fmt){
+  const L=pconcVisiveis(pconcTodos()).filter(x=>x.inc);if(!L.length)return toast("Nenhum bem marcado nesta lista.",true);
+  const filtro=[PCONC.cat,PCONC.q?"busca: "+PCONC.q:""].filter(Boolean).join(" · ");
+  const spec={titulo:"Patrimônio da Casa Hiro",sub:`Bens e equipamentos · posição em ${brDate(hojeIso())}${filtro?" · "+filtro:""}`,sensivel:false,
+    cols:[{h:"Bem",w:36},{h:"Categoria",w:24},{h:"Qtd",t:"num",w:7},{h:"Valor unitário",t:"money",w:13},{h:"Valor total",t:"money",w:13},{h:"Aquisição",t:"date",w:11},{h:"Onde fica / detalhe",w:28},{h:"Origem",w:22}],
+    rows:L.map(x=>[x.nome,x.cat,x.qtd,x.unit,x.total,x.data,x.onde,x.origem]),tot:[null,null,"sum",null,"sum",null,null,null]};
+  (async()=>{try{
+    const blob=fmt==="pdf"?await relPdf([spec],{}):await relXlsx([spec]);
+    await saveFile(`patrimonio-casa-hiro_${hojeIso()}.${fmt}`,blob);
+  }catch(e){console.error(e);toast("Não foi possível gerar o arquivo: "+(e&&e.message?e.message:e),true)}})();
+}
+function pconcBind(){
+  const re=()=>go("infra",true);
+  const v=$("pcver");if(v)v.onchange=()=>{PCONC.ver=v.value;PCONC.cat="";re()};
+  const q=$("pcq");if(q)q.oninput=()=>{PCONC.q=q.value;re();const n=$("pcq");if(n){n.focus();n.setSelectionRange(n.value.length,n.value.length)}};
+  document.querySelectorAll("[data-pccat]").forEach(b=>b.onclick=()=>{PCONC.cat=b.dataset.pccat;re()});
+  document.querySelectorAll("[data-pck]").forEach(c=>c.onchange=()=>{
+    if(!podeEd("infra"))return toast("Seu perfil não permite.",true);
+    const M={...pconcMarcas()},k=c.dataset.pck;
+    if(c.checked===(c.dataset.auto==="1"))delete M[k];else M[k]=c.checked; // só guarda o que foi mudado à mão
+    xcfgSave("infra",{patConc:M});re()});
+  const x=$("pcxls");if(x)x.onclick=()=>pconcBaixar("xlsx");
+  const p=$("pcpdf");if(p)p.onclick=()=>pconcBaixar("pdf");
+}
+{const t=PGX.infra.tabs,i=t.findIndex(x=>x.k==="ativos");t.splice(i+1,0,{k:"conc",l:"Patrimônio p/ concorrência",html:pconcHtml,bind:pconcBind})}
 /* ================= início ================= */
 go("home");
 initRuntime();
