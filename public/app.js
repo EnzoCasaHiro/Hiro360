@@ -17614,6 +17614,33 @@ function pconcObrasHtml(ed){
      const fin=f?`Conta paga em ${brDate(f.pago||f.venc)}${+f.valorPago!==+o.valor&&f.valorPago!=null?` <span class="sub">(no Financeiro: ${fmtBRL(+f.valorPago)})</span>`:""}`:o.finId?`<span class="sub">Excluído no Financeiro</span>`:`<span class="sub">Não lançado</span>`;
      return`<tr><td><b>${esc(o.desc)}</b>${o.contra||o.obs?`<div class="sub">${esc([o.contra?"Pago a: "+o.contra:"",o.obs].filter(Boolean).join(" · "))}</div>`:""}</td><td>${esc(o.cat||"")}</td><td class="n">${fmtBRL(+o.valor||0)}</td><td class="n">${o.data?brDate(o.data):"—"}</td><td>${fin}${!f&&finEd&&ed?` <button class="b sec" data-pcofin="${esc(o.id)}">Lançar no Financeiro</button>`:""}</td>${ed?`<td><button class="b sec" data-pcodel="${esc(o.id)}">Excluir</button></td>`:""}</tr>`}).join("")}</tbody></table></div>`:""}</details>`;
 }
+// grandes grupos do patrimônio, para o resumo do PDF/Excel
+const PCONC_MO="Obras e benfeitorias — mão de obra",PCONC_BENS="Móveis, eletrodomésticos e equipamentos";
+function pconcGrupo(x){
+  const c=NFN(x.cat);
+  if(c.startsWith("obras e benfeitorias mao de obra"))return PCONC_MO;
+  if(x.cat===PCONC_MAT||c.startsWith("obras e benfeitorias")||PCONC_CATOBRA.test(c))return PCONC_MAT;
+  return PCONC_BENS;
+}
+const pconcOrigemGrupo=o=>o.startsWith("Nota fiscal")?"Notas fiscais de compra":o.startsWith("Lançado nesta aba")?"Lançado à mão (obras e mão de obra)":o.startsWith("Financeiro (compra")?"Financeiro — compras sem nota":o.startsWith("Financeiro (bens")?"Financeiro — bens cadastrados":o.startsWith("Cadastro")?"Cadastro de patrimônio":o;
+// resumo: total geral, total da obra e quanto foi gasto em cada grupo, categoria e origem
+function pconcResumo(L,sub){
+  const tot=soma(L,x=>+x.total||0),rows=[],estilo=[],add=(r,e)=>{rows.push(r);estilo.push(e||"")};
+  const pct=v=>tot?100*v/tot:0;
+  const bloco=(titulo,chave)=>{
+    const m=new Map();L.forEach(x=>{const k=chave(x)||"Sem categoria",a=m.get(k)||{n:0,u:0,v:0};a.n++;a.u+=+x.qtd||0;a.v+=+x.total||0;m.set(k,a)});
+    add([titulo,null,null,null,null],"h");
+    [...m.entries()].sort((a,b)=>b[1].v-a[1].v||a[0].localeCompare(b[0],"pt")).forEach(([k,a])=>add([k,a.n,a.u,a.v,pct(a.v)]));
+  };
+  add(["TOTAL GERAL DO PATRIMÔNIO",L.length,soma(L,x=>+x.qtd||0),tot,100],"g");
+  const obra=L.filter(x=>pconcGrupo(x)!==PCONC_BENS);
+  if(obra.length){const v=soma(obra,x=>+x.total||0);add(["Total da obra (material + mão de obra)",obra.length,soma(obra,x=>+x.qtd||0),v,pct(v)],"t")}
+  bloco("Por grupo",pconcGrupo);
+  bloco("Por categoria (com o que foi gasto)",x=>x.cat);
+  bloco("Por origem do lançamento",x=>pconcOrigemGrupo(x.origem||""));
+  return{titulo:"Patrimônio — resumo",sub,sensivel:false,estilo,rows,
+    cols:[{h:"Grupo / categoria",w:46},{h:"Itens",t:"num",w:9},{h:"Unidades",t:"num",w:10},{h:"Valor de compra",t:"money",w:17},{h:"% do total",t:"pct",w:11}]};
+}
 function pconcBaixar(fmt){
   const filtro=[PCONC.cat,PCONC.q?"busca: "+PCONC.q:""].filter(Boolean).join(" · ");
   if(PCONC.ver==="fora"){
@@ -17628,11 +17655,13 @@ function pconcBaixar(fmt){
     return;
   }
   const L=pconcVisiveis(pconcTodos()).filter(x=>x.inc);if(!L.length)return toast("Nenhum bem marcado nesta lista.",true);
-  const spec={titulo:"Patrimônio da Casa Hiro",sub:`Bens, equipamentos e obras · posição em ${brDate(hojeIso())}${filtro?" · "+filtro:""}`,sensivel:false,
-    cols:[{h:"Bem",w:36},{h:"Categoria",w:24},{h:"Qtd",t:"num",w:7},{h:"Valor unitário",t:"money",w:13},{h:"Valor total",t:"money",w:13},{h:"Aquisição",t:"date",w:11},{h:"Onde fica / detalhe",w:28},{h:"Origem",w:22}],
-    rows:L.map(x=>[x.nome,x.cat,x.qtd,x.unit,x.total,x.data,x.onde,x.origem]),tot:[null,null,"sum",null,"sum",null,null,null]};
+  const sub=`Bens, equipamentos e obras · posição em ${brDate(hojeIso())}${filtro?" · "+filtro:""}`;
+  const spec={titulo:"Patrimônio — todos os itens",sub,sensivel:false,
+    cols:[{h:"Bem",w:36},{h:"Grupo",w:24},{h:"Categoria",w:24},{h:"Qtd",t:"num",w:7},{h:"Valor unitário",t:"money",w:13},{h:"Valor total",t:"money",w:13},{h:"Aquisição",t:"date",w:11},{h:"Onde fica / detalhe",w:28},{h:"Origem",w:22}],
+    rows:L.map(x=>[x.nome,pconcGrupo(x),x.cat,x.qtd,x.unit,x.total,x.data,x.onde,x.origem]),tot:[null,null,null,"sum",null,"sum",null,null,null]};
   (async()=>{try{
-    const blob=fmt==="pdf"?await relPdf([spec],{}):await relXlsx([spec]);
+    const specs=[pconcResumo(L,sub),spec];
+    const blob=fmt==="pdf"?await relPdf(specs,{}):await relXlsx(specs);
     await saveFile(`patrimonio-casa-hiro_${hojeIso()}.${fmt}`,blob);
   }catch(e){console.error(e);toast("Não foi possível gerar o arquivo: "+(e&&e.message?e.message:e),true)}})();
 }

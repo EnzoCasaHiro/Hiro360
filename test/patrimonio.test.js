@@ -97,3 +97,26 @@ test('categoria de obra no Financeiro é reconhecida; manutenção do dia a dia 
   for (const c of ['obras e benfeitorias mao de obra', 'obra', 'reforma', 'material de construcao', 'benfeitorias']) assert.ok(ctx.r.test(c), c);
   for (const c of ['manutencao e reformas', 'manobras', 'alimentacao']) assert.ok(!ctx.r.test(c), c);
 });
+
+test('resumo do PDF/Excel: total geral, total da obra e gasto por grupo, categoria e origem', () => {
+  const ctx = { soma: (l, f) => l.reduce((s, x) => s + f(x), 0) }; vm.createContext(ctx);
+  vm.runInContext([
+    trecho('037-notas-fiscais-classificacao-automatica-editar.js', 'const NFN=', '\nconst NFX_CC'),
+    trecho('088-z-patrimonio-concorrencia.js', 'const PCONC_CATOBRA=', '\nconst pconcCatObra'),
+    trecho('088-z-patrimonio-concorrencia.js', '// grandes grupos do patrimônio', 'function pconcBaixar'),
+    'this.f={pconcResumo};'
+  ].join('\n'), ctx);
+  const L = [
+    { nome: 'Mão de obra dos pedreiros', cat: 'Obras e benfeitorias — mão de obra', qtd: 1, total: 120000, origem: 'Lançado nesta aba' },
+    { nome: 'PORCELANATO 60X60', cat: 'Obras e benfeitorias — material', qtd: 40, total: 6000, origem: 'Nota fiscal nº 10' },
+    { nome: 'CABO PP 3X1,5', cat: 'Obras e benfeitorias — material', qtd: 2, total: 1000, origem: 'Nota fiscal nº 11' },
+    { nome: 'FOGAO 6 BOCAS', cat: 'Cozinha', qtd: 1, total: 3000, origem: 'Financeiro (compra sem nota)' },
+  ];
+  const r = ctx.f.pconcResumo(L, 'teste'), linha = t => r.rows.find(x => x[0] === t);
+  assert.strictEqual(JSON.stringify(linha('TOTAL GERAL DO PATRIMÔNIO').slice(1)), '[4,44,130000,100]');
+  assert.strictEqual(linha('Total da obra (material + mão de obra)')[3], 127000);
+  assert.strictEqual(linha('Obras e benfeitorias — material')[3], 7000);
+  assert.strictEqual(linha('Móveis, eletrodomésticos e equipamentos')[3], 3000);
+  assert.strictEqual(linha('Notas fiscais de compra')[1], 2);
+  assert.strictEqual(r.rows.length, r.estilo.length);
+});
