@@ -66,8 +66,34 @@ test('material da obra entra: piso, luminária, porta, janela, louças, tinta, e
 
 test('parece obra mas não é: acessório, consumo, mão de obra e frete', () => {
   const auto = regra();
-  for (const n of ['PORTA TOALHA INOX', 'PORTA PAPEL HIGIENICO', 'TINTA PARA IMPRESSORA', 'LAMPADA LED 9W', 'PUXADOR PARA PORTA',
-    'DOBRADICA PORTA 3"', 'FIO DENTAL 50M', 'Pedreiro — semana 3', 'Diária eletricista', 'FRETE PORCELANATO', 'INSTALACAO DE LUMINARIAS'])
+  for (const n of ['PORTA TOALHA INOX', 'PORTA PAPEL HIGIENICO', 'TINTA PARA IMPRESSORA', 'PILHA AA ALCALINA', 'CABO USB TIPO C',
+    'LUVA DE PROCEDIMENTO M', 'TUBO DE ENSAIO', 'FIO DENTAL 50M', 'Pedreiro — semana 3', 'Diária eletricista', 'FRETE PORCELANATO', 'INSTALACAO DE LUMINARIAS'])
     assert.strictEqual(auto(n, ''), false, n);
   assert.strictEqual(auto('LUMINARIA LED', 'Limpeza e higiene'), false); // categoria de consumo escolhida na nota vale
+});
+
+test('elétrica, hidráulica e acabamento da obra entram pelo nome', () => {
+  const auto = regra();
+  for (const n of ['LAMPADA LED 9W', 'FITA LED 5M', 'PAINEL LED 24W EMBUTIR', 'CABO PP 3X1,5', 'CABO FLEXIVEL 4MM', 'ELETRODUTO CORRUGADO 25MM',
+    'CAIXA 4X2 AMARELA', 'QUADRO DE DISTRIBUICAO 12 DISJUNTORES', 'DPS 275V', 'CONDUITE 3/4', 'SENSOR DE PRESENCA TETO', 'FITA ISOLANTE 20M',
+    'REGISTRO DE GAVETA 3/4', 'JOELHO 90 PVC 25MM', 'LUVA SOLDAVEL 25MM', 'CAIXA SIFONADA 150', 'VALVULA DE DESCARGA', 'ENGATE FLEXIVEL 40CM',
+    'FECHADURA EXTERNA', 'DOBRADICA 3 POL', 'GRANITO PRETO SAO GABRIEL', 'RODAPE POLIESTIRENO', 'TELHA FIBROCIMENTO', 'VERNIZ MARITIMO'])
+    assert.strictEqual(auto(n, ''), true, n);
+});
+
+test('item de elétrica, hidráulica ou construção na nota entra mesmo com nome desconhecido', () => {
+  const auto = regra();
+  assert.strictEqual(auto('XPTO 123 ABC', 'Manutenção e reparos', 'Elétrica e iluminação'), true);
+  assert.strictEqual(auto('XPTO 123 ABC', 'Manutenção e reparos', 'Hidráulica'), true);
+  assert.strictEqual(auto('XPTO 123 ABC', 'Manutenção e reparos', 'Construção, pintura e ferramentas'), true);
+  assert.strictEqual(auto('XPTO 123 ABC', 'Manutenção e reparos', 'Jardinagem e controle de pragas'), false);
+  assert.strictEqual(auto('PILHA AA', 'Manutenção e reparos', 'Elétrica e iluminação'), false);
+  assert.strictEqual(auto('FRETE', 'Manutenção e reparos', 'Hidráulica'), false);
+});
+
+test('categoria de obra no Financeiro é reconhecida; manutenção do dia a dia não', () => {
+  const linha = trecho('088-z-patrimonio-concorrencia.js', 'const PCONC_CATOBRA=', ';');
+  const ctx = {}; vm.createContext(ctx); vm.runInContext(linha + ';this.r=PCONC_CATOBRA;', ctx);
+  for (const c of ['obras e benfeitorias mao de obra', 'obra', 'reforma', 'material de construcao', 'benfeitorias']) assert.ok(ctx.r.test(c), c);
+  for (const c of ['manutencao e reformas', 'manobras', 'alimentacao']) assert.ok(!ctx.r.test(c), c);
 });

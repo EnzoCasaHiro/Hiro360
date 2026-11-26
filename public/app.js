@@ -17464,23 +17464,50 @@ const PCONC_CONSUMO=/^(medicamentos|alimentacao|material de enfermagem|limpeza e
 // frete, montagem, gás e outros serviços ligados a um bem: são despesa, nunca o bem (vale até com categoria de mobiliário)
 // (pedreiro, empreiteiro, eletricista… também: a mão de obra da obra é lançada à mão na aba, para não contar em dobro)
 const PCONC_DESPESA=/\b(fretes?|entrega|montagem|instalacao|mao de obra|servicos?|carga|recarga|gas|butano|glp|botijao|taxas?|conserto|manutencao|pedreiros?|empreiteir\w*|eletricista|encanador|pintor|servente|diarias?)\b/;
-// material da obra (piso, luminária, porta, janela, louças, tinta, elétrica, hidráulica): entra como obra
-const PCONC_OBRA=/\b(pisos?|porcelanatos?|ceramicas?|revestimentos?|azulejos?|rejunte|argamassa|cimento|concreto|areia|brita|tijolos?|blocos? de concreto|telhas?|vergalh\w*|gesso|drywall|forro de (gesso|pvc)|rodapes?|soleiras?|peitoril|luminarias?|plafon|spots?|arandelas?|pendentes?|refletor(es)?|portas?|portao|batentes?|janelas?|vitro|esquadrias?|vidros?|box|espelhos?|pias?|cubas?|bancadas?|vaso sanitario|bacia sanitaria|torneiras?|chuveiros?|misturador|caixa d ?agua|tintas?|massa corrida|selador|impermeabiliz\w*|disjuntor(es)?|quadro de distribuicao|fios? (eletricos?|flexive(l|is)|rigidos?)|cabos? flexive(l|is)|eletrodutos?|tomadas?|interruptor(es)?|tubos? (de )?pvc|canos?|conexo(es)? (de )?pvc|material (de construcao|eletrico|hidraulico)|corrimao|barras? de apoio|grades?|toldos?|calhas?)\b/;
+// material da obra (construção, acabamento, elétrica, hidráulica): entra como obra
+const PCONC_OBRA=new RegExp("\\b("+[
+  // construção e acabamento
+  "pisos?","piso tatil","porcelanatos?","ceramicas?","revestimentos?","azulejos?","pastilhas? (de vidro|ceramicas?)","rejunte","argamassa","nivelador(es)? de piso","espacador(es)?",
+  "cimento","concreto","areia","brita","pedra (britada|\\d)","cal (hidratada|virgem)","chapisco","reboco","aditivo","tijolos?","blocos? (de )?(concreto|ceramicos?|estrutural)",
+  "telhas?","cumeeira","rufos?","calhas?","laje","vergalh\\w*","ferro (de construcao|\\d)","arame recozido","vigas?","caibros?","sarrafos?","ripas?","compensado","madeirite",
+  "gesso","drywall","placas? de gesso","forro (de )?(gesso|pvc)","divisorias?","rodapes?","soleiras?","peitoril","granito","marmore","quartzo","bancadas?",
+  "portas?","portao","batentes?","guarnic\\w*","fechaduras?","macanetas?","dobradicas?","janelas?","vitro","basculante","esquadrias?","vidros?","box","espelhos?",
+  "tintas?","massa corrida","massa acrilica","selador","textura","grafiato","verniz","impermeabiliz\\w*","manta asfaltica",
+  "corrimao","barras? de apoio","rampa","antiderrapante","grades?","alambrado","toldos?","policarbonato","pergolado","cobertura",
+  "material (de construcao|eletrico|hidraulico)",
+  // elétrica e iluminação
+  "luminarias?","plafon","spots?","arandelas?","pendentes?","refletor(es)?","lampadas?","reator(es)?","(fita|painel|perfil|barra|tubular|bulbo) (de )?led",
+  "disjuntor(es)?","dps","idr","interruptor diferencial","quadros? de (distribuicao|energia|luz|comando|medicao)","padrao de energia","contator(es)?",
+  "rele fotoeletrico","fotocelula","sensor(es)? de presenca","campainha","tomadas?","interruptor(es)?","plugues?","conector(es)?","terminais",
+  "caixas? (de luz|de passagem|octogonal|de embutir|de sobrepor|4 ?x ?[24])","espelhos? (de tomada|cego)","eletrodutos?","conduites?","canaletas?","eletrocalhas?","perfilados?",
+  "fios?","cabos? (pp|flexive(l|is)|eletricos?|de cobre|\\d)","fita isolante","haste de aterramento","aterramento",
+  // hidráulica e louças
+  "pias?","cubas?","tanques?","vaso sanitario","bacia sanitaria","caixa acoplada","assento sanitario","torneiras?","chuveiros?","ducha( higienica)?","misturador",
+  "caixa d ?agua","caixas? (sifonada|de gordura|de inspecao)","registros? (de )?(gaveta|pressao|esfera|base)","valvulas? (de )?(descarga|escoamento|retencao|pe|americana)",
+  "descarga","sifao","ralos?","engates?","flexivel","boia","joelhos?","luvas? (pvc|soldave(l|is)|roscave(l|is)|de correr|de reducao)","te (pvc|soldavel|\\d)",
+  "adaptador(es)? soldave(l|is)","tubos?","canos?","conexo(es)?","cola pvc","veda rosca","aquecedor solar","pressurizador","bomba d ?agua"
+].join("|")+")\\b");
 // parecem obra mas são acessório, consumo ou outra coisa
-const PCONC_OBRA_NAO=/\b(porta ?(toalhas?|papel|retratos?|copos?|sabonete|trecos?|escovas?|chaves?|lapis|joias|temperos?|controle|guardanapos?|comprimidos?)|tintas? (para |de )?(impressora|carimbo|cabelo)|cartucho|toner|puxador|dobradica|parafusos?|buchas?|pregos?|trinco|lampadas?|tapete|cortina|protetor)\b/;
+const PCONC_OBRA_NAO=/\b(porta ?(toalhas?|papel|retratos?|copos?|sabonete|trecos?|escovas?|chaves?|lapis|joias|temperos?|controle|guardanapos?|comprimidos?)|tintas? (para |de )?(impressora|carimbo|cabelo|tecido)|tinta guache|cartuchos?|toner|tapete|cortina|protetor|pilhas?|baterias?|cabos? (usb|hdmi|de rede|de vassoura|de rodo|de carregador|de celular)|carregador|luvas? (de )?(procedimento|latex|nitril\w*|descartave(l|is)|limpeza|cozinha)|espelho de (mao|bolsa)|tubos? (de ensaio|de cola|de silicone|de pomada|de coleta|endotraqueal|de oxigenio)|sonda|seringa|fio (dental|de sutura|cirurgico)|pendente de (pagamento|nota))\b/;
+// subcategorias das notas que são obra (Manutenção e reparos > elétrica, hidráulica, construção, materiais)
+const PCONC_SUBOBRA=/^(eletrica|hidraulica|construc|materiais de manutencao)/;
 const pconcEhObra=n=>PCONC_OBRA.test(n)&&!PCONC_OBRA_NAO.test(n)&&!PCONC_NOME.test(n);
-function pconcAuto(nome,cat){
+const pconcSubObra=(cat,sub)=>NFN(cat)==="manutencao e reparos"&&PCONC_SUBOBRA.test(NFN(sub));
+function pconcAuto(nome,cat,sub){
   if(PCONC_DESPESA.test(NFN(nome)))return false;
   const c=NFN(cat);if(c==="equipamentos e mobiliario")return true;
   if(PCONC_CONSUMO.test(c))return false;
-  const n=NFN(nome);return (PCONC_NOME.test(n)&&!PCONC_NAO.test(n))||pconcEhObra(n);
+  const n=NFN(nome);
+  if(PCONC_NOME.test(n)&&!PCONC_NAO.test(n))return true;
+  if(pconcSubObra(cat,sub)&&!PCONC_OBRA_NAO.test(n))return true;
+  return pconcEhObra(n);
 }
 /* <<< regra */
 const PCONC_CATFIN=/imobiliz|equipament|moveis|movel|mobili|eletrodom/;
 // categoria do Financeiro que é obra (não "Manutenção e reformas", que é despesa do dia a dia)
-const PCONC_CATOBRA=/obras?|construc|benfeitor|^reformas?/;
+const PCONC_CATOBRA=/\bobras?\b|construc|benfeitor|^reformas?\b/;
 const PCONC_MAT="Obras e benfeitorias — material";
-const pconcCatObra=(nome,cat,auto)=>auto&&pconcEhObra(NFN(nome))?PCONC_MAT:cat;
+const pconcCatObra=(nome,cat,auto,sub,catNf)=>auto&&(pconcEhObra(NFN(nome))||pconcSubObra(catNf||"",sub||""))&&!PCONC_NOME.test(NFN(nome))?PCONC_MAT:cat;
 const pconcMarcas=()=>xcfg("infra").patConc||{};
 function pconcNfCat(r){
   const c=r.categoria;
@@ -17513,8 +17540,8 @@ function pconcTodos(){
   if(typeof f11Bens==="function")f11Bens().filter(b=>!b.baixa).forEach(b=>L.push({k:"b:"+b.id,nome:b.nome,cat:b.cat||"",qtd:1,unit:+b.valor||0,total:+b.valor||0,data:b.data||"",
     onde:[b.local,b.serie?"série "+b.serie:""].filter(Boolean).join(" · "),origem:"Financeiro (bens)",auto:true}));
   ((S.config.nf&&S.config.nf.rows)||[]).forEach(r=>{
-    const c=pconcNfCat(r),auto=pconcAuto(r.item,c.cat);nomesNf.add(NFN(r.item));
-    L.push({k:"n:"+nfKey(r)+"|"+NFN(r.item),nome:r.item,cat:pconcCatObra(r.item,(c.cat==="Equipamentos e mobiliário"?c.sub:c.cat)||"Sem categoria",auto),qtd:+r.qtd||1,unit:+r.valor||0,total:+r.total||0,data:r.date||"",
+    const c=pconcNfCat(r),auto=pconcAuto(r.item,c.cat,c.sub);nomesNf.add(NFN(r.item));
+    L.push({k:"n:"+nfKey(r)+"|"+NFN(r.item),nome:r.item,cat:pconcCatObra(r.item,(c.cat==="Equipamentos e mobiliário"?c.sub:c.cat)||"Sem categoria",auto,c.sub,c.cat),qtd:+r.qtd||1,unit:+r.valor||0,total:+r.total||0,data:r.date||"",
       onde:r.local?"Local na nota: "+r.local:"",origem:"Nota fiscal"+(r.nota?" nº "+r.nota:""),auto,catRegra:c.cat});
   });
   // compras sem nota lançadas no Financeiro (as que vieram de nota têm "nf" e já estão acima)
