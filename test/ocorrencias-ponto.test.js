@@ -102,3 +102,11 @@ test('batida de manhã no dia seguinte, longe do fim do plantão, não é puxada
   assert.strictEqual(u.rows.find(r => r.day === '2026-11-07').workedMin, 360);
   assert.strictEqual(u.rows.find(r => r.day === '2026-11-08').workedMin, 240);
 });
+
+test('admissão gravada como dd/mm/aaaa também vale: dia antes da admissão não vira falta nem pendência', () => {
+  const S = { integrantes: { ana: { ...ana, admissao: '10/11/2026' } }, marcacoes: { ...antiga }, ocorr: {}, config: { geral: { turnos: [turno] } } };
+  const u = calcula(S, '2026-11-09', '2026-11-11'); // segunda a quarta, sem batida; admitida na terça
+  assert.ok(u, 'a integrante precisa aparecer no período');
+  assert.deepStrictEqual([...u.rows.map(r => r.day)], ['2026-11-10', '2026-11-11']);
+  assert.ok(!u.pendencies.some(p => p.day === '2026-11-09'));
+});

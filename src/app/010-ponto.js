@@ -90,7 +90,7 @@ async function loadLog(f){
   }catch(e){toast("Erro ao ler o arquivo: "+e.message,true)}
 }
 // antes da admissão e depois do desligamento a pessoa não tem contrato: esses dias não entram em horas, faltas nem pendências
-const foraDoContrato=(ig,d)=>!!ig&&((!!ig.admissao&&d<ig.admissao)||(!!ig.desligamento&&d>ig.desligamento));
+const foraDoContrato=(ig,d)=>{if(!ig)return false;const iso=v=>{const t=String(v||"").trim(),m=t.match(/^(\d{2})\/(\d{2})\/(\d{4})/);return m?m[3]+"-"+m[2]+"-"+m[1]:t.slice(0,10)},a=iso(ig.admissao),f=iso(ig.desligamento);return(!!a&&d<a)||(!!f&&d>f)};
 function calcular(show){
   try{if(typeof autoJuntarRelogio==="function"&&autoJuntarRelogio())BHCACHE.clear()}catch(e){}
   const P=POINT;P.err="";
@@ -108,7 +108,7 @@ function calcular(show){
       const ig=integByUid(uid)||{};
       if(semPonto(ig))continue;
       // desligado antes do período não entra; número sem cadastro vira aviso, não cartão
-      if(ig.id&&((ig.desligamento&&ig.desligamento<P.start)||(ig.situacao==="Desligado"&&!ig.desligamento)||(ig.admissao&&ig.admissao>P.end)))continue;
+      if(ig.id&&((ig.desligamento&&ig.desligamento<P.start)||(ig.situacao==="Desligado"&&!ig.desligamento)||(ig.admissao&&foraDoContrato({admissao:ig.admissao},P.end))))continue;
       if(!ig.id){const n=marcasOf(uid,P.start,P.end).length;if(n)semCadastro.push({uid,n,nome:(P.punches.find(p=>p.userId===uid)||{}).uname||""});continue}
       if(ig.turno&&!shifts.get(+ig.turno))throw new Error(`${nomeInteg(ig)}: o turno ${ig.turno} não existe. Ajuste na aba Turnos.`);
       const schedule=new Map();
@@ -207,7 +207,7 @@ function renderResult(R){
     return `<div class="card"><div class="uhead"><div class="avatar">${esc(initials(u.nome))}</div>
      <div class="grow"><button class="namebtn" data-oc="${u.uid}" title="Lançar atestado ou justificativa">${esc(u.nome)}</button>
       <button class="b sec sm" data-rn="${u.uid}" title="Editar nome" style="padding:3px 7px;margin-left:6px">${ic("user")}</button>
-      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}</div></div>
+      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}${u.ig&&u.ig.id&&!u.ig.admissao?` · <b style="color:var(--bad,#B3261E)" title="Sem a admissão, os dias antes de a pessoa entrar aparecem como falta">sem data de admissão</b>`:""}</div></div>
      <button class="b sec sm" data-oc="${u.uid}">${ic("plus")} Lançar ocorrência</button>
      <button class="b sec sm" data-mk="${u.uid}" data-mday="${u.rows[0]?u.rows[0].day:R.start}" data-mpicker="1">${ic("clock")} Editar marcações</button>
      <button class="b sec sm" data-pln="${u.uid}">${ic("sheet")} Planilha</button>

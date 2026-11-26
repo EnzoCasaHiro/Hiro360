@@ -883,7 +883,7 @@ async function loadLog(f){
   }catch(e){toast("Erro ao ler o arquivo: "+e.message,true)}
 }
 // antes da admissão e depois do desligamento a pessoa não tem contrato: esses dias não entram em horas, faltas nem pendências
-const foraDoContrato=(ig,d)=>!!ig&&((!!ig.admissao&&d<ig.admissao)||(!!ig.desligamento&&d>ig.desligamento));
+const foraDoContrato=(ig,d)=>{if(!ig)return false;const iso=v=>{const t=String(v||"").trim(),m=t.match(/^(\d{2})\/(\d{2})\/(\d{4})/);return m?m[3]+"-"+m[2]+"-"+m[1]:t.slice(0,10)},a=iso(ig.admissao),f=iso(ig.desligamento);return(!!a&&d<a)||(!!f&&d>f)};
 function calcular(show){
   try{if(typeof autoJuntarRelogio==="function"&&autoJuntarRelogio())BHCACHE.clear()}catch(e){}
   const P=POINT;P.err="";
@@ -901,7 +901,7 @@ function calcular(show){
       const ig=integByUid(uid)||{};
       if(semPonto(ig))continue;
       // desligado antes do período não entra; número sem cadastro vira aviso, não cartão
-      if(ig.id&&((ig.desligamento&&ig.desligamento<P.start)||(ig.situacao==="Desligado"&&!ig.desligamento)||(ig.admissao&&ig.admissao>P.end)))continue;
+      if(ig.id&&((ig.desligamento&&ig.desligamento<P.start)||(ig.situacao==="Desligado"&&!ig.desligamento)||(ig.admissao&&foraDoContrato({admissao:ig.admissao},P.end))))continue;
       if(!ig.id){const n=marcasOf(uid,P.start,P.end).length;if(n)semCadastro.push({uid,n,nome:(P.punches.find(p=>p.userId===uid)||{}).uname||""});continue}
       if(ig.turno&&!shifts.get(+ig.turno))throw new Error(`${nomeInteg(ig)}: o turno ${ig.turno} não existe. Ajuste na aba Turnos.`);
       const schedule=new Map();
@@ -1000,7 +1000,7 @@ function renderResult(R){
     return `<div class="card"><div class="uhead"><div class="avatar">${esc(initials(u.nome))}</div>
      <div class="grow"><button class="namebtn" data-oc="${u.uid}" title="Lançar atestado ou justificativa">${esc(u.nome)}</button>
       <button class="b sec sm" data-rn="${u.uid}" title="Editar nome" style="padding:3px 7px;margin-left:6px">${ic("user")}</button>
-      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}</div></div>
+      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}${u.ig&&u.ig.id&&!u.ig.admissao?` · <b style="color:var(--bad,#B3261E)" title="Sem a admissão, os dias antes de a pessoa entrar aparecem como falta">sem data de admissão</b>`:""}</div></div>
      <button class="b sec sm" data-oc="${u.uid}">${ic("plus")} Lançar ocorrência</button>
      <button class="b sec sm" data-mk="${u.uid}" data-mday="${u.rows[0]?u.rows[0].day:R.start}" data-mpicker="1">${ic("clock")} Editar marcações</button>
      <button class="b sec sm" data-pln="${u.uid}">${ic("sheet")} Planilha</button>
@@ -15592,7 +15592,8 @@ function ppdPessoaHtml(D,u,lista){
     <span class="sub">${i+1} de ${lista.length}</span>
     ${prox?`<button type="button" class="b sec sm" data-ppdsel="${prox.uid}" style="flex:none" title="${esc(prox.nome)}">Próximo ▶</button>`:""}</div>
    <h2 style="margin:8px 0 2px">${esc(u.nome)}</h2>
-   <p class="sub" style="margin:0 0 6px">${esc(ig.cargo||"—")} · nº ${esc(u.uid)} no relógio · ${refRotulo(D.ym)}</p>
+   <p class="sub" style="margin:0 0 6px">${esc(ig.cargo||"—")} · nº ${esc(u.uid)} no relógio · ${ig.admissao?`admissão ${esc(brDate(String(ig.admissao).slice(0,10))||ig.admissao)} · `:""}${refRotulo(D.ym)}</p>
+   ${ig.id&&!ig.admissao?`<div class="callout sand" style="margin:8px 0"><b>Sem data de admissão no cadastro.</b> Sem ela, os dias antes de a pessoa entrar na casa aparecem como falta. Preencha a admissão e as pendências desses dias somem sozinhas. ${ed?`<button type="button" class="b sm" data-ppdadm="${esc(ig.id)}" style="flex:none;margin-left:6px">Abrir o cadastro</button>`:""}</div>`:""}
    ${(()=>{const e=ppd1236(ig,u.uid,D);return e?`<div class="callout sand" style="margin:8px 0"><b>Escala errada:</b> o turno é 12x36, mas ${e.modo==="semana"?`a escala está em “dias fixos da semana”: ${esc(escalasTexto(ig,D.ini,D.fim))}`:`a escala cadastrada (${esc(typeof xfoLabel==="function"?xfoLabel(ig):escalasTexto(ig,D.ini,D.fim))}) não bate com os dias em que a pessoa fez plantão: ${e.errados} plantão(ões) caíram em dia que a escala diz que é folga${e.modo==="par"||e.modo==="impar"?" (dias pares/ímpares se desencontram depois de todo dia 31)":""}`}. Por isso aparecem faltas e “bateu ponto em dia de folga” que não existiram. ${e.inicio?`Pelas batidas, os plantões começam em ${brDate(e.inicio)} e seguem dia sim, dia não (${e.n} plantões${e.outros?`, ${e.outros} fora desse padrão`:""}).`:"Não deu para descobrir pelas batidas em que dias são os plantões."} ${ed?(e.inicio?`<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="b sm" data-ppd1236="${ig.id}" data-ini="${e.inicio}" style="flex:none">Mudar para 12x36 alternado a partir de ${brDate(e.inicio).slice(0,5)}</button><button type="button" class="b sec sm" data-ppdescala="1" style="flex:none">Arrumar em Escalas</button></div>`:`<button type="button" class="b sm" data-ppdescala="1" style="flex:none;margin-top:6px">Arrumar em Escalas</button>`):""}</div>`:""})()}
    ${cadRelogio(ig)?`<div class="callout sand" style="margin:8px 0">Este cadastro foi <b>criado sozinho pelo relógio</b> (só com o nome “${esc(ig.nome||"")}”, sem escala), por isso as batidas aparecem como dia de folga. Se é alguém que já está em Integrantes, junte os dois cadastros. ${ed?`<button type="button" class="b sm" data-ppdjunta="${ig.id}" style="flex:none;margin-top:6px">Juntar com o cadastro da pessoa</button>`:""}</div>`:""}
    ${ppdPasso(1,!pend.length,`Resolver as pendências ${pend.length?`<span style="color:var(--bad)">(${pend.length})</span>`:""}`,
@@ -15681,6 +15682,8 @@ function ppdBind(){
 xmReg("ponto","pendencias","Pendências","Arrumar o ponto, integrante por integrante",ppdHtml,ppdBind);
 /* depois de salvar batida, justificativa ou escala, a lista é recalculada na hora (sem esperar o cache de 1 minuto) */
 {const afterOc0=afterOc;afterOc=function(){BHCACHE.clear();return afterOc0.apply(this,arguments)}}
+// "Abrir o cadastro" no aviso de integrante sem data de admissão
+document.addEventListener("click",e=>{const b=e.target.closest&&e.target.closest("[data-ppdadm]");if(!b)return;PR.sel=b.dataset.ppdadm;PR.tab="dados";go("pront")});
 /* ===== V40 · Fechamento do ponto do mês: lista de conferência passo a passo (prefixo xfp) =====
    Reúne em um só lugar tudo o que costuma faltar antes de fechar o ponto: relógio importado,
    quem ficou sem batida, cadastros incompletos, jornadas calculadas, pendências, pedidos de ajuste,
