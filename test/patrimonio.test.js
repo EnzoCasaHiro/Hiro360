@@ -102,21 +102,76 @@ test('resumo do PDF/Excel: total geral, total da obra e gasto por grupo, categor
   const ctx = { soma: (l, f) => l.reduce((s, x) => s + f(x), 0) }; vm.createContext(ctx);
   vm.runInContext([
     trecho('037-notas-fiscais-classificacao-automatica-editar.js', 'const NFN=', '\nconst NFX_CC'),
-    trecho('088-z-patrimonio-concorrencia.js', 'const PCONC_CATOBRA=', '\nconst pconcCatObra'),
+    trecho('088-z-patrimonio-concorrencia.js', '/* >>> regra */', '/* <<< regra */'),
     trecho('088-z-patrimonio-concorrencia.js', '// grandes grupos do patrimônio', 'function pconcBaixar'),
     'this.f={pconcResumo};'
   ].join('\n'), ctx);
   const L = [
     { nome: 'Mão de obra dos pedreiros', cat: 'Obras e benfeitorias — mão de obra', qtd: 1, total: 120000, origem: 'Lançado nesta aba' },
-    { nome: 'PORCELANATO 60X60', cat: 'Obras e benfeitorias — material', qtd: 40, total: 6000, origem: 'Nota fiscal nº 10' },
-    { nome: 'CABO PP 3X1,5', cat: 'Obras e benfeitorias — material', qtd: 2, total: 1000, origem: 'Nota fiscal nº 11' },
+    { nome: 'PORCELANATO 60X60', cat: 'Obras e benfeitorias — pisos e revestimentos', qtd: 40, total: 6000, origem: 'Nota fiscal nº 10' },
+    { nome: 'CABO PP 3X1,5', cat: 'Obras e benfeitorias — elétrica e iluminação', qtd: 2, total: 1000, origem: 'Nota fiscal nº 11' },
     { nome: 'FOGAO 6 BOCAS', cat: 'Cozinha', qtd: 1, total: 3000, origem: 'Financeiro (compra sem nota)' },
   ];
   const r = ctx.f.pconcResumo(L, 'teste'), linha = t => r.rows.find(x => x[0] === t);
   assert.strictEqual(JSON.stringify(linha('TOTAL GERAL DO PATRIMÔNIO').slice(1)), '[4,44,130000,100]');
-  assert.strictEqual(linha('Total da obra (material + mão de obra)')[3], 127000);
-  assert.strictEqual(linha('Obras e benfeitorias — material')[3], 7000);
-  assert.strictEqual(linha('Móveis, eletrodomésticos e equipamentos')[3], 3000);
-  assert.strictEqual(linha('Notas fiscais de compra')[1], 2);
+  assert.strictEqual(linha('Subtotal — obra')[3], 127000);
+  assert.strictEqual(linha('Subtotal — bens e equipamentos')[3], 3000);
+  assert.strictEqual(linha('Obras e benfeitorias — pisos e revestimentos')[3], 6000);
+  assert.ok(Math.abs(linha('Obras e benfeitorias — mão de obra')[4] - 100 * 120000 / 130000) < 1e-9);
+  // bens primeiro, depois obra; dentro de cada um, do maior para o menor valor
+  const cats = r.rows.map(x => x[0]);
+  assert.ok(cats.indexOf('Bens e equipamentos') < cats.indexOf('Obra (material e mão de obra)'));
+  assert.ok(cats.indexOf('Obras e benfeitorias — mão de obra') < cats.indexOf('Obras e benfeitorias — pisos e revestimentos'));
+  assert.ok(!cats.some(c => /casa/i.test(c)));
   assert.strictEqual(r.rows.length, r.estilo.length);
+});
+
+test('categoria padronizada: o mesmo tipo de item fica sempre na mesma categoria, venha de onde vier', () => {
+  const ctx = {}; vm.createContext(ctx);
+  vm.runInContext([
+    trecho('037-notas-fiscais-classificacao-automatica-editar.js', 'const NFN=', '\nconst NFX_CC'),
+    trecho('088-z-patrimonio-concorrencia.js', '/* >>> regra */', '/* <<< regra */'),
+    'this.f={pconcCatPadrao};'
+  ].join('\n'), ctx);
+  const p = ctx.f.pconcCatPadrao;
+  // a mesma cama vinda de lugares com categorias diferentes
+  for (const [cat, catNf, sub] of [['Casa', '', ''], ['Mobiliário', 'Equipamentos e mobiliário', 'Mobiliário'], ['Quarto', '', ''], ['Camas e superfícies de apoio', 'Equipamentos e mobiliário', 'Camas e superfícies de apoio'], ['Móveis e equipamentos', '', '']])
+    assert.strictEqual(p('CAMA DE SOLTEIRO MADEIRA MACICA', cat, catNf, sub), 'Camas e colchões', cat);
+  assert.strictEqual(p('COLCHAO D33', 'Casa'), 'Camas e colchões');
+  assert.strictEqual(p('GUARDA-ROUPA 6 PORTAS', 'Casa'), 'Móveis');
+  assert.strictEqual(p('ARMARIO 2 PORTAS', 'Cozinha'), 'Móveis');
+  assert.strictEqual(p('FOGAO 6 BOCAS', 'Casa'), 'Eletrodomésticos');
+  assert.strictEqual(p('CADEIRA DE RODAS', 'Casa'), 'Equipamentos de saúde e mobilidade');
+  assert.strictEqual(p('CADEIRA FIXA', 'Casa'), 'Móveis');
+  assert.strictEqual(p('SMART TV 50', 'Casa'), 'Eletrônicos e informática');
+  assert.strictEqual(p('AR CONDICIONADO 12000', 'Casa'), 'Climatização');
+  // obra: material separado pelo que é
+  assert.strictEqual(p('PISO PORCELANATO 60X60', 'Casa'), 'Obras e benfeitorias — pisos e revestimentos');
+  assert.strictEqual(p('LUMINARIA LED', 'Casa'), 'Obras e benfeitorias — elétrica e iluminação');
+  assert.strictEqual(p('CABO PP 3X1,5', 'Manutenção e reparos', 'Manutenção e reparos', 'Elétrica e iluminação'), 'Obras e benfeitorias — elétrica e iluminação');
+  assert.strictEqual(p('VASO SANITARIO', 'Casa'), 'Obras e benfeitorias — hidráulica e louças');
+  assert.strictEqual(p('PORTA DE MADEIRA 80X210', 'Casa'), 'Obras e benfeitorias — portas, janelas e vidros');
+  assert.strictEqual(p('TINTA ACRILICA 18L', 'Casa'), 'Obras e benfeitorias — pintura e impermeabilização');
+  assert.strictEqual(p('CIMENTO CP II', 'Casa'), 'Obras e benfeitorias — construção e acabamento');
+  assert.strictEqual(p('XPTO 123', 'Manutenção e reparos', 'Manutenção e reparos', 'Hidráulica'), 'Obras e benfeitorias — hidráulica e louças');
+  assert.strictEqual(p('Pagamento loja de material', 'Obras e reformas'), 'Obras e benfeitorias — outros gastos da obra');
+});
+
+test('decoração entra no patrimônio e tem categoria própria', () => {
+  const ctx = {}; vm.createContext(ctx);
+  vm.runInContext([
+    trecho('037-notas-fiscais-classificacao-automatica-editar.js', 'const NFN=', '\nconst NFX_CC'),
+    trecho('088-z-patrimonio-concorrencia.js', '/* >>> regra */', '/* <<< regra */'),
+    'this.f={pconcCatPadrao,pconcAuto};'
+  ].join('\n'), ctx);
+  const { pconcCatPadrao: p, pconcAuto: auto } = ctx.f;
+  for (const n of ['QUADRO DECORATIVO 60X90', 'Quadro abstrato', 'ESPELHO DECORATIVO REDONDO', 'CORTINA BLACKOUT 2,80M', 'TAPETE SALA 2X1,5',
+    'ABAJUR DE MESA', 'LUMINARIA DE CHAO', 'RELOGIO DE PAREDE', 'VASO DECORATIVO', 'PLANTA ARTIFICIAL', 'PAPEL DE PAREDE']) {
+    assert.strictEqual(auto(n, 'Enxoval e uniformes'), true, n);
+    assert.strictEqual(p(n, 'Casa'), 'Decoração', n);
+  }
+  assert.strictEqual(p('QUADRO DE DISTRIBUICAO 12 DISJUNTORES', 'Casa'), 'Obras e benfeitorias — elétrica e iluminação');
+  assert.strictEqual(auto('TAPETE HIGIENICO', ''), false);
+  assert.strictEqual(p('APARADOR MADEIRA', 'Casa'), 'Móveis');
+  assert.strictEqual(p('TORRADEIRA', 'Casa'), 'Eletrodomésticos');
 });

@@ -229,11 +229,19 @@ async function relPdf(specs,opts){
   }
   for(const spec of specs){
     nova();faixa(spec.titulo,spec.sub);
+    // gráfico opcional (spec.grafico={png,w,h}): vai no alto da página, a tabela vem embaixo (ou na página seguinte)
+    let y0=82;
+    if(spec.grafico){
+      const g=spec.grafico,maxH=H-82-60;let w=W-72,h=w*g.h/g.w;if(h>maxH){h=maxH;w=h*g.w/g.h}
+      try{doc.addImage(g.png,"PNG",36,82,w,h,undefined,"FAST")}catch(e){console.warn("gráfico fora do PDF",e)}
+      y0=82+h+16;
+      if(y0>H-150){rodape(doc.internal.getCurrentPageInfo().pageNumber,spec.sensivel);doc.addPage();fundo();faixa(spec.titulo,spec.sub);y0=82}
+    }
     const pag0=doc.internal.getCurrentPageInfo().pageNumber,nC=spec.cols.length,fs=nC>22?5:nC>14?6.3:nC>9?7.5:9;
     const body=spec.rows.length?spec.rows.map(r=>spec.cols.map((c,i)=>relTxt(c,r[i],"pdf"))):[[{content:"Nenhum registro neste período.",colSpan:nC,styles:{halign:"center",fontStyle:"italic"}}]];
     const foot=(spec.tot&&spec.rows.length)?[spec.cols.map((c,i)=>i===0?"Total":spec.tot[i]==="sum"?relTxt(c,soma(spec.rows,r=>+r[i]||0),"pdf"):"")]:undefined;
     const cs={};spec.cols.forEach((c,i)=>{cs[i]={halign:["money","num","hm","pct"].includes(c.t)?"right":(c.c||c.t==="date")?"center":"left"}});
-    doc.autoTable({startY:82,margin:{top:82,left:36,right:36,bottom:40},head:[spec.cols.map(c=>c.h)],body,foot,showFoot:"lastPage",theme:"grid",
+    doc.autoTable({startY:y0,margin:{top:82,left:36,right:36,bottom:40},head:[spec.cols.map(c=>c.h)],body,foot,showFoot:"lastPage",theme:"grid",
       styles:{font:"times",fontSize:fs,cellPadding:fs>7?4:2.2,lineColor:LINHA,lineWidth:.5,textColor:TXT,valign:"middle",overflow:"linebreak"},
       headStyles:{fillColor:VMED,textColor:255,fontStyle:"bold",halign:"center"},bodyStyles:{fillColor:[255,255,255]},alternateRowStyles:{fillColor:AREIA},
       footStyles:{fillColor:VERDE,textColor:255,fontStyle:"bold"},columnStyles:cs,
@@ -321,6 +329,8 @@ async function relXlsx(specs){
     const nota=(r,t)=>{ws.mergeCells(`A${r}:${L}${r}`);const c=ws.getCell(`A${r}`);c.value=t;c.font={name:"Georgia",italic:true,size:9,color:{argb:MUTE}};c.alignment={horizontal:"left",vertical:"middle"}};
     nota(fim+2,"Casa Hiro™ · Caraguatatuba — Litoral Norte de SP · A ciência do cuidado com o acolhimento de casa.");
     if(spec.sensivel)nota(fim+3,"Contém dados pessoais de integrantes (LGPD, Lei 13.709/2018). Compartilhe só com quem precisa e guarde com segurança.");
+    // gráfico opcional (spec.grafico={png,w,h}): imagem ao lado da tabela
+    if(spec.grafico)try{const g=spec.grafico,id=wb.addImage({base64:g.png,extension:"png"}),w=760;ws.addImage(id,{tl:{col:nc+0.6,row:HR-1},ext:{width:w,height:Math.round(w*g.h/g.w)}})}catch(e){console.warn("gráfico fora da planilha",e)}
     ws.views=[{state:"frozen",ySplit:HR,showGridLines:false}];
     if(NR)ws.autoFilter={from:{row:HR,column:1},to:{row:HR,column:nC}};
   });

@@ -8,7 +8,7 @@ const PCONC={q:"",cat:"",ver:"lista"}; // ver: "lista" = só o patrimônio | "to
 const PCONC_MAX=300;
 /* >>> regra */
 // nome do item (já sem acento, em minúsculas) que indica bem durável
-const PCONC_NOME=/\b(fogao|cooktop|forno|coifa|depurador|exaustor|geladeira|refrigerador|freezer|frigobar|micro ?ondas|lava ?loucas|maquina de lavar|lavadora|tanquinho|centrifuga|secadora|ar condicionado|climatizador|ventilador|televis\w*|tv|bebedouro|purificador|cama|beliche|colchao|berco|cabeceira|sofa|poltrona|cadeira|mesa|armario|guarda ?roupa|roupeiro|comoda|criado mudo|estante|rack|gaveteiro|escrivaninha|balcao|longarina|andador|computador|notebook|impressora|nobreak|tablet|celular|smartphone|extintor|camera de seguranca|dvr|concentrador de oxigenio)\b/;
+const PCONC_NOME=/\b(fogao|cooktop|forno|coifa|depurador|exaustor|geladeira|refrigerador|freezer|frigobar|micro ?ondas|lava ?loucas|maquina de lavar|lavadora|tanquinho|centrifuga|secadora|ar condicionado|climatizador|ventilador|televis\w*|tv|bebedouro|purificador|cama|beliche|colchao|berco|cabeceira|sofa|poltrona|cadeira|mesa|armario|guarda ?roupa|roupeiro|comoda|criado mudo|estante|rack|gaveteiro|escrivaninha|balcao|longarina|andador|computador|notebook|impressora|nobreak|tablet|celular|smartphone|extintor|camera de seguranca|dvr|concentrador de oxigenio|aparador|buffet|cristaleira|cabideiro|biombo|torradeira|grill|mixer|enceradeira|maquina de costura|umidificador|desumidificador|projetor|home theater)\b/;
 // peças, acessórios e roupa de cama: não são o bem
 const PCONC_NAO=/\b(jogo de cama|roupa de cama|lencol|fronha|protetor|capa|forro|toalha|pano|refil|filtros?|pecas?|reparo|resistencia|botao|puxador|dobradica|parafusos?|rodizios?|mangueira|registro|acendedor|tampa|grelha|queimador|vela|suporte|controle remoto|cabo|limpador|limpa|tintas?|cartuchos?|toner)\b/;
 // categoria de consumo escolhida na nota: não é bem, mesmo que o nome pareça
@@ -45,8 +45,11 @@ const PCONC_OBRA_NAO=/\b(porta ?(toalhas?|papel|retratos?|copos?|sabonete|trecos
 const PCONC_SUBOBRA=/^(eletrica|hidraulica|construc|materiais de manutencao)/;
 const pconcEhObra=n=>PCONC_OBRA.test(n)&&!PCONC_OBRA_NAO.test(n)&&!PCONC_NOME.test(n);
 const pconcSubObra=(cat,sub)=>NFN(cat)==="manutencao e reparos"&&PCONC_SUBOBRA.test(NFN(sub));
+// decoração: quadros, espelhos decorativos, cortinas, tapetes, abajur, vasos e objetos decorativos (bem durável da casa)
+const PCONC_DECOR=/\b(quadros?(?! (de (distribuicao|energia|luz|comando|medicao|avisos|cortica|chaves)|branco|magnetico|eletrico))|telas? decorativ\w*|molduras?|porta ?retratos?|espelhos? (decorativ\w*|redondos?|com moldura|de parede|bisotado)|cortinas?|persianas?|blackout|varao de cortina|tapetes?(?! (higienico|sanitario))|passadeira|abajur(es)?|luminarias? de (mesa|chao|piso|cabeceira)|relogios? de parede|vasos? (decorativ\w*|de flores|de planta|de ceramica|de vidro)|cachepos?|plantas? artificia\w*|flores? artificia\w*|arranjos?|almofadas? decorativ\w*|mantas? decorativ\w*|enfeites?|esculturas?|estatuetas?|objetos? decorativ\w*|adesivos? de parede|papel de parede|painel decorativo|decoracao|decorativ\w*)\b/;
 function pconcAuto(nome,cat,sub){
   if(PCONC_DESPESA.test(NFN(nome)))return false;
+  if(PCONC_DECOR.test(NFN(nome)))return true; // cortina e tapete vêm como "enxoval" na nota, mas são decoração
   const c=NFN(cat);if(c==="equipamentos e mobiliario")return true;
   if(PCONC_CONSUMO.test(c))return false;
   const n=NFN(nome);
@@ -54,12 +57,42 @@ function pconcAuto(nome,cat,sub){
   if(pconcSubObra(cat,sub)&&!PCONC_OBRA_NAO.test(n))return true;
   return pconcEhObra(n);
 }
-/* <<< regra */
-const PCONC_CATFIN=/imobiliz|equipament|moveis|movel|mobili|eletrodom/;
 // categoria do Financeiro que é obra (não "Manutenção e reformas", que é despesa do dia a dia)
 const PCONC_CATOBRA=/\bobras?\b|construc|benfeitor|^reformas?\b/;
 const PCONC_MAT="Obras e benfeitorias — material";
-const pconcCatObra=(nome,cat,auto,sub,catNf)=>auto&&(pconcEhObra(NFN(nome))||pconcSubObra(catNf||"",sub||""))&&!PCONC_NOME.test(NFN(nome))?PCONC_MAT:cat;
+/* Categoria padronizada do patrimônio: a mesma coisa fica sempre na mesma categoria, venha de onde vier
+   (cada nota, o Financeiro e o Estoque usam nomes diferentes: "Casa", "Mobiliário", "Quarto"…). Decide pelo nome do item. */
+const PCONC_PADRAO_BENS=[
+  [/\b(camas?|beliches?|colchao|colchoes|bercos?|cabeceiras?)\b/,"Camas e colchões"],
+  [/\b(cadeira de rodas|cadeira de banho|cadeira higienica|cadeira sanitaria|andador|muletas?|bengalas?|concentrador de oxigenio|aspirador de secrecao|oximetro|esfigmo\w*|aparelho de pressao|glicosimetro|nebulizador|macas?|guincho|elevador de transferencia)\b/,"Equipamentos de saúde e mobilidade"],
+  [/\b(sofas?|poltronas?|cadeiras?|mesas?|armarios?|guarda ?roupas?|roupeiros?|comodas?|criado mudo|estantes?|racks?|gaveteiros?|escrivaninhas?|balcao|longarinas?|bancos?|banquetas?|prateleiras?|sapateiras?|puffs?|aparador(es)?|buffet|cristaleira|nichos?|cabideiros?|biombos?|painel (de|para) tv|mesa de cabeceira|bau)\b/,"Móveis"],
+  [/\b(fogao|cooktop|forno|coifa|depurador|exaustor|geladeira|refrigerador|freezer|frigobar|micro ?ondas|lava ?loucas|maquina de lavar|lavadora|tanquinho|centrifuga|secadora|bebedouro|purificador|liquidificador|batedeira|processador|panela eletrica|air ?fryer|cafeteira|sanduicheira|chaleira eletrica|ferro de passar|aspirador|torradeira|grill|mixer|enceradeira|lavadora de alta pressao|maquina de costura)\b/,"Eletrodomésticos"],
+  [/\b(ar condicionado|climatizador|ventilador|aquecedor|umidificador|desumidificador)\b/,"Climatização"],
+  [/\b(televis\w*|tv|computador|notebook|monitor|impressora|nobreak|tablet|celular|smartphone|roteador|caixa de som|camera de seguranca|cameras|dvr|telefone|projetor|home theater|radio|aparelho de som)\b/,"Eletrônicos e informática"],
+  [/\b(extintor(es)?|alarme|cerca eletrica)\b/,"Segurança"]
+];
+const PCONC_PADRAO_OBRA=[
+  [/\b(luminarias?|plafon|spots?|arandelas?|pendentes?|refletor(es)?|lampadas?|reator(es)?|led|disjuntor(es)?|dps|idr|interruptor diferencial|quadros? de|padrao de energia|contator(es)?|rele|fotocelula|sensor(es)? de presenca|campainha|tomadas?|interruptor(es)?|plugues?|conector(es)?|terminais|caixas? (de luz|de passagem|octogonal|de embutir|de sobrepor|4 ?x ?[24])|espelhos? (de tomada|cego)|eletrodutos?|conduites?|canaletas?|eletrocalhas?|perfilados?|fios?|cabos?|fita isolante|aterramento|material eletrico)\b/,"Obras e benfeitorias — elétrica e iluminação"],
+  [/\b(pias?|cubas?|tanques?|vaso sanitario|bacia sanitaria|caixa acoplada|assento sanitario|torneiras?|chuveiros?|ducha|misturador|caixa d ?agua|caixas? (sifonada|de gordura|de inspecao)|registros?|valvulas?|descarga|sifao|ralos?|engates?|flexivel|boia|joelhos?|luvas?|te|adaptador(es)?|tubos?|canos?|conexo(es)?|cola pvc|veda rosca|aquecedor solar|pressurizador|bomba d ?agua|material hidraulico)\b/,"Obras e benfeitorias — hidráulica e louças"],
+  [/\b(pisos?|piso tatil|porcelanatos?|ceramicas?|revestimentos?|azulejos?|pastilhas?|rejunte|argamassa|nivelador(es)?|espacador(es)?|rodapes?|soleiras?|peitoril|granito|marmore|quartzo|bancadas?|antiderrapante)\b/,"Obras e benfeitorias — pisos e revestimentos"],
+  [/\b(portas?|portao|batentes?|guarnic\w*|fechaduras?|macanetas?|dobradicas?|janelas?|vitro|basculante|esquadrias?|vidros?|box|espelhos?|grades?|alambrado)\b/,"Obras e benfeitorias — portas, janelas e vidros"],
+  [/\b(tintas?|massa corrida|massa acrilica|selador|textura|grafiato|verniz|impermeabiliz\w*)\b/,"Obras e benfeitorias — pintura e impermeabilização"]
+];
+const PCONC_OBRA_CONSTR="Obras e benfeitorias — construção e acabamento";
+const PCONC_SUB_BENS=[[/^mobiliario/,"Móveis"],[/^camas/,"Camas e colchões"],[/^eletrodomesticos/,"Eletrodomésticos"],[/^(equipamentos de saude|mobilidade)/,"Equipamentos de saúde e mobilidade"]];
+const PCONC_SUB_OBRA=[[/^eletrica/,"Obras e benfeitorias — elétrica e iluminação"],[/^hidraulica/,"Obras e benfeitorias — hidráulica e louças"]];
+const pconcAcha=(L,s)=>{const a=L.find(([re])=>re.test(s));return a?a[1]:""};
+// nome do item, categoria que ele tinha na origem e (para notas) a categoria e subcategoria da nota
+function pconcCatPadrao(nome,catOrig,catNf,subNf){
+  const n=NFN(nome),co=NFN(catOrig),sub=NFN(subNf);
+  if(PCONC_DECOR.test(n))return"Decoração";
+  if(PCONC_NOME.test(n))return pconcAcha(PCONC_PADRAO_BENS,n)||"Outros bens e equipamentos";
+  const obra=pconcEhObra(n)||pconcSubObra(catNf||"",subNf||"")||co.startsWith("obras e benfeitorias")||PCONC_CATOBRA.test(co);
+  if(obra)return pconcAcha(PCONC_PADRAO_OBRA,n)||pconcAcha(PCONC_SUB_OBRA,sub)||(PCONC_CATOBRA.test(co)&&!co.startsWith("obras e benfeitorias")?"Obras e benfeitorias — outros gastos da obra":PCONC_OBRA_CONSTR);
+  return pconcAcha(PCONC_PADRAO_BENS,n)||pconcAcha(PCONC_SUB_BENS,sub)||pconcAcha(PCONC_SUB_BENS,co)||"Outros bens e equipamentos";
+}
+/* <<< regra */
+const PCONC_CATFIN=/imobiliz|equipament|moveis|movel|mobili|eletrodom/;
 const pconcMarcas=()=>xcfg("infra").patConc||{};
 function pconcNfCat(r){
   const c=r.categoria;
@@ -93,19 +126,21 @@ function pconcTodos(){
     onde:[b.local,b.serie?"série "+b.serie:""].filter(Boolean).join(" · "),origem:"Financeiro (bens)",auto:true}));
   ((S.config.nf&&S.config.nf.rows)||[]).forEach(r=>{
     const c=pconcNfCat(r),auto=pconcAuto(r.item,c.cat,c.sub);nomesNf.add(NFN(r.item));
-    L.push({k:"n:"+nfKey(r)+"|"+NFN(r.item),nome:r.item,cat:pconcCatObra(r.item,(c.cat==="Equipamentos e mobiliário"?c.sub:c.cat)||"Sem categoria",auto,c.sub,c.cat),qtd:+r.qtd||1,unit:+r.valor||0,total:+r.total||0,data:r.date||"",
+    L.push({k:"n:"+nfKey(r)+"|"+NFN(r.item),nome:r.item,cat:(c.cat==="Equipamentos e mobiliário"?c.sub:c.cat)||"Sem categoria",subNf:c.sub,qtd:+r.qtd||1,unit:+r.valor||0,total:+r.total||0,data:r.date||"",
       onde:r.local?"Local na nota: "+r.local:"",origem:"Nota fiscal"+(r.nota?" nº "+r.nota:""),auto,catRegra:c.cat});
   });
   // compras sem nota lançadas no Financeiro (as que vieram de nota têm "nf" e já estão acima)
   if(podeVer("fin")&&typeof finAll==="function")finAll().filter(e=>e.tipo==="pagar"&&!e.nf&&!e.pconcObra).forEach(e=>{ // pagamento de obra lançada nesta aba já está acima
     const v=+(e.valorPago||e.valor)||0,auto=!PCONC_DESPESA.test(NFN(e.desc))&&(PCONC_CATFIN.test(NFN(e.cat))||PCONC_CATOBRA.test(NFN(e.cat))||pconcAuto(e.desc,""));
-    L.push({k:"f:"+e.id,nome:e.desc||"(sem descrição)",cat:pconcCatObra(e.desc,e.cat||"Sem categoria",auto),qtd:1,unit:v,total:v,data:(typeof e.pago==="string"&&e.pago)||e.venc||"",
+    L.push({k:"f:"+e.id,nome:e.desc||"(sem descrição)",cat:e.cat||"Sem categoria",qtd:1,unit:v,total:v,data:(typeof e.pago==="string"&&e.pago)||e.venc||"",
       onde:e.contra?"Fornecedor: "+e.contra:"",origem:"Financeiro (compra sem nota)",auto});
   });
   // bens lançados direto no Estoque (os que vieram de nota já estão acima)
-  estData().itens.filter(i=>+i.qtd>0&&!nomesNf.has(NFN(i.nome))).forEach(i=>L.push({k:"e:"+i.id,nome:i.nome,cat:pconcCatObra(i.nome,i.area||"Estoque",pconcAuto(i.nome,"")),qtd:+i.qtd||1,unit:+i.custo||0,total:(+i.qtd||0)*(+i.custo||0),
+  estData().itens.filter(i=>+i.qtd>0&&!nomesNf.has(NFN(i.nome))).forEach(i=>L.push({k:"e:"+i.id,nome:i.nome,cat:i.area||"Estoque",qtd:+i.qtd||1,unit:+i.custo||0,total:(+i.qtd||0)*(+i.custo||0),
     data:(i.ultCompra&&i.ultCompra.data)||"",onde:i.area?"Área: "+i.area:"",origem:"Estoque",auto:pconcAuto(i.nome,"")}));
   const M=pconcMarcas();L.forEach(x=>{x.inc=M[x.k]!==undefined?!!M[x.k]:x.auto;if(!x.inc)x.motivo=M[x.k]===false?"Desmarcado à mão":pconcMotivo(x.nome,x.catRegra||"")});
+  // o que é patrimônio ganha a categoria padronizada (a da origem fica guardada); obra lançada à mão mantém o tipo escolhido
+  L.forEach(x=>{x.catOrig=x.cat;if(x.inc&&!(x.manual&&x.cat!=="Outro bem"))x.cat=pconcCatPadrao(x.nome,x.cat,x.catRegra||"",x.subNf||"")});
   return L;
 }
 // por que uma compra ficou fora do patrimônio (mesma ordem da regra pconcAuto)
@@ -144,7 +179,7 @@ function pconcHtml(){
    <div class="daypicker" style="flex-wrap:wrap;margin-bottom:10px">${chip("","Todas as categorias")}${cats.map(c=>chip(c,c)).join("")}</div>
    ${todos?`<p class="sub" style="margin:0 0 8px">Marcado = entra no patrimônio. O download leva só as linhas marcadas desta busca.</p>`:""}
    ${fora?`<p class="sub" style="margin:0 0 8px">Compras que não entraram no patrimônio, com o motivo. Se alguma for um bem, marque a caixa para incluir. O download leva esta lista de fora.</p>`:""}
-   ${vis.length?`<div class="wrap"><table><thead><tr>${ed?"<th>Patrimônio?</th>":""}<th>Bem</th><th>Categoria</th><th>Qtd</th><th>Valor</th><th>Aquisição</th><th>Origem</th></tr></thead><tbody>${mostra.map(x=>`<tr style="${x.inc||fora?"":"opacity:.6"}">${ed?`<td><input type="checkbox" data-pck="${esc(x.k)}" data-auto="${x.auto?1:0}" ${x.inc?"checked":""}></td>`:""}<td><b>${esc(x.nome)}</b>${x.onde?`<div class="sub">${esc(x.onde)}</div>`:""}${!x.inc&&x.motivo?`<div class="sub">Fora: ${esc(x.motivo)}</div>`:""}</td><td>${esc(x.cat)}</td><td class="n">${NUMF(x.qtd,0)}</td><td class="n">${fmtBRL(x.total)}</td><td class="n">${x.data?brDate(x.data):"—"}</td><td>${esc(x.origem)}${x.auto!==x.inc?` <span class="sub">(marcado à mão)</span>`:""}</td></tr>`).join("")}</tbody></table></div>
+   ${vis.length?`<div class="wrap"><table><thead><tr>${ed?"<th>Patrimônio?</th>":""}<th>Bem</th><th>Categoria</th><th>Qtd</th><th>Valor</th><th>Aquisição</th><th>Origem</th></tr></thead><tbody>${mostra.map(x=>`<tr style="${x.inc||fora?"":"opacity:.6"}">${ed?`<td><input type="checkbox" data-pck="${esc(x.k)}" data-auto="${x.auto?1:0}" ${x.inc?"checked":""}></td>`:""}<td><b>${esc(x.nome)}</b>${x.onde?`<div class="sub">${esc(x.onde)}</div>`:""}${!x.inc&&x.motivo?`<div class="sub">Fora: ${esc(x.motivo)}</div>`:""}</td><td${x.catOrig&&x.catOrig!==x.cat?` title="Categoria no lançamento: ${esc(x.catOrig)}"`:""}>${esc(x.cat)}</td><td class="n">${NUMF(x.qtd,0)}</td><td class="n">${fmtBRL(x.total)}</td><td class="n">${x.data?brDate(x.data):"—"}</td><td>${esc(x.origem)}${x.auto!==x.inc?` <span class="sub">(marcado à mão)</span>`:""}</td></tr>`).join("")}</tbody></table></div>
      ${vis.length>PCONC_MAX?`<p class="sub" style="margin:8px 0 0">Mostrando ${PCONC_MAX} de ${vis.length} linhas. Use a busca ou a categoria para achar as outras (o download leva todas).</p>`:""}`:`<div class="empty">${fora?"Nenhuma compra ficou de fora"+(PCONC.q?" com esse nome":"")+".":todos&&PCONC.q?"Nada com esse nome nas notas, no Financeiro nem no Estoque. Se o bem não foi lançado em lugar nenhum, cadastre na aba Patrimônio.":"Nada encontrado."}</div>`}</div>`;
 }
 function pconcObrasHtml(ed){
@@ -167,31 +202,53 @@ function pconcObrasHtml(ed){
      return`<tr><td><b>${esc(o.desc)}</b>${o.contra||o.obs?`<div class="sub">${esc([o.contra?"Pago a: "+o.contra:"",o.obs].filter(Boolean).join(" · "))}</div>`:""}</td><td>${esc(o.cat||"")}</td><td class="n">${fmtBRL(+o.valor||0)}</td><td class="n">${o.data?brDate(o.data):"—"}</td><td>${fin}${!f&&finEd&&ed?` <button class="b sec" data-pcofin="${esc(o.id)}">Lançar no Financeiro</button>`:""}</td>${ed?`<td><button class="b sec" data-pcodel="${esc(o.id)}">Excluir</button></td>`:""}</tr>`}).join("")}</tbody></table></div>`:""}</details>`;
 }
 // grandes grupos do patrimônio, para o resumo do PDF/Excel
-const PCONC_MO="Obras e benfeitorias — mão de obra",PCONC_BENS="Móveis, eletrodomésticos e equipamentos";
-function pconcGrupo(x){
-  const c=NFN(x.cat);
-  if(c.startsWith("obras e benfeitorias mao de obra"))return PCONC_MO;
-  if(x.cat===PCONC_MAT||c.startsWith("obras e benfeitorias")||PCONC_CATOBRA.test(c))return PCONC_MAT;
-  return PCONC_BENS;
+const PCONC_BENS="Bens e equipamentos",PCONC_OBRAG="Obra (material e mão de obra)";
+const pconcGrupo=x=>{const c=NFN(x.cat);return c.startsWith("obras e benfeitorias")||PCONC_CATOBRA.test(c)?PCONC_OBRAG:PCONC_BENS};
+// soma por categoria, da maior para a menor, separada em bens e obra
+function pconcPorCat(L){
+  const m=new Map();L.forEach(x=>{const k=x.cat||"Outros bens e equipamentos",a=m.get(k)||{cat:k,grupo:pconcGrupo(x),n:0,u:0,v:0};a.n++;a.u+=+x.qtd||0;a.v+=+x.total||0;m.set(k,a)});
+  return[...m.values()].sort((a,b)=>b.v-a.v||a.cat.localeCompare(b.cat,"pt"));
 }
-const pconcOrigemGrupo=o=>o.startsWith("Nota fiscal")?"Notas fiscais de compra":o.startsWith("Lançado nesta aba")?"Lançado à mão (obras e mão de obra)":o.startsWith("Financeiro (compra")?"Financeiro — compras sem nota":o.startsWith("Financeiro (bens")?"Financeiro — bens cadastrados":o.startsWith("Cadastro")?"Cadastro de patrimônio":o;
-// resumo: total geral, total da obra e quanto foi gasto em cada grupo, categoria e origem
-function pconcResumo(L,sub){
-  const tot=soma(L,x=>+x.total||0),rows=[],estilo=[],add=(r,e)=>{rows.push(r);estilo.push(e||"")};
+// resumo: cada categoria com valor e % do total, subtotal de bens e de obra, total geral e o gráfico
+function pconcResumo(L,sub,grafico){
+  const tot=soma(L,x=>+x.total||0),C=pconcPorCat(L),rows=[],estilo=[],add=(r,e)=>{rows.push(r);estilo.push(e||"")};
   const pct=v=>tot?100*v/tot:0;
-  const bloco=(titulo,chave)=>{
-    const m=new Map();L.forEach(x=>{const k=chave(x)||"Sem categoria",a=m.get(k)||{n:0,u:0,v:0};a.n++;a.u+=+x.qtd||0;a.v+=+x.total||0;m.set(k,a)});
-    add([titulo,null,null,null,null],"h");
-    [...m.entries()].sort((a,b)=>b[1].v-a[1].v||a[0].localeCompare(b[0],"pt")).forEach(([k,a])=>add([k,a.n,a.u,a.v,pct(a.v)]));
-  };
+  [PCONC_BENS,PCONC_OBRAG].forEach(g=>{
+    const cs=C.filter(c=>c.grupo===g);if(!cs.length)return;
+    add([g,null,null,null,null],"h");
+    cs.forEach(c=>add([c.cat,c.n,c.u,c.v,pct(c.v)]));
+    const v=soma(cs,c=>c.v);add(["Subtotal — "+(g===PCONC_BENS?"bens e equipamentos":"obra"),soma(cs,c=>c.n),soma(cs,c=>c.u),v,pct(v)],"t");
+  });
   add(["TOTAL GERAL DO PATRIMÔNIO",L.length,soma(L,x=>+x.qtd||0),tot,100],"g");
-  const obra=L.filter(x=>pconcGrupo(x)!==PCONC_BENS);
-  if(obra.length){const v=soma(obra,x=>+x.total||0);add(["Total da obra (material + mão de obra)",obra.length,soma(obra,x=>+x.qtd||0),v,pct(v)],"t")}
-  bloco("Por grupo",pconcGrupo);
-  bloco("Por categoria (com o que foi gasto)",x=>x.cat);
-  bloco("Por origem do lançamento",x=>pconcOrigemGrupo(x.origem||""));
-  return{titulo:"Patrimônio — resumo",sub,sensivel:false,estilo,rows,
-    cols:[{h:"Grupo / categoria",w:46},{h:"Itens",t:"num",w:9},{h:"Unidades",t:"num",w:10},{h:"Valor de compra",t:"money",w:17},{h:"% do total",t:"pct",w:11}]};
+  return{titulo:"Patrimônio — resumo por categoria",sub,sensivel:false,estilo,rows,...(grafico?{grafico}:{}),
+    cols:[{h:"Categoria",w:50},{h:"Itens",t:"num",w:9},{h:"Unidades",t:"num",w:10},{h:"Valor de compra",t:"money",w:17},{h:"% do total",t:"pct",w:11}]};
+}
+/* Gráfico "Para onde foi o dinheiro": barras horizontais, uma por categoria, da maior para a menor, com % e valor ao lado.
+   Verde = bens e equipamentos, roxo = obra (dupla conferida para daltonismo). Vira imagem PNG para o PDF e o Excel. */
+const PCONC_COR={[PCONC_BENS]:"#2E7D32",[PCONC_OBRAG]:"#8E5BB5"};
+function pconcGrafico(L){
+  const C=pconcPorCat(L),tot=soma(C,c=>c.v);if(!C.length||!(tot>0))return null;
+  const W=1600,P=40,TOPO=176,LH=46,H=TOPO+C.length*LH+P,cv=document.createElement("canvas");cv.width=W;cv.height=H;
+  const g=cv.getContext("2d"),TXT="#444444",MUTE="#8A8577",LINHA="#E8DFCC";
+  g.fillStyle="#FFFFFF";g.fillRect(0,0,W,H);
+  g.fillStyle="#1E5C2A";g.font="bold 32px Georgia, serif";g.textBaseline="alphabetic";g.fillText("Para onde foi o dinheiro",P,P+28);
+  g.fillStyle=MUTE;g.font="20px Arial, sans-serif";g.fillText(`% do valor total do patrimônio (${fmtBRL(tot)}), por categoria`,P,P+60);
+  // legenda (sempre, são 2 grupos)
+  let lx=P;[PCONC_BENS,PCONC_OBRAG].filter(k=>C.some(c=>c.grupo===k)).forEach(k=>{
+    g.fillStyle=PCONC_COR[k];g.beginPath();g.roundRect(lx,P+80,20,20,4);g.fill();
+    const v=soma(C.filter(c=>c.grupo===k),c=>c.v),t=`${k} — ${(100*v/tot).toFixed(1).replace(".",",")}% (${fmtBRL(v)})`;
+    g.fillStyle=TXT;g.font="20px Arial, sans-serif";g.fillText(t,lx+30,P+97);lx+=g.measureText(t).width+70});
+  const X0=560,MAXW=W-X0-330,max=Math.max(...C.map(c=>c.v)),corta=(t,w)=>{if(g.measureText(t).width<=w)return t;while(t.length>1&&g.measureText(t+"…").width>w)t=t.slice(0,-1);return t+"…"};
+  g.strokeStyle=LINHA;g.lineWidth=2;g.beginPath();g.moveTo(X0,TOPO-8);g.lineTo(X0,TOPO+C.length*LH-8);g.stroke();
+  C.forEach((c,i)=>{
+    const y=TOPO+i*LH,bw=Math.max(3,MAXW*c.v/max),p=100*c.v/tot;
+    g.fillStyle=TXT;g.font="20px Arial, sans-serif";g.textBaseline="middle";g.textAlign="right";
+    g.fillText(corta(c.cat.replace(/^Obras e benfeitorias — /,"Obra — "),X0-20),X0-14,y+12);
+    g.fillStyle=PCONC_COR[c.grupo];g.beginPath();g.roundRect(X0+2,y,bw,24,[0,4,4,0]);g.fill();
+    g.textAlign="left";g.fillStyle=TXT;g.font="bold 20px Arial, sans-serif";const pt=p<0.1?"<0,1%":p.toFixed(1).replace(".",",")+"%";g.fillText(pt,X0+bw+14,y+12);
+    const wp=g.measureText(pt).width;g.font="20px Arial, sans-serif";g.fillStyle=MUTE;g.fillText("· "+fmtBRL(c.v),X0+bw+22+wp,y+12);
+  });
+  return{png:cv.toDataURL("image/png"),w:W,h:H};
 }
 function pconcBaixar(fmt){
   const filtro=[PCONC.cat,PCONC.q?"busca: "+PCONC.q:""].filter(Boolean).join(" · ");
@@ -208,11 +265,14 @@ function pconcBaixar(fmt){
   }
   const L=pconcVisiveis(pconcTodos()).filter(x=>x.inc);if(!L.length)return toast("Nenhum bem marcado nesta lista.",true);
   const sub=`Bens, equipamentos e obras · posição em ${brDate(hojeIso())}${filtro?" · "+filtro:""}`;
+  // todos os itens, agrupados: bens primeiro, depois obra; dentro, por categoria e nome
+  const ordem=[...L].sort((a,b)=>(pconcGrupo(a)===PCONC_BENS?0:1)-(pconcGrupo(b)===PCONC_BENS?0:1)||a.cat.localeCompare(b.cat,"pt")||a.nome.localeCompare(b.nome,"pt"));
   const spec={titulo:"Patrimônio — todos os itens",sub,sensivel:false,
-    cols:[{h:"Bem",w:36},{h:"Grupo",w:24},{h:"Categoria",w:24},{h:"Qtd",t:"num",w:7},{h:"Valor unitário",t:"money",w:13},{h:"Valor total",t:"money",w:13},{h:"Aquisição",t:"date",w:11},{h:"Onde fica / detalhe",w:28},{h:"Origem",w:22}],
-    rows:L.map(x=>[x.nome,pconcGrupo(x),x.cat,x.qtd,x.unit,x.total,x.data,x.onde,x.origem]),tot:[null,null,null,"sum",null,"sum",null,null,null]};
+    cols:[{h:"Item",w:38},{h:"Categoria",w:30},{h:"Grupo",w:20},{h:"Qtd",t:"num",w:7},{h:"Valor unitário",t:"money",w:13},{h:"Valor total",t:"money",w:13},{h:"Aquisição",t:"date",w:11},{h:"Onde fica / detalhe",w:28},{h:"Origem",w:22}],
+    rows:ordem.map(x=>[x.nome,x.cat,pconcGrupo(x)===PCONC_BENS?"Bens":"Obra",x.qtd,x.unit,x.total,x.data,x.onde,x.origem]),tot:[null,null,null,"sum",null,"sum",null,null,null]};
   (async()=>{try{
-    const specs=[pconcResumo(L,sub),spec];
+    let graf=null;try{graf=pconcGrafico(L)}catch(e){console.warn("gráfico do patrimônio",e)}
+    const specs=[pconcResumo(L,sub,graf),spec];
     const blob=fmt==="pdf"?await relPdf(specs,{}):await relXlsx(specs);
     await saveFile(`patrimonio-casa-hiro_${hojeIso()}.${fmt}`,blob);
   }catch(e){console.error(e);toast("Não foi possível gerar o arquivo: "+(e&&e.message?e.message:e),true)}})();
