@@ -62,16 +62,20 @@ const fimCalc=ym=>{const f=refFim(ym),o=addDaysIso(hojeIso(),-1);return f<o?f:o}
 function mesesEntre(a,b){const out=[];let y=+a.slice(0,4),m=+a.slice(5,7);while(`${y}-${String(m).padStart(2,"0")}`<=b){out.push(`${y}-${String(m).padStart(2,"0")}`);m++;if(m>12){m=1;y++}}return out}
 const primeiraMarca=()=>{const l=Object.values(S.marcacoes).filter(m=>!m.removida).map(m=>refYm(m.ts)).sort();return l[0]||refYm(hojeIso())};
 const bhCfg=()=>({limiteH:40,inicio:primeiraMarca(),...(xcfg("gp").bh||{})});
+// zeragem do banco de todos: vale para os meses a partir do mês da data; antes disso, o histórico fica como era
+const bhZera=(c,ym)=>c.zera&&ym>=refYm(c.zera)?c.zera:"";
 function bhSaldos(ym){
-  const c=bhCfg(),meses=mesesEntre(c.inicio<=ym?c.inicio:ym,ym),por=new Map(),erros=[];
+  const c=bhCfg(),z=bhZera(c,ym),ini=z&&refYm(z)>c.inicio?refYm(z):c.inicio,meses=mesesEntre(ini<=ym?ini:ym,ym),por=new Map(),erros=[];
   meses.forEach(m=>{
     if(fimCalc(m)<refIni(m))return;
     const r=calcSilencioso(refIni(m),fimCalc(m));
     if(!r||r.erro){erros.push(r&&r.erro);return}
-    r.users.forEach(u=>{if(!u.ig||!u.ig.id)return;const x=por.get(u.ig.id)||{ig:u.ig,mes:0,mais:0,menos:0,trab:0,esp:0,ant:0,lanc:0,acum:0};
-      const s=u.t.saldo;x.acum+=s;if(m===ym){x.mes=s;x.mais=u.t.mais;x.menos=u.t.menos;x.trab=u.t.worked;x.esp=u.t.expected}else x.ant+=s;por.set(u.ig.id,x)});
+    r.users.forEach(u=>{if(!u.ig||!u.ig.id)return;const x=por.get(u.ig.id)||{ig:u.ig,mes:0,mais:0,menos:0,trab:0,esp:0,ant:0,lanc:0,acum:0,zerado:0};
+      // dias antes da zeragem não contam; no mês da zeragem o saldo do período aparece inteiro e a parte de antes sai como lançamento
+      const antes=z&&refIni(m)<z?(u.rows||[]).filter(d=>d.day<z).reduce((t,d)=>t+(d.saldo||0),0):0,s=u.t.saldo;
+      x.acum+=s-antes;if(m===ym){x.mes=s;x.mais=u.t.mais;x.menos=u.t.menos;x.trab=u.t.worked;x.esp=u.t.expected;x.lanc-=antes;x.zerado=-antes}else x.ant+=s-antes;por.set(u.ig.id,x)});
   });
-  xs("bh").forEach(l=>{if(l.data&&typeof l.data==="string"&&refYm(l.data)<=ym&&refYm(l.data)>=c.inicio){const x=por.get(l.integ);if(!x)return;const h=Math.round((+l.h||0)*60);x.acum+=h;if(refYm(l.data)===ym)x.lanc+=h;else x.ant+=h}});
+  xs("bh").forEach(l=>{if(l.data&&typeof l.data==="string"&&refYm(l.data)<=ym&&refYm(l.data)>=c.inicio&&(!z||l.data>=z)){const x=por.get(l.integ);if(!x)return;const h=Math.round((+l.h||0)*60);x.acum+=h;if(refYm(l.data)===ym)x.lanc+=h;else x.ant+=h}});
   return{por,erros};
 }
 // banco de horas de um mês para a folha de ponto: cálculo único por geração (cache curto)
@@ -88,6 +92,7 @@ function folhaBanco(u,R){
   if(pend)notas.push(`${pend} dia(s) com marcação faltando ficaram fora do banco até serem resolvidos.`);
   if(!mesCheio)notas.push(`O período desta folha não é o período de referência inteiro (${refRotulo(ym)}): o banco anterior vai até ${brDate(addDaysIso(refIni(ym),-1))}.`);
   if(ym<c.inicio)notas.push("Este mês é anterior ao início do controle do banco de horas.");
+  {const z=bhZera(c,ym);if(z&&refYm(z)===ym)notas.push(`Banco de horas zerado a partir de ${brDate(z)}: o saldo dos dias antes dessa data (${hhmmS(-(x?x.zerado:0))}) não conta mais e está em "Folgas compensadas e horas pagas".`)}
   if(Math.abs(fim)>c.limiteH*60)notas.push(fim>0?`Saldo acima de ${c.limiteH}h: programe folgas para compensar dentro do prazo do acordo.`:`Saldo negativo acima de ${c.limiteH}h.`);
   return{mm,ant,lanc,saldo,linhas:[
     ["Horas trabalhadas a mais que o previsto",hhmmS(u.t.mais||0)],
@@ -105,9 +110,26 @@ function bhHtml(){
   const meses=mesesEntre(refYmAdd(refYm(hojeIso()),-11),refYm(hojeIso())).reverse();
   return `<div class="card"><h2>Saldo do banco de horas</h2><p class="sub" style="margin:0 0 10px">Saldo = horas trabalhadas − horas esperadas pela escala, sem contar os minutos dentro da tolerância da CLT (até 5 min por marcação e 10 min por dia). Atestados e justificativas contam como cumpridos; dias com marcação faltando só entram depois de resolvidos. O saldo é somado desde o início do controle, junto com as compensações e pagamentos lançados abaixo.</p>
    <div class="row" style="align-items:flex-end"><div style="flex:0 0 250px"><label>Período de referência</label><select id="bhmes">${meses.map(m=>`<option value="${m}" ${m===BHST.ym?"selected":""}>${m.slice(5)}/${m.slice(0,4)} · ${refRotulo(m)}</option>`).join("")}</select></div>
-    <div style="flex:0 0 190px"><label>Início do controle</label><input type="month" id="bhini" value="${c.inicio}" ${podeEd("gp")?"":"disabled"}></div><div style="flex:0 0 190px"><label>Alerta acima de (horas)</label><input type="number" id="bhlim" value="${c.limiteH}" min="1" ${podeEd("gp")?"":"disabled"}></div></div>
+    <div style="flex:0 0 190px"><label>Início do controle</label><input type="month" id="bhini" value="${c.inicio}" ${podeEd("gp")?"":"disabled"}></div><div style="flex:0 0 190px"><label>Alerta acima de (horas)</label><input type="number" id="bhlim" value="${c.limiteH}" min="1" ${podeEd("gp")?"":"disabled"}></div>
+    <div style="flex:0 0 220px"><label>Zerar o banco de todos a partir de</label><input type="date" id="bhzera" value="${esc(c.zera||"")}" ${podeEd("gp")?"":"disabled"}></div>
+    ${podeEd("gp")?`<div style="flex:none"><button class="b sec" id="bhzok">Zerar</button>${c.zera?` <button class="b sec" id="bhzdes">Desfazer zeragem</button>`:""}</div>`:""}</div>
+   ${c.zera?`<div class="callout sand" style="margin-top:10px">Banco de horas <b>zerado a partir de ${brDate(c.zera)}</b> para todos: o saldo dos dias antes dessa data e os lançamentos anteriores a ela não contam mais. Os meses de antes continuam mostrando o histórico como era.</div>`:""}
    ${erros.length&&!L.length?`<div class="callout sand" style="margin-top:12px">Não foi possível calcular: ${esc(erros[0]||"importe o arquivo do relógio na aba Ponto")}.</div>`:""}
    ${L.length?`<div class="wrap" style="margin-top:12px"><table><thead><tr><th>Integrante</th><th>Trabalhado</th><th>Esperado</th><th>A mais</th><th>A menos</th><th>Banco anterior</th><th>Saldo do mês</th><th>Compensado / pago</th><th>Banco final</th><th></th></tr></thead><tbody>${L.map(x=>{const al=Math.abs(x.acum)>c.limiteH*60;return `<tr><td><b>${esc(nomeInteg(x.ig))}</b></td><td>${hhmm(x.trab)}</td><td>${hhmm(x.esp)}</td><td>${hhmmS(x.mais)}</td><td>${hhmmS(x.menos)}</td><td>${hhmmS(x.ant)}</td><td>${hhmmS(x.mes)}</td><td>${hhmmS(x.lanc)}</td><td><b>${hhmmS(x.acum)}</b></td><td>${al?xPill(x.acum>0?2:1,x.acum>0?"saldo alto: programar folga":"saldo negativo"):""}</td></tr>`}).join("")}</tbody></table></div>`:""}</div>`;
+}
+// zera (ou desfaz a zeragem) do banco de horas de todos a partir de uma data, com confirmação
+Object.assign(AUD_ROT,{bh:"Banco de horas"});
+function bhZerarTodos(data){
+  if(!podeEd("gp"))return toast("Sem permissão para alterar o banco de horas.",true);
+  if(data&&!/^\d{4}-\d{2}-\d{2}$/.test(data))return toast("Escolha a data da zeragem.",true);
+  const ant=bhCfg().zera||"";
+  const ov=openModal(data?`<h3>Zerar o banco de horas de todos</h3><p>O saldo de banco de horas de <b>todos os integrantes</b> passa a contar só a partir de <b>${brDate(data)}</b>. O saldo dos dias antes dessa data e as compensações e pagamentos lançados antes dela deixam de contar.</p><p class="sub">Os meses anteriores continuam mostrando o histórico. Dá para desfazer depois.${ant?` A zeragem atual (${brDate(ant)}) será trocada.`:""}</p>`
+    :`<h3>Desfazer a zeragem</h3><p>O banco de horas volta a somar tudo desde o início do controle, inclusive o que ficou antes de <b>${brDate(ant)}</b>.</p>`)
+  ,box=ov.querySelector(".modal");box.insertAdjacentHTML("beforeend",`<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px"><button class="b sec" id="bhzc">Cancelar</button><button class="b" id="bhzs">${data?"Zerar o banco de todos":"Desfazer zeragem"}</button></div>`);
+  box.querySelector("#bhzc").onclick=()=>ov.remove();
+  box.querySelector("#bhzs").onclick=()=>{const bh={...(xcfg("gp").bh||{})};if(data)bh.zera=data;else delete bh.zera;
+    xcfgSave("gp",{bh});BHCACHE.clear();BHMEMO.k="";audit("bh",data?"Zerou o banco de todos a partir de "+brDate(data):"Desfez a zeragem de "+brDate(ant));
+    ov.remove();toast(data?"Banco de horas zerado a partir de "+brDate(data)+".":"Zeragem desfeita.");go("gp",true)};
 }
 const bhCrud={id:"bh",col:"bh",mod:"gp",novoLabel:"Lançar compensação ou pagamento",novoTit:"Lançamento no banco de horas",
   campos:[{k:"integ",l:"Integrante",t:"integ",req:true},{k:"data",l:"Data",t:"date",req:true,def:()=>hojeIso()},{k:"tipo",l:"Tipo",t:"sel",opts:["Compensação (folga)","Pagamento em folha","Ajuste"],req:true},{k:"h",l:"Horas (positivo = usadas ou pagas; no ajuste, − tira do saldo)",t:"num",neg:true,step:0.25,req:true},{k:"obs",l:"Observação",full:true}],
@@ -525,8 +547,10 @@ xpage("gp","Gestão de pessoas","Férias, banco de horas, fechamento do ponto, a
   {k:"ferias",l:"Férias",html:()=>feriasHtml()+xcrud(feriasCrud),bind:()=>{document.querySelectorAll("[data-fnova]").forEach(b=>b.onclick=()=>xForm(feriasCrud,{integ:b.dataset.fnova,status:"programada",abono:0},f=>xcrudSalvar(feriasCrud,f,null)))}},
   {k:"bh",l:"Banco de horas",html:()=>bhHtml()+xcrud(bhCrud),bind:()=>{
     const m=$("bhmes");if(m)m.onchange=()=>{BHST.ym=m.value;go("gp",true)};
-    const sv=()=>{xcfgSave("gp",{bh:{inicio:$("bhini").value||bhCfg().inicio,limiteH:+$("bhlim").value||40}});go("gp",true)};
-    if($("bhini"))$("bhini").onchange=sv;if($("bhlim"))$("bhlim").onchange=sv}},
+    const sv=()=>{xcfgSave("gp",{bh:{...(xcfg("gp").bh||{}),inicio:$("bhini").value||bhCfg().inicio,limiteH:+$("bhlim").value||40}});go("gp",true)};
+    if($("bhini"))$("bhini").onchange=sv;if($("bhlim"))$("bhlim").onchange=sv;
+    const zk=$("bhzok");if(zk)zk.onclick=()=>bhZerarTodos($("bhzera").value);
+    const zd=$("bhzdes");if(zd)zd.onclick=()=>bhZerarTodos("");}},
   {k:"fech",l:"Fechamento do ponto",html:fechHtml,bind:bindFech},
   {k:"mov",l:"Admissão e desligamento",html:()=>xcrud(movCrud)},
   {k:"trein",l:"Treinamentos",html:()=>treinHtml()+xcrud(treinCrud),bind:bindTrein},
