@@ -211,6 +211,7 @@ function renderResult(R){
      <button class="b sec sm" data-oc="${u.uid}">${ic("plus")} Lançar ocorrência</button>
      <button class="b sec sm" data-mk="${u.uid}" data-mday="${u.rows[0]?u.rows[0].day:R.start}" data-mpicker="1">${ic("clock")} Editar marcações</button>
      <button class="b sec sm" data-pln="${u.uid}">${ic("sheet")} Planilha</button>
+     ${folhaTemMarcacao(u)?`<button class="b sec sm" data-fpdf="${esc(u.uid)}">${ic("file")} Baixar folha (PDF)</button>`:`<span title="Sem marcações de ponto neste período"><button class="b sec sm" disabled style="pointer-events:none">${ic("file")} Baixar folha (PDF)</button></span>`}
      ${u.ig&&u.ig.id?`<button class="b sec sm" data-esc="${u.ig.id}" data-escday="${u.rows[0]?u.rows[0].day:R.start}">${ic("cal")} Ajustar escala</button>`:""}</div>
      <div class="strip">${u.rows.map(r=>`<button class="d-${r.status}" data-oc="${u.uid}" data-day="${r.day}" title="${brDate(r.day)} ${r.wd} — ${STL[r.status]}${r.oc?": "+esc(r.oc.texto||OC[r.oc.tipo]):""}">${r.day.slice(8)}</button>`).join("")}</div>
      <div class="sum"><div><b>${fmtHHMM(u.t.worked)}</b><span>trabalhadas</span><div class="bar ${pct<90?"low":""}"><i style="width:${pct}%"></i></div></div>

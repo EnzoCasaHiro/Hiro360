@@ -33,10 +33,15 @@ function pgFolhasFiltro(){
    <label>Pessoas</label><div class="row" style="margin-bottom:6px"><input id="fpq" placeholder="Buscar pelo nome" value="${esc(FOLHA.q)}"><button class="b sec sm" id="fpvis" style="flex:none">Marcar as exibidas</button><button class="b sec sm" id="fplimpa" style="flex:none">Limpar tudo</button></div>
    <div style="max-height:190px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin-bottom:12px">${vis.length?vis.map(x=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);margin:3px 0"><input type="checkbox" data-fpes="${esc(chaveFolha(x))}" ${FOLHA.pessoas.has(chaveFolha(x))?"checked":""}> ${esc(x.nome)} <span class="sub">${esc(cargoDe(x.ig))}</span></label>`).join(""):`<div class="sub">Nenhuma pessoa encontrada.</div>`}</div>
    <div class="row"><div><label>Abas</label>${FOLHA_ABAS.map(([k,l])=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);margin:3px 0"><input type="checkbox" data-faba="${k}" ${FOLHA.abas[k]?"checked":""}> ${l}</label>`).join("")}</div>
-    <div><label>Formatos</label>${[["xlsx","XLSX (Excel)"],["pdf","PDF"],["csv","CSV (jornadas)"]].map(([k,l])=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);margin:3px 0"><input type="checkbox" data-ffmt="${k}" ${FOLHA.fmt.has(k)?"checked":""}> ${l}</label>`).join("")}
+    <div><label>Formatos</label>${[["xlsx","XLSX (Excel)"],["fpdf","Folha de ponto (PDF, 1 página por pessoa)"],["pdf","PDF (relatório atual)"],["csv","CSV (jornadas)"]].map(([k,l])=>`<label style="display:flex;gap:8px;align-items:center;font-weight:400;color:var(--ink);margin:3px 0"><input type="checkbox" data-ffmt="${k}" ${FOLHA.fmt.has(k)?"checked":""}> ${l}</label>`).join("")}
      <label style="margin-top:8px">Como entregar</label><select id="fmodo"><option value="junto" ${FOLHA.modo==="junto"?"selected":""}>Tudo em um arquivo por formato</option><option value="pessoa" ${FOLHA.modo==="pessoa"?"selected":""}>Um arquivo por integrante (.zip)</option></select></div></div>
-   <div class="callout" style="margin:12px 0 0"><b>${sel.length}</b> integrante(s) selecionado(s) · <b>${nArq}</b> arquivo(s)${nArq>1?" em um .zip":""}</div>
+   ${folhaSemMarcacaoAviso(sel)}<div class="callout" style="margin:12px 0 0"><b>${sel.length}</b> integrante(s) selecionado(s) · <b>${nArq}</b> arquivo(s)${nArq>1?" em um .zip":""}</div>
    <div class="row" style="margin-top:12px"><button class="b" id="fgo" style="flex:none" ${sel.length&&nf?"":"disabled"}>${ic("down")} Baixar folhas</button></div></div>`;
+}
+// quem não tem nenhuma marcação no período não gera folha em PDF: aparece avisado aqui
+function folhaSemMarcacaoAviso(sel){
+  const R=POINT.result;if(!R)return"";const us=new Set(sel.map(chaveFolha)),sem=R.users.filter(u=>us.has(String(u.uid))&&!folhaTemMarcacao(u));
+  return sem.length?`<div class="callout sand" style="margin:12px 0 0"><b>Sem marcações de ponto neste período</b> (não geram folha em PDF): ${sem.map(u=>esc(u.nome)).join(", ")}.</div>`:"";
 }
 function bindFolhas(){
   const re=()=>go("contador",true),tg=(set,v)=>{set.has(v)?set.delete(v):set.add(v)};
@@ -60,24 +65,29 @@ async function folhasBaixar(){
   const sel=folhaSel(),A=FOLHA.abas,fm=[...FOLHA.fmt],R=POINT.result;
   if(!sel.length)return toast("Nenhum integrante selecionado.",true);
   if(!fm.length)return toast("Marque ao menos um formato.",true);
-  if(!Object.values(A).some(Boolean))return toast("Marque ao menos uma aba.",true);
+  if(!Object.values(A).some(Boolean)&&fm.some(x=>x!=="fpdf"))return toast("Marque ao menos uma aba.",true);
+  if(!R&&fm.length===1&&fm[0]==="fpdf")return toast("Calcule o ponto na aba Ponto primeiro — a folha de ponto em PDF depende dele.",true);
   if(!R&&!A.capa&&!A.integrantes)return toast("Calcule o ponto na aba Ponto primeiro — jornadas e folha individual dependem dele.",true);
   const per=R?refYm(R.end):"sem-periodo";
   toast("Gerando as folhas…");
   try{
-    const arq=[],gerar=async(uids,rot)=>{
+    const arq=[],semPdf=new Set(),gerar=async(uids,rot,umaPessoa)=>{
       if(fm.includes("xlsx"))arq.push({nome:`folha-ponto_${rot}_${per}.xlsx`,blob:await xlsxFiltrado(uids,A)});
       if(fm.includes("pdf"))arq.push({nome:`folha-ponto_${rot}_${per}.pdf`,blob:await gerarPdfContador({uids,abas:A})});
+      if(fm.includes("fpdf")&&R){const us=new Set(uids.map(String)),L=R.users.filter(u=>us.has(String(u.uid)));L.filter(u=>!folhaTemMarcacao(u)).forEach(u=>semPdf.add(u.nome));const com=L.filter(folhaTemMarcacao);
+        if(com.length)arq.push({nome:umaPessoa?fpdfNomeArq(nomeInteg(com[0].ig||{})||com[0].nome,per):`folhas-de-ponto_${rot}_${per}.pdf`,blob:await folhaPdfGerar(com,R)})}
       if(fm.includes("csv")&&R&&(A.jornadas||A.individual))arq.push({nome:`folha-ponto_${rot}_${per}.csv`,blob:relCsv(specJornadas(uids))});
     };
-    if(FOLHA.modo==="pessoa"){const usados=new Set();for(const x of sel){let r=safe(x.nome),n=1;while(usados.has(r))r=safe(x.nome)+"_"+(++n);usados.add(r);await gerar([chaveFolha(x)],r)}}
+    if(FOLHA.modo==="pessoa"){const usados=new Set();for(const x of sel){let r=safe(x.nome),n=1;while(usados.has(r))r=safe(x.nome)+"_"+(++n);usados.add(r);await gerar([chaveFolha(x)],r,true)}}
     else await gerar(sel.map(chaveFolha),rotuloFolha(sel));
+    if(semPdf.size)toast(`Sem marcações de ponto neste período (sem folha em PDF): ${[...semPdf].join(", ")}.`,true);
     if(!arq.length)return toast("Nada para gerar com essas escolhas.",true);
-    if(arq.length===1){await saveFile(arq[0].nome,arq[0].blob);return}
+    const registra=ok=>{if(ok&&typeof audit==="function")audit("relatorio",`Folhas de ponto (${fm.join("/")}): ${sel.length} integrante(s) · ${per}`)};
+    if(arq.length===1){registra(await saveFile(arq[0].nome,arq[0].blob));return}
     if(typeof JSZip==="undefined")throw new Error("Biblioteca de compactação não carregou. Recarregue a página e tente de novo.");
     const zip=new JSZip();arq.forEach(a=>zip.file(a.nome,a.blob));
     const ok=await saveFile(`folhas-de-ponto_${per}.zip`,await zip.generateAsync({type:"blob"}));
-    if(ok)toast(`${arq.length} arquivo(s) em um .zip.`);
+    registra(ok);if(ok)toast(`${arq.length} arquivo(s) em um .zip.`);
   }catch(e){console.error(e);toast("Não foi possível gerar as folhas: "+(e&&e.message?e.message:e),true)}
 }
 function specFolhaIndividual(u,R){
