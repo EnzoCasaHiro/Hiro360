@@ -70,7 +70,7 @@ function bindPonto(){
   if(!P.result&&!P.err&&P.start&&P.start<=P.end&&(Object.keys(S.marcacoes).length||P.punches.length)&&P.autoCalc!==P.start+P.end){P.autoCalc=P.start+P.end;setTimeout(()=>{if(ROUTE==="ponto"&&!P.result)calcular(true)},30)}
   $("toPln").onclick=()=>openPlanilha();
   $("toXlsx").onclick=()=>exportXlsx();
-  $("toPdf").onclick=()=>exportPdfContador();
+  $("toPdf").onclick=()=>folhaPdfTodos();
   bindResult();
 }
 async function loadLog(f){

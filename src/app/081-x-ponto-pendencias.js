@@ -103,7 +103,8 @@ async function ppdBaixaExcel(u,D){
 }
 async function ppdPdfFinal(u,D){
   const R=ppdCalcula(D.ini,D.fim);
-  return ppdComResultado(R,()=>gerarPdfContador({uids:[String(u.uid)],abas:{capa:false,integrantes:false,jornadas:false,individual:true}}));
+  const x=R&&R.users.find(y=>String(y.uid)===String(u.uid));if(!x)throw new Error("integrante fora do período calculado.");
+  return folhaPdfGerar([x],R);
 }
 async function ppdMarcaEnviada(uid,info){
   BHCACHE.clear();

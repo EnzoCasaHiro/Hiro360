@@ -863,7 +863,7 @@ function bindPonto(){
   if(!P.result&&!P.err&&P.start&&P.start<=P.end&&(Object.keys(S.marcacoes).length||P.punches.length)&&P.autoCalc!==P.start+P.end){P.autoCalc=P.start+P.end;setTimeout(()=>{if(ROUTE==="ponto"&&!P.result)calcular(true)},30)}
   $("toPln").onclick=()=>openPlanilha();
   $("toXlsx").onclick=()=>exportXlsx();
-  $("toPdf").onclick=()=>exportPdfContador();
+  $("toPdf").onclick=()=>folhaPdfTodos();
   bindResult();
 }
 async function loadLog(f){
@@ -5709,16 +5709,17 @@ async function folhaMesesBaixar(){
   const de=FMM.de<=FMM.ate?FMM.de:FMM.ate,ate=FMM.de<=FMM.ate?FMM.ate:FMM.de,meses=mesesEntre(de,ate);
   toast(`Calculando ${meses.length} mês(es)…`);
   try{
-    const specs=[],sem=[];
+    const specs=[],sem=[],pares=[];
     for(const m of meses){
       const ini=refIni(m),fim=fimCalc(m);if(fim<ini){sem.push(m);continue}
       const r=calcSilencioso(ini,fim);
       if(!r||r.erro)throw new Error(`${fmmRot(m)}: ${(r&&r.erro)||"não foi possível calcular"}`);
       const u=r.users.find(x=>x.ig&&x.ig.id===ig.id);if(!u){sem.push(m);continue}
+      pares.push([u,{users:r.users,start:ini,end:fim}]);
       const sp=specFolhaIndividual(u,{users:r.users,start:ini,end:fim});sp.titulo=`Folha de ponto ${fmmRot(m)} — ${u.nome}`;specs.push(sp);
     }
     if(!specs.length)return toast(`Não há ponto de ${nomeInteg(ig)} entre ${fmmRot(de)} e ${fmmRot(ate)}.`,true);
-    const blob=FMM.fmt==="xlsx"?await relXlsx(specs):await relPdf(specs,{});
+    const blob=FMM.fmt==="xlsx"?await relXlsx(specs):await folhaPdfGerarPares(pares);
     const ok=await saveFile(`folha-ponto_${safe(nomeInteg(ig))}_${de}_a_${ate}.${FMM.fmt}`,blob);
     if(ok&&sem.length)toast(`Sem ponto (fora do contrato ou mês ainda não começou): ${sem.map(fmmRot).join(", ")}.`,true);
   }catch(e){console.error(e);toast("Não foi possível gerar a folha: "+(e&&e.message?e.message:e),true)}
@@ -15488,7 +15489,8 @@ async function ppdBaixaExcel(u,D){
 }
 async function ppdPdfFinal(u,D){
   const R=ppdCalcula(D.ini,D.fim);
-  return ppdComResultado(R,()=>gerarPdfContador({uids:[String(u.uid)],abas:{capa:false,integrantes:false,jornadas:false,individual:true}}));
+  const x=R&&R.users.find(y=>String(y.uid)===String(u.uid));if(!x)throw new Error("integrante fora do período calculado.");
+  return folhaPdfGerar([x],R);
 }
 async function ppdMarcaEnviada(uid,info){
   BHCACHE.clear();
@@ -18288,12 +18290,14 @@ function fpdfDesenha(doc,P,lg,emitido){
   f("normal",6.6,C.mute);txt("Casa Hiro · Caraguatatuba — Litoral Norte de SP · casahiro.com.br",M,rodapeY);
   txt(fpdfCabe(doc,"Emitido em "+emitido+" · "+P.nome,CW/2),M+CW,rodapeY,{align:"right"});
 }
-// um PDF com uma página por integrante (lista de {u}); integrantes sem marcação ficam de fora
-async function folhaPdfGerar(users,R){
+// um PDF com uma página por integrante, todos do mesmo período
+const folhaPdfGerar=(users,R)=>folhaPdfGerarPares(users.map(u=>[u,R]));
+// um PDF com uma página por par [integrante, período] (serve para a folha de vários meses)
+async function folhaPdfGerarPares(pares){
   if(typeof window.jspdf==="undefined"||!window.jspdf.jsPDF)throw new Error("A biblioteca de PDF não carregou. Recarregue a página e tente de novo.");
   const lg=await logosMarca(),{jsPDF}=window.jspdf,doc=new jsPDF({orientation:"portrait",unit:"pt",format:"a4",compress:true}),e=empresa();
   const agora=new Date(),emitido=agora.toLocaleDateString("pt-BR")+" "+agora.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-  users.forEach((u,i)=>{if(i)doc.addPage();fpdfDesenha(doc,fpdfPagina(u,R,e),lg,emitido)});
+  pares.forEach(([u,R],i)=>{if(i)doc.addPage();fpdfDesenha(doc,fpdfPagina(u,R,e),lg,emitido)});
   return new Blob([doc.output("arraybuffer")],{type:"application/pdf"});
 }
 // botão "Baixar folha (PDF)" no cartão do integrante (aba Ponto)
@@ -18306,6 +18310,18 @@ async function folhaPdfBaixar(uid){
     const ok=await saveFile(fpdfNomeArq(nome,refYm(R.end)),await folhaPdfGerar([u],R));
     if(ok&&typeof audit==="function")audit("relatorio","Folha de ponto (PDF): "+nome);
   }catch(err){console.error(err);toast("Não foi possível gerar a folha: "+(err&&err.message?err.message:err),true)}
+}
+// botão "Folha de ponto (PDF)" no topo da aba Ponto: todas as folhas do período num PDF só (quem não tem marcação fica de fora)
+async function folhaPdfTodos(){
+  const R=POINT.result;if(!R)return toast("Calcule o ponto primeiro.",true);
+  const com=R.users.filter(u=>!semPonto(u.ig||{})&&folhaTemMarcacao(u)),sem=R.users.filter(u=>!semPonto(u.ig||{})&&!folhaTemMarcacao(u));
+  if(!com.length)return toast("Sem marcações de ponto neste período.",true);
+  try{
+    toast("Gerando as folhas…");
+    const ok=await saveFile(`folhas-de-ponto_todos_${refYm(R.end)}.pdf`,await folhaPdfGerar(com,R));
+    if(ok&&typeof audit==="function")audit("relatorio",`Folhas de ponto (PDF): ${com.length} integrante(s) · ${refYm(R.end)}`);
+    if(ok&&sem.length)toast(`Sem marcações de ponto neste período (sem folha): ${sem.map(u=>u.nome).join(", ")}.`,true);
+  }catch(err){console.error(err);toast("Não foi possível gerar as folhas: "+(err&&err.message?err.message:err),true)}
 }
 document.addEventListener("click",ev=>{const b=ev.target.closest&&ev.target.closest("[data-fpdf]");if(b&&!b.disabled)folhaPdfBaixar(b.dataset.fpdf)});
 /* ================= início ================= */

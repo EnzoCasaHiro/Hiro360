@@ -131,16 +131,17 @@ async function folhaMesesBaixar(){
   const de=FMM.de<=FMM.ate?FMM.de:FMM.ate,ate=FMM.de<=FMM.ate?FMM.ate:FMM.de,meses=mesesEntre(de,ate);
   toast(`Calculando ${meses.length} mês(es)…`);
   try{
-    const specs=[],sem=[];
+    const specs=[],sem=[],pares=[];
     for(const m of meses){
       const ini=refIni(m),fim=fimCalc(m);if(fim<ini){sem.push(m);continue}
       const r=calcSilencioso(ini,fim);
       if(!r||r.erro)throw new Error(`${fmmRot(m)}: ${(r&&r.erro)||"não foi possível calcular"}`);
       const u=r.users.find(x=>x.ig&&x.ig.id===ig.id);if(!u){sem.push(m);continue}
+      pares.push([u,{users:r.users,start:ini,end:fim}]);
       const sp=specFolhaIndividual(u,{users:r.users,start:ini,end:fim});sp.titulo=`Folha de ponto ${fmmRot(m)} — ${u.nome}`;specs.push(sp);
     }
     if(!specs.length)return toast(`Não há ponto de ${nomeInteg(ig)} entre ${fmmRot(de)} e ${fmmRot(ate)}.`,true);
-    const blob=FMM.fmt==="xlsx"?await relXlsx(specs):await relPdf(specs,{});
+    const blob=FMM.fmt==="xlsx"?await relXlsx(specs):await folhaPdfGerarPares(pares);
     const ok=await saveFile(`folha-ponto_${safe(nomeInteg(ig))}_${de}_a_${ate}.${FMM.fmt}`,blob);
     if(ok&&sem.length)toast(`Sem ponto (fora do contrato ou mês ainda não começou): ${sem.map(fmmRot).join(", ")}.`,true);
   }catch(e){console.error(e);toast("Não foi possível gerar a folha: "+(e&&e.message?e.message:e),true)}
