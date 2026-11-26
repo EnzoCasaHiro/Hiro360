@@ -44,3 +44,13 @@ test('peças, roupa de cama e consumo não são patrimônio', () => {
   assert.strictEqual(auto('ARROZ 5KG', 'Alimentação'), false);
   assert.strictEqual(auto('MESA', 'Alimentação'), false); // categoria de consumo escolhida à mão vale
 });
+
+test('frete, carga de gás e serviços ligados a um bem são despesa', () => {
+  const auto = regra();
+  assert.strictEqual(auto('Frete de Cama de Solteiro Madeida Maciça (Lançamento 140)', ''), false);
+  assert.strictEqual(auto('Carga de Gas Butano Fogão 227G Nautika', ''), false);
+  assert.strictEqual(auto('Carga de Gás Butano Fogão 227G Nautika', 'Equipamentos e mobiliário'), false);
+  assert.strictEqual(auto('MONTAGEM GUARDA-ROUPA', ''), false);
+  assert.strictEqual(auto('INSTALACAO AR CONDICIONADO', ''), false);
+  assert.strictEqual(auto('CAMA DE SOLTEIRO MADEIRA MACICA', ''), true);
+});

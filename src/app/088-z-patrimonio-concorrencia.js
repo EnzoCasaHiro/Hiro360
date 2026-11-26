@@ -13,7 +13,10 @@ const PCONC_NOME=/\b(fogao|cooktop|forno|coifa|depurador|exaustor|geladeira|refr
 const PCONC_NAO=/\b(jogo de cama|roupa de cama|lencol|fronha|protetor|capa|forro|toalha|pano|refil|filtros?|pecas?|reparo|resistencia|botao|puxador|dobradica|parafusos?|rodizios?|mangueira|registro|acendedor|tampa|grelha|queimador|vela|suporte|controle remoto|cabo|limpador|limpa)\b/;
 // categoria de consumo escolhida na nota: não é bem, mesmo que o nome pareça
 const PCONC_CONSUMO=/^(medicamentos|alimentacao|material de enfermagem|limpeza e higiene|higiene pessoal e conforto|enxoval e uniformes)$/;
+// frete, montagem, gás e outros serviços ligados a um bem: são despesa, nunca o bem (vale até com categoria de mobiliário)
+const PCONC_DESPESA=/\b(fretes?|entrega|montagem|instalacao|mao de obra|servicos?|carga|recarga|gas|butano|glp|botijao|taxas?|conserto|manutencao)\b/;
 function pconcAuto(nome,cat){
+  if(PCONC_DESPESA.test(NFN(nome)))return false;
   const c=NFN(cat);if(c==="equipamentos e mobiliario")return true;
   if(PCONC_CONSUMO.test(c))return false;
   const n=NFN(nome);return PCONC_NOME.test(n)&&!PCONC_NAO.test(n);
@@ -27,8 +30,19 @@ function pconcNfCat(r){
   const k=typeof nfClassificaX==="function"?nfClassificaX(r):null;
   return k?{cat:k.cat,sub:k.sub}:{cat:c||"",sub:""};
 }
+// obras, mão de obra de pedreiros e outros gastos lançados à mão nesta aba (config/x_infra, patConcObras)
+const PCONC_TIPOS=["Obras e benfeitorias — mão de obra","Obras e benfeitorias — material","Outro bem"];
+const pconcObras=()=>xcfg("infra").patConcObras||[];
+// aceita 120000 · 120.000 · 120.000,00 · 120000,50
+function pconcValor(s){
+  s=String(s||"").replace(/[R$\s]/g,"");if(!s)return NaN;
+  if(s.includes(","))s=s.replace(/\./g,"").replace(",",".");else if(/^\d{1,3}(\.\d{3})+$/.test(s))s=s.replace(/\./g,"");
+  const n=Number(s);return isFinite(n)?n:NaN;
+}
 function pconcTodos(){
   const L=[],nomesNf=new Set();
+  pconcObras().forEach(o=>L.push({k:"m:"+o.id,nome:o.desc,cat:o.cat||PCONC_TIPOS[0],qtd:1,unit:+o.valor||0,total:+o.valor||0,data:o.data||"",
+    onde:o.obs||"",origem:"Lançado nesta aba",auto:true,manual:true}));
   xs("ativos").filter(a=>a.estado!=="baixado").forEach(a=>L.push({k:"a:"+a.id,nome:a.nome,cat:(a.cat||"").split(" (")[0]||"Outro",qtd:1,unit:+a.valor||0,total:+a.valor||0,data:a.compra||"",
     onde:[a.local,a.serie].filter(Boolean).join(" · "),origem:"Cadastro de patrimônio",auto:true}));
   if(typeof f11Bens==="function")f11Bens().filter(b=>!b.baixa).forEach(b=>L.push({k:"b:"+b.id,nome:b.nome,cat:b.cat||"",qtd:1,unit:+b.valor||0,total:+b.valor||0,data:b.data||"",
@@ -40,7 +54,7 @@ function pconcTodos(){
   });
   // compras sem nota lançadas no Financeiro (as que vieram de nota têm "nf" e já estão acima)
   if(podeVer("fin")&&typeof finAll==="function")finAll().filter(e=>e.tipo==="pagar"&&!e.nf).forEach(e=>{
-    const v=+(e.valorPago||e.valor)||0,auto=PCONC_CATFIN.test(NFN(e.cat))||pconcAuto(e.desc,"");
+    const v=+(e.valorPago||e.valor)||0,auto=!PCONC_DESPESA.test(NFN(e.desc))&&(PCONC_CATFIN.test(NFN(e.cat))||pconcAuto(e.desc,""));
     L.push({k:"f:"+e.id,nome:e.desc||"(sem descrição)",cat:e.cat||"Sem categoria",qtd:1,unit:v,total:v,data:(typeof e.pago==="string"&&e.pago)||e.venc||"",
       onde:e.contra?"Fornecedor: "+e.contra:"",origem:"Financeiro (compra sem nota)",auto});
   });
@@ -63,9 +77,10 @@ function pconcHtml(){
   const vis=pconcVisiveis(T),mostra=vis.slice(0,PCONC_MAX),falta=[!podeVer("nf")?"as notas fiscais":"",!podeVer("fin")?"o Financeiro":"",!podeVer("estoque")?"o Estoque":""].filter(Boolean);
   const chip=(v,t)=>`<button type="button" class="daypill ${PCONC.cat===v?"on":""}" data-pccat="${esc(v)}" style="width:auto;padding:0 10px">${esc(t)}</button>`;
   return `<div class="card"><h2>Patrimônio para concorrência pública</h2>
-   <p class="sub" style="margin:0 0 10px">Junta numa lista só os bens da casa — móveis, eletrodomésticos, camas e equipamentos — vindos do cadastro de Patrimônio, das notas fiscais de compra, das compras sem nota lançadas no Financeiro e do Estoque. Comida, fralda, remédio, peças e itens de consumo ficam de fora. Se algo entrou errado, desmarque; se faltou, escolha “Procurar em tudo que foi comprado”, busque pelo nome e marque.</p>
+   <p class="sub" style="margin:0 0 10px">Junta numa lista só os bens da casa — móveis, eletrodomésticos, camas e equipamentos — vindos do cadastro de Patrimônio, das notas fiscais de compra, das compras sem nota lançadas no Financeiro e do Estoque. Comida, fralda, remédio, peças, frete, gás e itens de consumo ficam de fora. Obras e mão de obra (ex.: pedreiros) você lança logo abaixo. Se algo entrou errado, desmarque; se faltou, escolha “Procurar em tudo que foi comprado”, busque pelo nome e marque.</p>
    ${falta.length?`<div class="callout sand" style="margin-bottom:10px">Seu perfil não enxerga ${falta.join(", ")}: a lista mostra só o que você pode ver.</div>`:""}
    <div class="stats"><div class="stat"><b>${inc.length}</b><span>linhas no patrimônio</span></div><div class="stat"><b>${NUMF(soma(inc,x=>x.qtd),0)}</b><span>unidades</span></div><div class="stat"><b>${fmtBRL(soma(inc,x=>x.total))}</b><span>valor de compra</span></div></div>
+   ${ed||pconcObras().length?pconcObrasHtml(ed):""}
    <div class="row" style="margin:12px 0 8px;align-items:flex-end">
     <div style="flex:0 0 300px"><label>Mostrar</label><select id="pcver"><option value="lista" ${todos?"":"selected"}>Só o que é patrimônio</option><option value="todos" ${todos?"selected":""}>Procurar em tudo que foi comprado (notas, Financeiro e Estoque)</option></select></div>
     <div style="flex:1 1 220px"><label>Buscar</label><input id="pcq" placeholder="Ex.: cama, fogão, armário" value="${esc(PCONC.q)}"></div>
@@ -76,10 +91,22 @@ function pconcHtml(){
    ${vis.length?`<div class="wrap"><table><thead><tr>${ed?"<th>Patrimônio?</th>":""}<th>Bem</th><th>Categoria</th><th>Qtd</th><th>Valor</th><th>Aquisição</th><th>Origem</th></tr></thead><tbody>${mostra.map(x=>`<tr style="${x.inc?"":"opacity:.6"}">${ed?`<td><input type="checkbox" data-pck="${esc(x.k)}" data-auto="${x.auto?1:0}" ${x.inc?"checked":""}></td>`:""}<td><b>${esc(x.nome)}</b>${x.onde?`<div class="sub">${esc(x.onde)}</div>`:""}</td><td>${esc(x.cat)}</td><td class="n">${NUMF(x.qtd,0)}</td><td class="n">${fmtBRL(x.total)}</td><td class="n">${x.data?brDate(x.data):"—"}</td><td>${esc(x.origem)}${x.auto!==x.inc?` <span class="sub">(marcado à mão)</span>`:""}</td></tr>`).join("")}</tbody></table></div>
      ${vis.length>PCONC_MAX?`<p class="sub" style="margin:8px 0 0">Mostrando ${PCONC_MAX} de ${vis.length} linhas. Use a busca ou a categoria para achar as outras (o download leva todas).</p>`:""}`:`<div class="empty">${todos&&PCONC.q?"Nada com esse nome nas notas, no Financeiro nem no Estoque. Se o bem não foi lançado em lugar nenhum, cadastre na aba Patrimônio.":"Nada encontrado."}</div>`}</div>`;
 }
+function pconcObrasHtml(ed){
+  const O=pconcObras().slice().sort((a,b)=>(b.data||"").localeCompare(a.data||""));
+  return `<details class="card" style="margin:12px 0 0;padding:10px 12px" ${O.length?"":"open"}><summary style="cursor:pointer"><b>Obras e mão de obra</b> <span class="sub">— reforma, pedreiros e outros gastos que não vieram de nota, Financeiro ou Estoque${O.length?` · ${O.length} lançamento(s), ${fmtBRL(soma(O,o=>+o.valor||0))}`:""}</span></summary>
+   ${ed?`<div class="row" style="margin:10px 0 6px;align-items:flex-end">
+    <div style="flex:2 1 260px"><label>Descrição</label><input id="pcodesc" placeholder="Ex.: Mão de obra dos pedreiros — reforma"></div>
+    <div style="flex:1 1 220px"><label>Tipo</label><select id="pcocat">${PCONC_TIPOS.map(t=>`<option>${esc(t)}</option>`).join("")}</select></div>
+    <div style="flex:0 0 150px"><label>Valor (R$)</label><input id="pcoval" inputmode="decimal" placeholder="120.000,00"></div>
+    <div style="flex:0 0 160px"><label>Data</label><input id="pcodata" type="date" value="${hojeIso()}"></div>
+    <div style="flex:1 1 200px"><label>Detalhe (opcional)</label><input id="pcoobs" placeholder="Ex.: ampliação dos quartos, empreiteiro"></div>
+    <div style="flex:none"><button class="b" id="pcoadd">Lançar</button></div></div>`:""}
+   ${O.length?`<div class="wrap"><table><thead><tr><th>Descrição</th><th>Tipo</th><th>Valor</th><th>Data</th>${ed?"<th></th>":""}</tr></thead><tbody>${O.map(o=>`<tr><td><b>${esc(o.desc)}</b>${o.obs?`<div class="sub">${esc(o.obs)}</div>`:""}</td><td>${esc(o.cat||"")}</td><td class="n">${fmtBRL(+o.valor||0)}</td><td class="n">${o.data?brDate(o.data):"—"}</td>${ed?`<td><button class="b sec" data-pcodel="${esc(o.id)}">Excluir</button></td>`:""}</tr>`).join("")}</tbody></table></div>`:""}</details>`;
+}
 function pconcBaixar(fmt){
   const L=pconcVisiveis(pconcTodos()).filter(x=>x.inc);if(!L.length)return toast("Nenhum bem marcado nesta lista.",true);
   const filtro=[PCONC.cat,PCONC.q?"busca: "+PCONC.q:""].filter(Boolean).join(" · ");
-  const spec={titulo:"Patrimônio da Casa Hiro",sub:`Bens e equipamentos · posição em ${brDate(hojeIso())}${filtro?" · "+filtro:""}`,sensivel:false,
+  const spec={titulo:"Patrimônio da Casa Hiro",sub:`Bens, equipamentos e obras · posição em ${brDate(hojeIso())}${filtro?" · "+filtro:""}`,sensivel:false,
     cols:[{h:"Bem",w:36},{h:"Categoria",w:24},{h:"Qtd",t:"num",w:7},{h:"Valor unitário",t:"money",w:13},{h:"Valor total",t:"money",w:13},{h:"Aquisição",t:"date",w:11},{h:"Onde fica / detalhe",w:28},{h:"Origem",w:22}],
     rows:L.map(x=>[x.nome,x.cat,x.qtd,x.unit,x.total,x.data,x.onde,x.origem]),tot:[null,null,"sum",null,"sum",null,null,null]};
   (async()=>{try{
@@ -97,6 +124,19 @@ function pconcBind(){
     const M={...pconcMarcas()},k=c.dataset.pck;
     if(c.checked===(c.dataset.auto==="1"))delete M[k];else M[k]=c.checked; // só guarda o que foi mudado à mão
     xcfgSave("infra",{patConc:M});re()});
+  const add=$("pcoadd");if(add)add.onclick=()=>{
+    if(!podeEd("infra"))return toast("Seu perfil não permite.",true);
+    const desc=$("pcodesc").value.trim(),valor=pconcValor($("pcoval").value),data=$("pcodata").value;
+    if(!desc)return toast("Escreva a descrição (ex.: mão de obra dos pedreiros).",true);
+    if(!(valor>0))return toast("Informe o valor (ex.: 120.000,00).",true);
+    xcfgSave("infra",{patConcObras:[...pconcObras(),{id:uid8(),desc,cat:$("pcocat").value,valor:Math.round(valor*100)/100,data,obs:$("pcoobs").value.trim()}]});
+    toast("Lançado: "+desc+" — "+fmtBRL(valor));re()};
+  document.querySelectorAll("[data-pcodel]").forEach(b=>b.onclick=async()=>{
+    if(!podeEd("infra"))return toast("Seu perfil não permite.",true);
+    const id=b.dataset.pcodel,o=pconcObras().find(x=>x.id===id);if(!o)return;
+    if(!await askConfirm(`Excluir "${o.desc}" (${fmtBRL(+o.valor||0)}) do patrimônio?`,"Excluir"))return;
+    const M={...pconcMarcas()};delete M["m:"+id];
+    xcfgSave("infra",{patConcObras:pconcObras().filter(x=>x.id!==id),patConc:M});re()});
   const x=$("pcxls");if(x)x.onclick=()=>pconcBaixar("xlsx");
   const p=$("pcpdf");if(p)p.onclick=()=>pconcBaixar("pdf");
 }
