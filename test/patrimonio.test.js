@@ -54,3 +54,20 @@ test('frete, carga de gás e serviços ligados a um bem são despesa', () => {
   assert.strictEqual(auto('INSTALACAO AR CONDICIONADO', ''), false);
   assert.strictEqual(auto('CAMA DE SOLTEIRO MADEIRA MACICA', ''), true);
 });
+
+test('material da obra entra: piso, luminária, porta, janela, louças, tinta, elétrica', () => {
+  const auto = regra();
+  for (const n of ['PISO PORCELANATO 60X60 ACETINADO', 'Porcelanato polido 80x80', 'LUMINARIA LED SOBREPOR 40W', 'PLAFON LED 18W',
+    'PORTA DE MADEIRA 80X210', 'Porta pivotante', 'JANELA DE CORRER ALUMINIO', 'VASO SANITARIO COM CAIXA ACOPLADA', 'CUBA DE APOIO',
+    'TORNEIRA MONOCOMANDO', 'TINTA ACRILICA FOSCA 18L', 'ARGAMASSA AC3 20KG', 'CIMENTO CP II 50KG', 'DISJUNTOR BIPOLAR 40A',
+    'FIO FLEXIVEL 2,5MM 100M', 'TUBO PVC 50MM', 'BARRA DE APOIO 80CM', 'Material de construção'])
+    assert.strictEqual(auto(n, 'Manutenção e reparos'), true, n);
+});
+
+test('parece obra mas não é: acessório, consumo, mão de obra e frete', () => {
+  const auto = regra();
+  for (const n of ['PORTA TOALHA INOX', 'PORTA PAPEL HIGIENICO', 'TINTA PARA IMPRESSORA', 'LAMPADA LED 9W', 'PUXADOR PARA PORTA',
+    'DOBRADICA PORTA 3"', 'FIO DENTAL 50M', 'Pedreiro — semana 3', 'Diária eletricista', 'FRETE PORCELANATO', 'INSTALACAO DE LUMINARIAS'])
+    assert.strictEqual(auto(n, ''), false, n);
+  assert.strictEqual(auto('LUMINARIA LED', 'Limpeza e higiene'), false); // categoria de consumo escolhida na nota vale
+});

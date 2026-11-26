@@ -17458,19 +17458,29 @@ const PCONC_MAX=300;
 // nome do item (já sem acento, em minúsculas) que indica bem durável
 const PCONC_NOME=/\b(fogao|cooktop|forno|coifa|depurador|exaustor|geladeira|refrigerador|freezer|frigobar|micro ?ondas|lava ?loucas|maquina de lavar|lavadora|tanquinho|centrifuga|secadora|ar condicionado|climatizador|ventilador|televis\w*|tv|bebedouro|purificador|cama|beliche|colchao|berco|cabeceira|sofa|poltrona|cadeira|mesa|armario|guarda ?roupa|roupeiro|comoda|criado mudo|estante|rack|gaveteiro|escrivaninha|balcao|longarina|andador|computador|notebook|impressora|nobreak|tablet|celular|smartphone|extintor|camera de seguranca|dvr|concentrador de oxigenio)\b/;
 // peças, acessórios e roupa de cama: não são o bem
-const PCONC_NAO=/\b(jogo de cama|roupa de cama|lencol|fronha|protetor|capa|forro|toalha|pano|refil|filtros?|pecas?|reparo|resistencia|botao|puxador|dobradica|parafusos?|rodizios?|mangueira|registro|acendedor|tampa|grelha|queimador|vela|suporte|controle remoto|cabo|limpador|limpa)\b/;
+const PCONC_NAO=/\b(jogo de cama|roupa de cama|lencol|fronha|protetor|capa|forro|toalha|pano|refil|filtros?|pecas?|reparo|resistencia|botao|puxador|dobradica|parafusos?|rodizios?|mangueira|registro|acendedor|tampa|grelha|queimador|vela|suporte|controle remoto|cabo|limpador|limpa|tintas?|cartuchos?|toner)\b/;
 // categoria de consumo escolhida na nota: não é bem, mesmo que o nome pareça
 const PCONC_CONSUMO=/^(medicamentos|alimentacao|material de enfermagem|limpeza e higiene|higiene pessoal e conforto|enxoval e uniformes)$/;
 // frete, montagem, gás e outros serviços ligados a um bem: são despesa, nunca o bem (vale até com categoria de mobiliário)
-const PCONC_DESPESA=/\b(fretes?|entrega|montagem|instalacao|mao de obra|servicos?|carga|recarga|gas|butano|glp|botijao|taxas?|conserto|manutencao)\b/;
+// (pedreiro, empreiteiro, eletricista… também: a mão de obra da obra é lançada à mão na aba, para não contar em dobro)
+const PCONC_DESPESA=/\b(fretes?|entrega|montagem|instalacao|mao de obra|servicos?|carga|recarga|gas|butano|glp|botijao|taxas?|conserto|manutencao|pedreiros?|empreiteir\w*|eletricista|encanador|pintor|servente|diarias?)\b/;
+// material da obra (piso, luminária, porta, janela, louças, tinta, elétrica, hidráulica): entra como obra
+const PCONC_OBRA=/\b(pisos?|porcelanatos?|ceramicas?|revestimentos?|azulejos?|rejunte|argamassa|cimento|concreto|areia|brita|tijolos?|blocos? de concreto|telhas?|vergalh\w*|gesso|drywall|forro de (gesso|pvc)|rodapes?|soleiras?|peitoril|luminarias?|plafon|spots?|arandelas?|pendentes?|refletor(es)?|portas?|portao|batentes?|janelas?|vitro|esquadrias?|vidros?|box|espelhos?|pias?|cubas?|bancadas?|vaso sanitario|bacia sanitaria|torneiras?|chuveiros?|misturador|caixa d ?agua|tintas?|massa corrida|selador|impermeabiliz\w*|disjuntor(es)?|quadro de distribuicao|fios? (eletricos?|flexive(l|is)|rigidos?)|cabos? flexive(l|is)|eletrodutos?|tomadas?|interruptor(es)?|tubos? (de )?pvc|canos?|conexo(es)? (de )?pvc|material (de construcao|eletrico|hidraulico)|corrimao|barras? de apoio|grades?|toldos?|calhas?)\b/;
+// parecem obra mas são acessório, consumo ou outra coisa
+const PCONC_OBRA_NAO=/\b(porta ?(toalhas?|papel|retratos?|copos?|sabonete|trecos?|escovas?|chaves?|lapis|joias|temperos?|controle|guardanapos?|comprimidos?)|tintas? (para |de )?(impressora|carimbo|cabelo)|cartucho|toner|puxador|dobradica|parafusos?|buchas?|pregos?|trinco|lampadas?|tapete|cortina|protetor)\b/;
+const pconcEhObra=n=>PCONC_OBRA.test(n)&&!PCONC_OBRA_NAO.test(n)&&!PCONC_NOME.test(n);
 function pconcAuto(nome,cat){
   if(PCONC_DESPESA.test(NFN(nome)))return false;
   const c=NFN(cat);if(c==="equipamentos e mobiliario")return true;
   if(PCONC_CONSUMO.test(c))return false;
-  const n=NFN(nome);return PCONC_NOME.test(n)&&!PCONC_NAO.test(n);
+  const n=NFN(nome);return (PCONC_NOME.test(n)&&!PCONC_NAO.test(n))||pconcEhObra(n);
 }
 /* <<< regra */
 const PCONC_CATFIN=/imobiliz|equipament|moveis|movel|mobili|eletrodom/;
+// categoria do Financeiro que é obra (não "Manutenção e reformas", que é despesa do dia a dia)
+const PCONC_CATOBRA=/obras?|construc|benfeitor|^reformas?/;
+const PCONC_MAT="Obras e benfeitorias — material";
+const pconcCatObra=(nome,cat,auto)=>auto&&pconcEhObra(NFN(nome))?PCONC_MAT:cat;
 const pconcMarcas=()=>xcfg("infra").patConc||{};
 function pconcNfCat(r){
   const c=r.categoria;
@@ -17504,17 +17514,17 @@ function pconcTodos(){
     onde:[b.local,b.serie?"série "+b.serie:""].filter(Boolean).join(" · "),origem:"Financeiro (bens)",auto:true}));
   ((S.config.nf&&S.config.nf.rows)||[]).forEach(r=>{
     const c=pconcNfCat(r),auto=pconcAuto(r.item,c.cat);nomesNf.add(NFN(r.item));
-    L.push({k:"n:"+nfKey(r)+"|"+NFN(r.item),nome:r.item,cat:(c.cat==="Equipamentos e mobiliário"?c.sub:c.cat)||"Sem categoria",qtd:+r.qtd||1,unit:+r.valor||0,total:+r.total||0,data:r.date||"",
+    L.push({k:"n:"+nfKey(r)+"|"+NFN(r.item),nome:r.item,cat:pconcCatObra(r.item,(c.cat==="Equipamentos e mobiliário"?c.sub:c.cat)||"Sem categoria",auto),qtd:+r.qtd||1,unit:+r.valor||0,total:+r.total||0,data:r.date||"",
       onde:r.local?"Local na nota: "+r.local:"",origem:"Nota fiscal"+(r.nota?" nº "+r.nota:""),auto,catRegra:c.cat});
   });
   // compras sem nota lançadas no Financeiro (as que vieram de nota têm "nf" e já estão acima)
   if(podeVer("fin")&&typeof finAll==="function")finAll().filter(e=>e.tipo==="pagar"&&!e.nf&&!e.pconcObra).forEach(e=>{ // pagamento de obra lançada nesta aba já está acima
-    const v=+(e.valorPago||e.valor)||0,auto=!PCONC_DESPESA.test(NFN(e.desc))&&(PCONC_CATFIN.test(NFN(e.cat))||pconcAuto(e.desc,""));
-    L.push({k:"f:"+e.id,nome:e.desc||"(sem descrição)",cat:e.cat||"Sem categoria",qtd:1,unit:v,total:v,data:(typeof e.pago==="string"&&e.pago)||e.venc||"",
+    const v=+(e.valorPago||e.valor)||0,auto=!PCONC_DESPESA.test(NFN(e.desc))&&(PCONC_CATFIN.test(NFN(e.cat))||PCONC_CATOBRA.test(NFN(e.cat))||pconcAuto(e.desc,""));
+    L.push({k:"f:"+e.id,nome:e.desc||"(sem descrição)",cat:pconcCatObra(e.desc,e.cat||"Sem categoria",auto),qtd:1,unit:v,total:v,data:(typeof e.pago==="string"&&e.pago)||e.venc||"",
       onde:e.contra?"Fornecedor: "+e.contra:"",origem:"Financeiro (compra sem nota)",auto});
   });
   // bens lançados direto no Estoque (os que vieram de nota já estão acima)
-  estData().itens.filter(i=>+i.qtd>0&&!nomesNf.has(NFN(i.nome))).forEach(i=>L.push({k:"e:"+i.id,nome:i.nome,cat:i.area||"Estoque",qtd:+i.qtd||1,unit:+i.custo||0,total:(+i.qtd||0)*(+i.custo||0),
+  estData().itens.filter(i=>+i.qtd>0&&!nomesNf.has(NFN(i.nome))).forEach(i=>L.push({k:"e:"+i.id,nome:i.nome,cat:pconcCatObra(i.nome,i.area||"Estoque",pconcAuto(i.nome,"")),qtd:+i.qtd||1,unit:+i.custo||0,total:(+i.qtd||0)*(+i.custo||0),
     data:(i.ultCompra&&i.ultCompra.data)||"",onde:i.area?"Área: "+i.area:"",origem:"Estoque",auto:pconcAuto(i.nome,"")}));
   const M=pconcMarcas();L.forEach(x=>{x.inc=M[x.k]!==undefined?!!M[x.k]:x.auto;if(!x.inc)x.motivo=M[x.k]===false?"Desmarcado à mão":pconcMotivo(x.nome,x.catRegra||"")});
   return L;
@@ -17522,7 +17532,7 @@ function pconcTodos(){
 // por que uma compra ficou fora do patrimônio (mesma ordem da regra pconcAuto)
 function pconcMotivo(nome,cat){
   const n=NFN(nome),c=NFN(cat);
-  if(PCONC_DESPESA.test(n))return"Despesa: frete, gás, montagem ou serviço";
+  if(PCONC_DESPESA.test(n))return"Despesa: frete, gás, montagem, serviço ou mão de obra (lance a mão de obra em Obras e mão de obra)";
   if(PCONC_CONSUMO.test(c))return"Categoria de consumo na nota: "+cat;
   if(PCONC_NOME.test(n)&&PCONC_NAO.test(n))return"Peça, acessório ou roupa de cama";
   return"O nome não indica móvel, eletrodoméstico ou equipamento";
@@ -17543,7 +17553,7 @@ function pconcHtml(){
   const vis=pconcVisiveis(T),mostra=vis.slice(0,PCONC_MAX),falta=[!podeVer("nf")?"as notas fiscais":"",!podeVer("fin")?"o Financeiro":"",!podeVer("estoque")?"o Estoque":""].filter(Boolean);
   const chip=(v,t)=>`<button type="button" class="daypill ${PCONC.cat===v?"on":""}" data-pccat="${esc(v)}" style="width:auto;padding:0 10px">${esc(t)}</button>`;
   return `<div class="card"><h2>Patrimônio para concorrência pública</h2>
-   <p class="sub" style="margin:0 0 10px">Junta numa lista só os bens da casa — móveis, eletrodomésticos, camas e equipamentos — vindos do cadastro de Patrimônio, das notas fiscais de compra, das compras sem nota lançadas no Financeiro e do Estoque. Comida, fralda, remédio, peças, frete, gás e itens de consumo ficam de fora. Obras e mão de obra (ex.: pedreiros) você lança logo abaixo. Se algo entrou errado, desmarque; se faltou, escolha “Procurar em tudo que foi comprado”, busque pelo nome e marque.</p>
+   <p class="sub" style="margin:0 0 10px">Junta numa lista só os bens da casa — móveis, eletrodomésticos, camas e equipamentos — vindos do cadastro de Patrimônio, das notas fiscais de compra, das compras sem nota lançadas no Financeiro e do Estoque. Os materiais da obra (piso, porcelanato, luminária, porta, janela, louças, tinta, material elétrico e hidráulico) entram como “Obras e benfeitorias — material”. Comida, fralda, remédio, peças, frete, gás e itens de consumo ficam de fora. A mão de obra (ex.: pedreiros) você lança logo abaixo. Se algo entrou errado, desmarque; se faltou, escolha “Procurar em tudo que foi comprado”, busque pelo nome e marque.</p>
    ${falta.length?`<div class="callout sand" style="margin-bottom:10px">Seu perfil não enxerga ${falta.join(", ")}: a lista mostra só o que você pode ver.</div>`:""}
    <div class="stats"><div class="stat"><b>${inc.length}</b><span>linhas no patrimônio</span></div><div class="stat"><b>${NUMF(soma(inc,x=>x.qtd),0)}</b><span>unidades</span></div><div class="stat"><b>${fmtBRL(soma(inc,x=>x.total))}</b><span>valor de compra</span></div><div class="stat"><b>${nFora}</b><span>compras que ficaram de fora</span></div></div>
    ${ed||pconcObras().length?pconcObrasHtml(ed):""}
