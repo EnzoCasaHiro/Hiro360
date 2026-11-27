@@ -20,7 +20,7 @@ function fpdfPagina(u,R,e){
   const D=folhaDados(u,R),ig=u.ig||{},ym=refYm(R.end),fb=D.fb,maxP=Math.max(2,...D.rows.map(r=>r.pares.length));
   const alerta=fb.notas.find(t=>/negativo acima/i.test(t))||"",outras=fb.notas.filter(t=>t!==alerta);
   return{nome:nomeInteg(ig)||u.nome,cargo:[ig.cargo,ig.depto].filter(Boolean).join(" · ")||"—",cpf:ig.cpf||"—",admissao:ig.admissao?brDate(ig.admissao):"—",
-    relogio:u.uid!=null?String(u.uid):"—",escala:ig.id?escalasTexto(ig,R.start,R.end):"—",ym,ref:ym.slice(5)+"/"+ym.slice(0,4),periodo:`${brDate(R.start)} a ${brDate(R.end)}`,
+    relogio:u.uid!=null?String(u.uid):"—",escala:escalaDaFolha(u,R).texto,ym,ref:ym.slice(5)+"/"+ym.slice(0,4),periodo:`${brDate(R.start)} a ${brDate(R.end)}`,
     empresa:(e.razao||"Casa Hiro")+(e.cnpj?" · CNPJ "+fpdfCnpj(e.cnpj):""),razao:e.razao||"Casa Hiro",cnpj:fpdfCnpj(e.cnpj),maxP,
     linhas:D.rows.map(r=>{const p=[];for(let k=0;k<maxP;k++){const iv=r.pares[k]||[];p.push(fpdfHora(iv[0]),fpdfHora(iv[1]))}
       return{data:brDate(r.day).slice(0,5),dia:r.dia==="sab"?"sáb":r.dia,fds:r.fds,pares:p,ajuste:r.ajuste?(r.ajuste>0?"+":"")+r.ajuste+" min":"·",trab:fpdfHm(r.worked),prev:fpdfHm(r.expected),saldo:fpdfHm(r.saldo,true),saldoMin:r.saldo,etq:r.etq,texto:r.texto}}),

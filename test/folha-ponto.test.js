@@ -37,7 +37,7 @@ function resultado() {
 function contexto() {
   const ctx = { ExcelJS, console, Date, POINT: { result: resultado() }, PENDENCIA: 'pendencia', FALTA: 'falta',
     empresa: () => ({ razao: 'Casa Teste Ltda', cnpj: '12345678000199' }), integList: () => [ana, rosa, bia], semPonto: () => false, ativoEm: () => true,
-    nomeInteg: i => i.nomeCompleto || i.nome || '', escalasTexto: () => '44h semanais', flagsVisiveis: r => r.flags || [], FLAG_LABEL: {},
+    nomeInteg: i => i.nomeCompleto || i.nome || '', escalasTexto: () => '44h semanais', escalaDaFolha: () => ({ texto: '44h semanais', min: 2640 }), flagsVisiveis: r => r.flags || [], FLAG_LABEL: {},
     folhaBanco: u => ({ mm: '11/2026', ant: 100, lanc: -60, saldo: u.t.saldo, fim: 100 + u.t.saldo - 60, notas: ['Nota de teste.'], linhas: [] }) };
   vm.createContext(ctx);
   vm.runInContext([

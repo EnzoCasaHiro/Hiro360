@@ -52,6 +52,26 @@ function escalasPeriodo(ig,de,ate){
   for(let d=de;d<=ate;d=addDaysIso(d,1)){const n=escalaNome(igNaData(ig,d)),u=out[out.length-1];if(u&&u.nome===n)u.ate=d;else out.push({nome:n,de:d,ate:d})}
   return out;
 }
+// escala que de fato valeu no cálculo, a partir do previsto de cada dia (para quando o previsto foi lançado à mão
+// na planilha do ponto ou a escala foi lançada dia a dia): em cada dia da semana que a pessoa costuma trabalhar,
+// o previsto mais comum; dia da semana que só aparece de vez em quando não entra
+function escalaSemanaReal(rows){
+  const por=[[],[],[],[],[],[],[]],ocorre=[0,0,0,0,0,0,0];
+  (rows||[]).forEach(r=>{const w=pyWeekday(r.day);ocorre[w]++;if(r.expectedMin>0)por[w].push(r.expectedMin)});
+  const moda=a=>{const c=new Map();a.forEach(v=>c.set(v,(c.get(v)||0)+1));let b=0,n=0;c.forEach((k,v)=>{if(k>n||(k===n&&v>b)){n=k;b=v}});return b};
+  const dias=[];let min=0;
+  por.forEach((a,w)=>{if(a.length>=2&&a.length*2>=ocorre[w]){dias.push(w);min+=moda(a)}});
+  return dias.length?{min,dias}:null;
+}
+const escalaHorasTxt=min=>String(Math.round(min/6)/10).replace(".",",")+"h semanais";
+// texto da escala para a folha de ponto e o cartão: o cadastro, ou o que valeu de fato quando o previsto foi lançado à mão
+function escalaDaFolha(u,R){
+  const ig=(u&&u.ig)||{};if(!ig.id)return{texto:"—",min:0};
+  const mexido=(u.rows||[]).some(r=>(r.flags||[]).some(f=>f==="previsto_manual"||f==="escala_lancada"));
+  const real=mexido?escalaSemanaReal(u.rows):null;
+  if(real)return{texto:escalaHorasTxt(real.min)+" ("+real.dias.map(w=>WD_FULL[w].slice(0,3)).join(", ")+") - pelo previsto lançado no ponto",min:real.min};
+  return{texto:escalasTexto(ig,R.start,R.end),min:escalaMinSemana(igNaData(ig,R.end))};
+}
 function escalasTexto(ig,de,ate){
   const l=escalasPeriodo(ig,de,ate);
   return l.length<=1?(l[0]?l[0].nome:"—"):l.map(x=>`${x.nome} de ${brDate(x.de).slice(0,5)} a ${brDate(x.ate).slice(0,5)}`).join(" · ");

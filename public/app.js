@@ -115,6 +115,26 @@ function escalasPeriodo(ig,de,ate){
   for(let d=de;d<=ate;d=addDaysIso(d,1)){const n=escalaNome(igNaData(ig,d)),u=out[out.length-1];if(u&&u.nome===n)u.ate=d;else out.push({nome:n,de:d,ate:d})}
   return out;
 }
+// escala que de fato valeu no cálculo, a partir do previsto de cada dia (para quando o previsto foi lançado à mão
+// na planilha do ponto ou a escala foi lançada dia a dia): em cada dia da semana que a pessoa costuma trabalhar,
+// o previsto mais comum; dia da semana que só aparece de vez em quando não entra
+function escalaSemanaReal(rows){
+  const por=[[],[],[],[],[],[],[]],ocorre=[0,0,0,0,0,0,0];
+  (rows||[]).forEach(r=>{const w=pyWeekday(r.day);ocorre[w]++;if(r.expectedMin>0)por[w].push(r.expectedMin)});
+  const moda=a=>{const c=new Map();a.forEach(v=>c.set(v,(c.get(v)||0)+1));let b=0,n=0;c.forEach((k,v)=>{if(k>n||(k===n&&v>b)){n=k;b=v}});return b};
+  const dias=[];let min=0;
+  por.forEach((a,w)=>{if(a.length>=2&&a.length*2>=ocorre[w]){dias.push(w);min+=moda(a)}});
+  return dias.length?{min,dias}:null;
+}
+const escalaHorasTxt=min=>String(Math.round(min/6)/10).replace(".",",")+"h semanais";
+// texto da escala para a folha de ponto e o cartão: o cadastro, ou o que valeu de fato quando o previsto foi lançado à mão
+function escalaDaFolha(u,R){
+  const ig=(u&&u.ig)||{};if(!ig.id)return{texto:"—",min:0};
+  const mexido=(u.rows||[]).some(r=>(r.flags||[]).some(f=>f==="previsto_manual"||f==="escala_lancada"));
+  const real=mexido?escalaSemanaReal(u.rows):null;
+  if(real)return{texto:escalaHorasTxt(real.min)+" ("+real.dias.map(w=>WD_FULL[w].slice(0,3)).join(", ")+") - pelo previsto lançado no ponto",min:real.min};
+  return{texto:escalasTexto(ig,R.start,R.end),min:escalaMinSemana(igNaData(ig,R.end))};
+}
 function escalasTexto(ig,de,ate){
   const l=escalasPeriodo(ig,de,ate);
   return l.length<=1?(l[0]?l[0].nome:"—"):l.map(x=>`${x.nome} de ${brDate(x.de).slice(0,5)} a ${brDate(x.ate).slice(0,5)}`).join(" · ");
@@ -1016,7 +1036,7 @@ function renderResult(R){
     return `<div class="card"><div class="uhead"><div class="avatar">${esc(initials(u.nome))}</div>
      <div class="grow"><button class="namebtn" data-oc="${u.uid}" title="Lançar atestado ou justificativa">${esc(u.nome)}</button>
       <button class="b sec sm" data-rn="${u.uid}" title="Editar nome" style="padding:3px 7px;margin-left:6px">${ic("user")}</button>
-      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}${u.ig&&u.ig.id&&!u.ig.admissao?` · <b style="color:var(--bad,#B3261E)" title="Sem a admissão, os dias antes de a pessoa entrar aparecem como falta">sem data de admissão</b>`:""}${(()=>{const m=u.ig&&u.ig.id?escalaMinSemana(igNaData(u.ig,R.end)):0;return m>44*60?` · <b style="color:var(--bad,#B3261E)" title="A soma do turno nos dias marcados passa de 44h por semana. O previsto e o banco de horas são calculados com esse valor: confira o turno e os dias da semana da escala.">escala de ${String(Math.round(m/6)/10).replace(".",",")}h semanais (acima de 44h)</b>`:""})()}</div></div>
+      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}${u.ig&&u.ig.id&&!u.ig.admissao?` · <b style="color:var(--bad,#B3261E)" title="Sem a admissão, os dias antes de a pessoa entrar aparecem como falta">sem data de admissão</b>`:""}${(()=>{const m=escalaDaFolha(u,R).min;return m>44*60?` · <b style="color:var(--bad,#B3261E)" title="A soma do turno nos dias marcados passa de 44h por semana. O previsto e o banco de horas são calculados com esse valor: confira o turno e os dias da semana da escala.">escala de ${String(Math.round(m/6)/10).replace(".",",")}h semanais (acima de 44h)</b>`:""})()}</div></div>
      <button class="b sec sm" data-oc="${u.uid}">${ic("plus")} Lançar ocorrência</button>
      <button class="b sec sm" data-mk="${u.uid}" data-mday="${u.rows[0]?u.rows[0].day:R.start}" data-mpicker="1">${ic("clock")} Editar marcações</button>
      <button class="b sec sm" data-pln="${u.uid}">${ic("sheet")} Planilha</button>
@@ -2057,7 +2077,7 @@ function buildPersonSheet(wb,e,ig,u,maxP){
   const texto=(r,v,font,h,box)=>{if(box)for(let c=1;c<=nC;c++)ws.getCell(r,c).fill=xcFill(box);ws.mergeCells(`A${r}:${LC}${r}`);const c=cel("A"+r,v,font);c.alignment={vertical:"middle",wrapText:true};if(h)ws.getRow(r).height=h;return c};
   xcFaixa(ws,nC,"Folha de apuração de ponto",(e.razao||"Casa Hiro")+(e.cnpj?" · CNPJ "+xcCnpj(e.cnpj):""));
   const per=`${brDate(R.start)} a ${brDate(R.end)}`+(R.start===refIni(ym)?` (referência ${ym.slice(5)}/${ym.slice(0,4)}: do dia 26 ao dia 25)`:"");
-  const ident=[["Integrante",nomeInteg(ig)],["CPF",ig.cpf||"—"],["Cargo",ig.cargo||"—"],["Departamento",ig.depto||"Outro"],["Admissão",ig.admissao?brDate(ig.admissao):"—"],["Nº no relógio",u.uid!=null?String(u.uid):"—"],["Escala",ig.id?escalasTexto(ig,R.start,R.end):"—"],["Período",per]];
+  const ident=[["Integrante",nomeInteg(ig)],["CPF",ig.cpf||"—"],["Cargo",ig.cargo||"—"],["Departamento",ig.depto||"Outro"],["Admissão",ig.admissao?brDate(ig.admissao):"—"],["Nº no relógio",u.uid!=null?String(u.uid):"—"],["Escala",escalaDaFolha(u,R).texto],["Período",per]];
   let r=4;ident.forEach(([k,v],i)=>{xcRotulo(ws,"A"+r,k,8);for(let c=2;c<=nC;c++)xcCel(ws.getCell(r,c));ws.mergeCells(`B${r}:${LC}${r}`);
     const c=ws.getCell("B"+r);c.value=v;xcCel(c,XC.branco,i===0?{size:13,bold:true,color:{argb:XC.esc}}:null);ws.getRow(r).height=i===0?24:18;r++});
   const hr=r+1,head=["Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Ajuste (min)","Trabalhado","Previsto","Saldo (min)","Observação");
@@ -5701,7 +5721,7 @@ function specFolhaIndividual(u,R){
   const nC=cols.length,tot=new Array(nC).fill(null);[nC-5,nC-4,nC-3,nC-2].forEach(i=>tot[i]="sum");
   const tint={col:2,map:{[STL.ok]:[214,237,216],[STL.falta]:[232,223,204],[STL.pendencia]:[240,230,211],[STL.atestado]:[214,234,248],[STL.justificada]:[214,237,216],[STL.esquecido]:[197,168,130]}};
   const fb=folhaBanco(u,R),quadro={titulo:"Horas a mais e banco de horas — "+fb.mm,linhas:fb.linhas,notas:fb.notas};
-  return{titulo:`Folha de ponto — ${u.nome}`,sub:`${(u.ig&&u.ig.cargo)||"—"} · ${brDate(R.start)} a ${brDate(R.end)}${u.ig&&u.ig.id?" · Escala: "+escalasTexto(u.ig,R.start,R.end):""}`,sensivel:true,cols,rows,tot,tint,quadro,assinatura:{esq:`Integrante: ${u.nome}`,dir:"Casa Hiro — responsável"}};
+  return{titulo:`Folha de ponto — ${u.nome}`,sub:`${(u.ig&&u.ig.cargo)||"—"} · ${brDate(R.start)} a ${brDate(R.end)}${u.ig&&u.ig.id?" · Escala: "+escalaDaFolha(u,R).texto:""}`,sensivel:true,cols,rows,tot,tint,quadro,assinatura:{esq:`Integrante: ${u.nome}`,dir:"Casa Hiro — responsável"}};
 }
 
 /* ---------- folha de ponto de vários meses de uma integrante só (um arquivo, uma folha por mês) ---------- */
@@ -18247,7 +18267,7 @@ function fpdfPagina(u,R,e){
   const D=folhaDados(u,R),ig=u.ig||{},ym=refYm(R.end),fb=D.fb,maxP=Math.max(2,...D.rows.map(r=>r.pares.length));
   const alerta=fb.notas.find(t=>/negativo acima/i.test(t))||"",outras=fb.notas.filter(t=>t!==alerta);
   return{nome:nomeInteg(ig)||u.nome,cargo:[ig.cargo,ig.depto].filter(Boolean).join(" · ")||"—",cpf:ig.cpf||"—",admissao:ig.admissao?brDate(ig.admissao):"—",
-    relogio:u.uid!=null?String(u.uid):"—",escala:ig.id?escalasTexto(ig,R.start,R.end):"—",ym,ref:ym.slice(5)+"/"+ym.slice(0,4),periodo:`${brDate(R.start)} a ${brDate(R.end)}`,
+    relogio:u.uid!=null?String(u.uid):"—",escala:escalaDaFolha(u,R).texto,ym,ref:ym.slice(5)+"/"+ym.slice(0,4),periodo:`${brDate(R.start)} a ${brDate(R.end)}`,
     empresa:(e.razao||"Casa Hiro")+(e.cnpj?" · CNPJ "+fpdfCnpj(e.cnpj):""),razao:e.razao||"Casa Hiro",cnpj:fpdfCnpj(e.cnpj),maxP,
     linhas:D.rows.map(r=>{const p=[];for(let k=0;k<maxP;k++){const iv=r.pares[k]||[];p.push(fpdfHora(iv[0]),fpdfHora(iv[1]))}
       return{data:brDate(r.day).slice(0,5),dia:r.dia==="sab"?"sáb":r.dia,fds:r.fds,pares:p,ajuste:r.ajuste?(r.ajuste>0?"+":"")+r.ajuste+" min":"·",trab:fpdfHm(r.worked),prev:fpdfHm(r.expected),saldo:fpdfHm(r.saldo,true),saldoMin:r.saldo,etq:r.etq,texto:r.texto}}),

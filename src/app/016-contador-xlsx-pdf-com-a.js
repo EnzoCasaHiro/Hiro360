@@ -260,7 +260,7 @@ function buildPersonSheet(wb,e,ig,u,maxP){
   const texto=(r,v,font,h,box)=>{if(box)for(let c=1;c<=nC;c++)ws.getCell(r,c).fill=xcFill(box);ws.mergeCells(`A${r}:${LC}${r}`);const c=cel("A"+r,v,font);c.alignment={vertical:"middle",wrapText:true};if(h)ws.getRow(r).height=h;return c};
   xcFaixa(ws,nC,"Folha de apuração de ponto",(e.razao||"Casa Hiro")+(e.cnpj?" · CNPJ "+xcCnpj(e.cnpj):""));
   const per=`${brDate(R.start)} a ${brDate(R.end)}`+(R.start===refIni(ym)?` (referência ${ym.slice(5)}/${ym.slice(0,4)}: do dia 26 ao dia 25)`:"");
-  const ident=[["Integrante",nomeInteg(ig)],["CPF",ig.cpf||"—"],["Cargo",ig.cargo||"—"],["Departamento",ig.depto||"Outro"],["Admissão",ig.admissao?brDate(ig.admissao):"—"],["Nº no relógio",u.uid!=null?String(u.uid):"—"],["Escala",ig.id?escalasTexto(ig,R.start,R.end):"—"],["Período",per]];
+  const ident=[["Integrante",nomeInteg(ig)],["CPF",ig.cpf||"—"],["Cargo",ig.cargo||"—"],["Departamento",ig.depto||"Outro"],["Admissão",ig.admissao?brDate(ig.admissao):"—"],["Nº no relógio",u.uid!=null?String(u.uid):"—"],["Escala",escalaDaFolha(u,R).texto],["Período",per]];
   let r=4;ident.forEach(([k,v],i)=>{xcRotulo(ws,"A"+r,k,8);for(let c=2;c<=nC;c++)xcCel(ws.getCell(r,c));ws.mergeCells(`B${r}:${LC}${r}`);
     const c=ws.getCell("B"+r);c.value=v;xcCel(c,XC.branco,i===0?{size:13,bold:true,color:{argb:XC.esc}}:null);ws.getRow(r).height=i===0?24:18;r++});
   const hr=r+1,head=["Data","Dia"];for(let k=1;k<=maxP;k++)head.push("Entrada "+k,"Saída "+k);head.push("Ajuste (min)","Trabalhado","Previsto","Saldo (min)","Observação");
