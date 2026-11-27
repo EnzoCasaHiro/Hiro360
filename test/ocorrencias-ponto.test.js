@@ -23,6 +23,7 @@ function calcula(S, ini, fim) {
     trecho('009-turnos-integrantes.js', 'const WD_FULL', 'function shiftSummary'),
     ler('009-turnos-integrantes.js').slice(ler('009-turnos-integrantes.js').indexOf('const integList')),
     linha('013-prontuario.js', /const cadRelogio=.*\n/),
+    linha('020-rotina-tarefas-documentos-com-validade.js', /const eh1236=.*\n/),
     'const cfgG=()=>S.config.geral||{};const turnosList=()=>cfgG().turnos;',
     linha('087-planilha-do-ponto-edicao-em.js', /function prevManual.*\n/),
     linha('010-ponto.js', /const POINT=.*\n/),
@@ -129,4 +130,17 @@ test('sem data de admissão e sem nenhuma batida: aparece, mas sem dias, falta n
   assert.strictEqual(u.rows.length, 0);
   assert.strictEqual(u.pendencies.length, 0);
   assert.strictEqual(u.t.saldo, 0);
+});
+
+test('feriado trabalhado: escala 5x2/6x1 tem adicional; escala 12x36 não recebe nada a mais', () => {
+  const m = { a: marca('a', '2026-11-20T08:00:00'), b: marca('b', '2026-11-20T12:00:00') }; // 20/11, Consciência Negra
+  const semana = calcula(base(m, {}), '2026-11-20', '2026-11-20').rows[0];
+  assert.ok(semana.flags.includes('trabalhou_feriado'));
+  assert.strictEqual(semana.feriadoMin, 240);
+  const S = base(m, {}); S.integrantes = { ana: { ...ana, escalaModo: 'ciclo', cicloTrab: 1, cicloFolga: 1, cicloInicio: '2026-11-20' } };
+  const r = calcula(S, '2026-11-20', '2026-11-20').rows[0];
+  assert.ok(!r.flags.includes('trabalhou_feriado'));
+  assert.ok(r.flags.includes('feriado_1236'));
+  assert.strictEqual(r.feriadoMin, 0);
+  assert.strictEqual(r.workedMin, semana.workedMin); // as horas continuam iguais no banco
 });

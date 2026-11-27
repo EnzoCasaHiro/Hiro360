@@ -42,7 +42,7 @@ const OC={atestado:"Atestado médico",falta_justificada:"Falta justificada",esqu
 // banco_horas: a falta deixa de ser falta e as horas do dia saem do banco de horas
 const OC_FALTA=new Set(["falta_confirmada","falta_compensada","banco_horas"]);
 const STL={ok:"OK",falta:"Falta",pendencia:"Pendência",atestado:"Atestado",justificada:"Justificada",esquecido:"Ponto esquecido",sem_escala:"Sem escala",feriado:"Feriado",compensada:"Falta compensada"};
-const FLAG_LABEL={falta_confirmada:"falta confirmada",compensa_falta:"compensa falta",tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trabalhou no feriado",multiplos_periodos:"múltiplos períodos",intervalo_preassinalado:"intervalo descontado",justificar:"a justificar",falta_saida:"falta marcação de saída",falta_entrada:"falta marcação de entrada",falta_pontual:"marcação pontual ausente",escala_lancada:"escala lançada manualmente"};
+const FLAG_LABEL={falta_confirmada:"falta confirmada",compensa_falta:"compensa falta",tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trabalhou no feriado",feriado_1236:"feriado na escala 12x36 (sem adicional)",multiplos_periodos:"múltiplos períodos",intervalo_preassinalado:"intervalo descontado",justificar:"a justificar",falta_saida:"falta marcação de saída",falta_entrada:"falta marcação de entrada",falta_pontual:"marcação pontual ausente",escala_lancada:"escala lançada manualmente"};
 // ajustes feitos à mão (previsto/escala do dia) não aparecem como aviso na folha nem na tela do ponto; o histórico continua guardando quem mudou
 const FLAG_OCULTA=new Set(["escala_lancada","previsto_manual"]);
 const flagsVisiveis=r=>((r&&r.flags)||[]).filter(f=>!FLAG_OCULTA.has(f));

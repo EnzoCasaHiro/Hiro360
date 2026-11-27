@@ -138,6 +138,8 @@ function calcular(show){
           rawIntervals:j.intervals,marcas:j.marcas||null,
           workedMin:j.workedMin,expectedMin:j.expectedMin,late:j.lateMin,early:j.earlyLeaveMin,extra:j.extraMin,tolMin:j.tolMin||0,feriadoMin:j.feriadoMin||0,
           night:j.turnoNoturno,endsOn:j.endsOn,flags:[...j.flags],oc:null};
+        // feriado trabalhado só tem adicional nas escalas 6x1 e 5x2; na 12x36 o feriado já está incluso
+        if(r.flags.includes("trabalhou_feriado")&&ig.id&&eh1236(igNaData(ig,r.day))){r.feriadoMin=0;r.flags=r.flags.map(f=>f==="trabalhou_feriado"?"feriado_1236":f)}
         {const nm=nightMinutes(j.intervals,j.turnoNoturno&&cfg.prorrogNoturna!==false);r.nightReal=nm.real;r.nightPror=nm.pror;r.nightFicta=nm.ficta}
         const ajd=ig.id?ajusteDe(ig.id,r.day):null;
         if(ajd&&ajd.tipo==="trabalho")r.flags.push("escala_lancada");
