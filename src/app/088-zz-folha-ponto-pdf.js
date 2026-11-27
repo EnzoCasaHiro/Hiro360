@@ -5,7 +5,7 @@
 const FPDF_COR={esc:[31,92,41],med:[46,125,51],claro:[220,235,213],creme:[250,247,239],bege:[241,235,218],zebra:[252,250,245],linha:[226,218,202],
   ink:[34,48,42],mute:[107,116,105],branco:[255,255,255],verm:[179,38,30],vermClaro:[248,222,218],slogan:[232,241,228]};
 const FPDF_ETQ={"Feriado":[[47,93,138],[220,231,242]],"Feriado trabalhado":[[47,93,138],[220,231,242]],"Atestado":[[91,63,140],[230,222,243]],
-  "Falta":[[179,38,30],[248,222,218]],"Compensação":[[138,90,0],[246,231,198]]};
+  "Falta":[[179,38,30],[248,222,218]],"Compensação":[[138,90,0],[246,231,198]],"Folga":[[107,116,105],[241,235,218]]};
 // horas com sinal em h:mm, hífen comum no negativo (o "−" não existe na Helvetica do PDF)
 const fpdfHm=(min,sinal)=>{const r=Math.round(min||0),a=Math.abs(r);return(r<0?"-":sinal&&r>0?"+":"")+Math.floor(a/60)+":"+String(a%60).padStart(2,"0")};
 const fpdfHora=d=>d?String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"):"";

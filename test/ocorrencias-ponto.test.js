@@ -144,3 +144,11 @@ test('feriado trabalhado: escala 5x2/6x1 tem adicional; escala 12x36 não recebe
   assert.strictEqual(r.feriadoMin, 0);
   assert.strictEqual(r.workedMin, semana.workedMin); // as horas continuam iguais no banco
 });
+
+test('todos os dias do período aparecem: sábado e domingo sem escala entram como folga, sem mudar os totais', () => {
+  const u = calcula(base({}, {}), '2026-11-13', '2026-11-16'); // sexta a segunda, sem batida
+  assert.deepStrictEqual([...u.rows.map(r => r.day + ' ' + r.status)], ['2026-11-13 falta', '2026-11-14 folga', '2026-11-15 folga', '2026-11-16 falta']);
+  assert.strictEqual(u.t.faltas, 2);
+  assert.strictEqual(u.t.saldo, -480);
+  assert.strictEqual(u.t.expected, 480);
+});

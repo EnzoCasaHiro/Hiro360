@@ -96,12 +96,17 @@ function igNaData(ig,iso){
   const v=h.filter(x=>x.ate&&iso<=x.ate).sort((a,b)=>a.ate.localeCompare(b.ate))[0];
   if(!v)return ig;const o={...ig};ESC_CAMPOS.forEach(k=>o[k]=v[k]);return o;
 }
+// minutos por semana de uma escala de dias fixos (soma do turno em cada dia marcado); 0 nas outras escalas
+function escalaMinSemana(g){
+  if(!g||!g.turno||(g.escalaModo&&g.escalaModo!=="semana"))return 0;
+  const t=turnosList().find(x=>String(x.no)===String(g.turno));if(!t)return 0;
+  return(g.dias||[0,1,2,3,4]).reduce((s,w)=>{const r=shiftSummary((t.dias&&t.dias[w])||t.texto);return s+(r?r.min:0)},0);
+}
 function escalaNome(g){
   if(!g||!g.turno)return"Sem escala";
   if(eh1236(g))return"12x36";
   if(g.escalaModo==="ciclo")return`Ciclo ${g.cicloTrab||1}x${g.cicloFolga??1}`;
-  const t=turnosList().find(x=>String(x.no)===String(g.turno)),dias=(g.dias||[0,1,2,3,4]).slice().sort();
-  const min=t?dias.reduce((s,w)=>{const r=shiftSummary((t.dias&&t.dias[w])||t.texto);return s+(r?r.min:0)},0):0;
+  const dias=(g.dias||[0,1,2,3,4]).slice().sort(),min=escalaMinSemana(g);
   return(min?String(Math.round(min/6)/10).replace(".",",")+"h semanais":"Semanal")+" ("+dias.map(w=>WD_FULL[w].slice(0,3)).join(", ")+")";
 }
 // trechos do período com a mesma escala, para a folha de ponto mostrar as duas quando houve mudança
@@ -375,7 +380,7 @@ const CATS=["Documentos pessoais","Contrato e admissão","ASO e exames","Atestad
 const OC={atestado:"Atestado médico",falta_justificada:"Falta justificada",esquecimento:"Esquecimento de ponto",outro:"Outro registro",falta_confirmada:"Falta sem justificativa (confirmada)",falta_compensada:"Falta compensada em outro dia",banco_horas:"Abateu no banco de horas",dobra:"Dobrou horário"};
 // banco_horas: a falta deixa de ser falta e as horas do dia saem do banco de horas
 const OC_FALTA=new Set(["falta_confirmada","falta_compensada","banco_horas"]);
-const STL={ok:"OK",falta:"Falta",pendencia:"Pendência",atestado:"Atestado",justificada:"Justificada",esquecido:"Ponto esquecido",sem_escala:"Sem escala",feriado:"Feriado",compensada:"Falta compensada"};
+const STL={ok:"OK",falta:"Falta",pendencia:"Pendência",atestado:"Atestado",justificada:"Justificada",esquecido:"Ponto esquecido",sem_escala:"Sem escala",feriado:"Feriado",folga:"Folga",compensada:"Falta compensada"};
 const FLAG_LABEL={falta_confirmada:"falta confirmada",compensa_falta:"compensa falta",tolerancia_art58:"tolerância art. 58",trabalhou_feriado:"trabalhou no feriado",feriado_1236:"feriado na escala 12x36 (sem adicional)",multiplos_periodos:"múltiplos períodos",intervalo_preassinalado:"intervalo descontado",justificar:"a justificar",falta_saida:"falta marcação de saída",falta_entrada:"falta marcação de entrada",falta_pontual:"marcação pontual ausente",escala_lancada:"escala lançada manualmente"};
 // ajustes feitos à mão (previsto/escala do dia) não aparecem como aviso na folha nem na tela do ponto; o histórico continua guardando quem mudou
 const FLAG_OCULTA=new Set(["escala_lancada","previsto_manual"]);
@@ -963,6 +968,11 @@ function calcular(show){
       // "dobrou horário": o dia trabalhado fora da escala é dobra; as horas continuam indo para o banco
       const dobrou=d=>ocs.some(o=>o.tipo==="dobra"&&o.de<=d&&d<=o.ate);
       const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!foraDoContrato(igC,p.day)&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&(compDias.has(p.day)||dobrou(p.day))));
+      // todos os dias do período aparecem: o dia sem escala e sem batida entra como "Folga" (não muda nenhum total)
+      {const lim=P.end<hojeIso()?P.end:addDaysIso(hojeIso(),-1),tem=new Set(rows.map(r=>r.day));
+        span.forEach(d=>{if(d>lim||tem.has(d)||foraDoContrato(igC,d))return;
+          rows.push({day:d,wd:WD[pyWeekday(d)],status:"folga",feriadoDia:holidays.has(d),shift:null,intervals:[],rawIntervals:[],marcas:null,workedMin:0,expectedMin:0,late:0,early:0,extra:0,tolMin:0,feriadoMin:0,night:false,endsOn:d,flags:[],oc:null,saldo:0,nightReal:0,nightPror:0,nightFicta:0})});
+        rows.sort((a,b)=>a.day.localeCompare(b.day))}
       const sum=k=>rows.reduce((s,r)=>s+r[k],0),cnt=s=>rows.filter(r=>r.status===s).length;
       users.push({uid,ig,admInferida,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
         t:{worked:sum("workedMin"),expected:sum("expectedMin"),late:sum("late"),early:sum("early"),extra:sum("extra"),
@@ -974,7 +984,7 @@ function calcular(show){
   }catch(e){P.err=e.message;P.result=null}
   if(show)go("ponto",true);
 }
-const CLR={ok:"var(--verde-medio)",falta:"var(--bad)",pendencia:"var(--madeira)",atestado:"var(--azul-mar)",justificada:"#5f9d62",esquecido:"var(--madeira-clara)",compensada:"#8a7fb5",sem_escala:"var(--areia-esc)",feriado:"var(--areia-esc)"};
+const CLR={ok:"var(--verde-medio)",falta:"var(--bad)",pendencia:"var(--madeira)",atestado:"var(--azul-mar)",justificada:"#5f9d62",esquecido:"var(--madeira-clara)",compensada:"#8a7fb5",sem_escala:"var(--areia-esc)",feriado:"var(--areia-esc)",folga:"#e4ddcc"};
 function heatmap(R){
   const days=[];for(let d=R.start;d<=R.end;d=addDaysIso(d,1))days.push(d);
   if(days.length>62)return "";
@@ -998,7 +1008,7 @@ function renderResult(R){
    <button class="stat ${tot("late")?"warn":""}" data-stat="atraso"><b>${tot("late")}</b><span>min. de atraso</span></button></div>
   ${(R.semCadastro||[]).length?`<div class="callout sand" style="margin:10px 0">Números do relógio <b>sem cadastro</b> (ficam fora do cálculo e do fechamento): ${R.semCadastro.map(x=>`nº ${x.uid}${x.nome?" ("+esc(x.nome)+")":""} — ${x.n} batida(s)`).join("; ")}. Se for alguém da casa, cadastre em Integrantes com esse número no relógio, ou ligue em Ponto → Cadastro e conferência → De-para.</div>`:""}
   ${(R.foraContrato||[]).length?`<div class="callout sand" style="margin:10px 0">Batidas <b>fora do contrato</b> (ficam fora das horas, faltas e banco de horas): ${R.foraContrato.map(x=>`${esc(x.nome)} — ${x.dias.map(d=>brDate(d).slice(0,5)).join(", ")} (${x.adm&&x.dias.some(d=>d<x.adm)?"admissão em "+brDate(x.adm):"desligamento em "+brDate(x.desl)})`).join("; ")}. Se a pessoa já trabalhava nesses dias, corrija a data de admissão na ficha.</div>`:""}
-  <div class="legend">${["ok","falta","pendencia","atestado","justificada","compensada","esquecido","sem_escala"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
+  <div class="legend">${["ok","falta","pendencia","atestado","justificada","compensada","esquecido","sem_escala","folga"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
    <span style="margin-left:auto;font-style:italic">Clique num card, num dia ou no nome para ver detalhes e resolver.</span></div>`+
   heatmap(R)+
   U.map(u=>{
@@ -1006,7 +1016,7 @@ function renderResult(R){
     return `<div class="card"><div class="uhead"><div class="avatar">${esc(initials(u.nome))}</div>
      <div class="grow"><button class="namebtn" data-oc="${u.uid}" title="Lançar atestado ou justificativa">${esc(u.nome)}</button>
       <button class="b sec sm" data-rn="${u.uid}" title="Editar nome" style="padding:3px 7px;margin-left:6px">${ic("user")}</button>
-      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}${u.ig&&u.ig.id&&!u.ig.admissao?` · <b style="color:var(--bad,#B3261E)" title="Sem a admissão, os dias antes de a pessoa entrar aparecem como falta">sem data de admissão</b>`:""}</div></div>
+      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}${u.ig&&u.ig.id&&!u.ig.admissao?` · <b style="color:var(--bad,#B3261E)" title="Sem a admissão, os dias antes de a pessoa entrar aparecem como falta">sem data de admissão</b>`:""}${(()=>{const m=u.ig&&u.ig.id?escalaMinSemana(igNaData(u.ig,R.end)):0;return m>44*60?` · <b style="color:var(--bad,#B3261E)" title="A soma do turno nos dias marcados passa de 44h por semana. O previsto e o banco de horas são calculados com esse valor: confira o turno e os dias da semana da escala.">escala de ${String(Math.round(m/6)/10).replace(".",",")}h semanais (acima de 44h)</b>`:""})()}</div></div>
      <button class="b sec sm" data-oc="${u.uid}">${ic("plus")} Lançar ocorrência</button>
      <button class="b sec sm" data-mk="${u.uid}" data-mday="${u.rows[0]?u.rows[0].day:R.start}" data-mpicker="1">${ic("clock")} Editar marcações</button>
      <button class="b sec sm" data-pln="${u.uid}">${ic("sheet")} Planilha</button>
@@ -1112,6 +1122,8 @@ function openMarcas(uid,day,opts){
   paint(day);
 }
 
+// dia de folga (sem escala e sem batida) na lista e na faixa de dias do ponto
+(function(){const st=document.createElement("style");st.textContent=".s-folga{background:#f1ebda;color:var(--mute)}.strip .d-folga{background:#f1ebda;color:var(--mute)}";document.head.appendChild(st)})();
 /* ================= ocorrências (atestado / esquecimento) ================= */
 function openOcorr(uid,day){
   const ig=integByUid(uid);if(!ig){toast("Integrante não encontrado no cadastro.",true);return}
@@ -1787,8 +1799,8 @@ async function mergeDocs(list){
 const REQ=[["nomeCompleto","nome completo"],["cpf","CPF"],["admissao","admissão"],["cargo","cargo"],["pis","PIS/NIT"]];
 const miss=i=>REQ.filter(([k])=>!semPonto(i)||k==="nomeCompleto"||k==="cpf").filter(([k])=>!i[k]).map(([,l])=>l);
 const BR={verdeEsc:"FF1E5C2A",verdeMedio:"FF2E7D32",verdeClaroBg:"FFDCEBD3",areia:"FFF5EFE0",areiaEsc:"FFE8DFCC",madeiraClara:"FFC5A882",ink:"FF3A362C",branco:"FFFFFFFF",mute:"FF8A8577"};
-const STAT_BG={ok:"FFD6EDD8",falta:"FFE8DFCC",pendencia:"FFF0E6D3",atestado:"FFD6EAF8",justificada:"FFD6EDD8",esquecido:"FFC5A882",sem_escala:"FFE8DFCC",feriado:"FFE8DFCC"};
-const STAT_FG={ok:"FF2E7D32",falta:"FF6B3A2A",pendencia:"FF7D5A3C",atestado:"FF1B4F72",justificada:"FF1E5C2A",esquecido:"FF3B2A1A",sem_escala:"FF7A7468",feriado:"FF7A7468"};
+const STAT_BG={ok:"FFD6EDD8",falta:"FFE8DFCC",pendencia:"FFF0E6D3",atestado:"FFD6EAF8",justificada:"FFD6EDD8",esquecido:"FFC5A882",sem_escala:"FFE8DFCC",feriado:"FFE8DFCC",folga:"FFF5F1E6"};
+const STAT_FG={ok:"FF2E7D32",falta:"FF6B3A2A",pendencia:"FF7D5A3C",atestado:"FF1B4F72",justificada:"FF1E5C2A",esquecido:"FF3B2A1A",sem_escala:"FF7A7468",feriado:"FF7A7468",folga:"FF7A7468"};
 const WD3=["seg","ter","qua","qui","sex","sab","dom"];
 function pgContadorBase(){
   const e=empresa(),R=POINT.result;
@@ -1856,6 +1868,7 @@ function obsText(r){
   if(r.status==="pendencia"){const fl=flagsVisiveis(r).filter(f=>f!=="justificar");return "Pendência"+(fl.length?": "+fl.map(f=>FLAG_LABEL[f]||f).join(", "):"")}
   if(r.status==="sem_escala")return "Marcação fora da escala";
   if(r.status==="feriado")return "Feriado";
+  if(r.status==="folga")return "Folga"+(r.feriadoDia?" (feriado)":"");
   const extra=flagsVisiveis(r).filter(f=>f!=="tolerancia_art58"&&f!=="trabalhou_feriado").map(f=>FLAG_LABEL[f]||f);
   if(r.feriadoMin)extra.push(`Trabalhou no feriado: ${fmtHHMM(r.feriadoMin)} com adicional`);
   if(r.nightReal)extra.push(`Noturno: ${fmtHHMM(r.nightReal)} reais = ${fmtHHMM(r.nightFicta)} (hora de 52min30s)`);
@@ -2008,6 +2021,7 @@ const folhaTemMarcacao=u=>u.rows.some(r=>(r.marcas&&r.marcas.length)||(r.rawInte
 function folhaEtiqueta(r){
   if(r.feriadoMin>0||(r.flags||[]).includes("trabalhou_feriado"))return"Feriado trabalhado";
   if(r.status==="feriado")return"Feriado";
+  if(r.status==="folga")return"Folga";
   if(r.status==="atestado"||(r.oc&&r.oc.tipo==="atestado"))return"Atestado";
   if(r.status==="compensada"||(r.compensa&&r.compensa.length)||(r.oc&&r.oc.tipo==="banco_horas"))return"Compensação";
   if(r.status==="falta")return"Falta";
@@ -2017,6 +2031,7 @@ function folhaEtiqueta(r){
 function folhaObsCurta(obs,etq){
   let t=String(obs||"");
   if(etq==="Feriado")t=t.replace(/^Feriado/,"");
+  if(etq==="Folga")t=t.replace(/^Folga/,"");
   if(etq==="Falta")t=t.replace(/^Falta/,"");
   if(etq==="Atestado")t=t.replace(/^Atestado/,"");
   if(etq==="Feriado trabalhado")t=t.replace(/Trabalhou no feriado: /,"");
@@ -2027,7 +2042,7 @@ function folhaDados(u,R){
     return{day:r.day,dia:WD3[pyWeekday(r.day)],fds:pyWeekday(r.day)>=5,pares:xlParesDia(r),ajuste:xlAjuste(r),worked:r.workedMin||0,expected:r.expectedMin||0,saldo:r.saldo||0,status:r.status,obs,etq,texto:folhaObsCurta(obs,etq)}});
   return{rows,fb:folhaBanco(u,R),temMarcacao:folhaTemMarcacao(u),
     t:{worked:u.t.worked||0,expected:u.t.expected||0,saldo:u.t.saldo||0,mais:u.t.mais||0,menos:u.t.menos||0,
-       apurados:u.rows.length,comPonto:u.rows.filter(x=>x.workedMin>0).length,faltas:u.t.faltas||0,atestados:u.t.atestados||0}};
+       apurados:u.rows.filter(x=>x.status!=="folga").length,comPonto:u.rows.filter(x=>x.workedMin>0).length,faltas:u.t.faltas||0,atestados:u.t.atestados||0}};
 }
 // folha de ponto de uma pessoa: fórmulas visíveis, pronta para editar no Excel ou no Google Planilhas; mesclagem só fora da tabela de dias
 function buildPersonSheet(wb,e,ig,u,maxP){
@@ -2063,7 +2078,7 @@ function buildPersonSheet(wb,e,ig,u,maxP){
   // resumo: rótulo na coluna A, número na coluna "Previsto"
   r=tr+2;xcBloco(ws,r,nC,"Resumo do período");r++;
   const linhaFundo=(rw,fundo,font)=>{for(let c=1;c<=nC;c++)xcCel(ws.getCell(rw,c),fundo,font)};
-  [["Dias apurados",`COUNT(${faixa(1)})`,D.t.apurados],["Dias com registro de ponto",`COUNTIF(${faixa(wC)},">0")`,D.t.comPonto],
+  [["Dias apurados",`COUNT(${faixa(1)})-COUNTIF(${faixa(oC)},"Folga*")`,D.t.apurados],["Dias com registro de ponto",`COUNTIF(${faixa(wC)},">0")`,D.t.comPonto],
    ["Faltas",`COUNTIFS(${faixa(oC)},"Falta*",${faixa(wC)},0)`,D.t.faltas],["Atestados",`COUNTIF(${faixa(oC)},"Atestado*")`,D.t.atestados]].forEach(([k,f,v])=>{
     linhaFundo(r);ws.getCell(r,1).value=k;const c=ws.getCell(r,pC);c.value={formula:f,result:v};c.font=xcFonte({bold:true});c.alignment={horizontal:"right",vertical:"middle"};ws.getRow(r).height=19;r++});
   // banco de horas: minutos na coluna "Saldo", em horas na "Observação"
@@ -18217,7 +18232,7 @@ function pconcBind(){
 const FPDF_COR={esc:[31,92,41],med:[46,125,51],claro:[220,235,213],creme:[250,247,239],bege:[241,235,218],zebra:[252,250,245],linha:[226,218,202],
   ink:[34,48,42],mute:[107,116,105],branco:[255,255,255],verm:[179,38,30],vermClaro:[248,222,218],slogan:[232,241,228]};
 const FPDF_ETQ={"Feriado":[[47,93,138],[220,231,242]],"Feriado trabalhado":[[47,93,138],[220,231,242]],"Atestado":[[91,63,140],[230,222,243]],
-  "Falta":[[179,38,30],[248,222,218]],"Compensação":[[138,90,0],[246,231,198]]};
+  "Falta":[[179,38,30],[248,222,218]],"Compensação":[[138,90,0],[246,231,198]],"Folga":[[107,116,105],[241,235,218]]};
 // horas com sinal em h:mm, hífen comum no negativo (o "−" não existe na Helvetica do PDF)
 const fpdfHm=(min,sinal)=>{const r=Math.round(min||0),a=Math.abs(r);return(r<0?"-":sinal&&r>0?"+":"")+Math.floor(a/60)+":"+String(a%60).padStart(2,"0")};
 const fpdfHora=d=>d?String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0"):"";

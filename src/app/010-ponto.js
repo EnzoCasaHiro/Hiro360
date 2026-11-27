@@ -170,6 +170,11 @@ function calcular(show){
       // "dobrou horário": o dia trabalhado fora da escala é dobra; as horas continuam indo para o banco
       const dobrou=d=>ocs.some(o=>o.tipo==="dobra"&&o.de<=d&&d<=o.ate);
       const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!foraDoContrato(igC,p.day)&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&(compDias.has(p.day)||dobrou(p.day))));
+      // todos os dias do período aparecem: o dia sem escala e sem batida entra como "Folga" (não muda nenhum total)
+      {const lim=P.end<hojeIso()?P.end:addDaysIso(hojeIso(),-1),tem=new Set(rows.map(r=>r.day));
+        span.forEach(d=>{if(d>lim||tem.has(d)||foraDoContrato(igC,d))return;
+          rows.push({day:d,wd:WD[pyWeekday(d)],status:"folga",feriadoDia:holidays.has(d),shift:null,intervals:[],rawIntervals:[],marcas:null,workedMin:0,expectedMin:0,late:0,early:0,extra:0,tolMin:0,feriadoMin:0,night:false,endsOn:d,flags:[],oc:null,saldo:0,nightReal:0,nightPror:0,nightFicta:0})});
+        rows.sort((a,b)=>a.day.localeCompare(b.day))}
       const sum=k=>rows.reduce((s,r)=>s+r[k],0),cnt=s=>rows.filter(r=>r.status===s).length;
       users.push({uid,ig,admInferida,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
         t:{worked:sum("workedMin"),expected:sum("expectedMin"),late:sum("late"),early:sum("early"),extra:sum("extra"),
@@ -181,7 +186,7 @@ function calcular(show){
   }catch(e){P.err=e.message;P.result=null}
   if(show)go("ponto",true);
 }
-const CLR={ok:"var(--verde-medio)",falta:"var(--bad)",pendencia:"var(--madeira)",atestado:"var(--azul-mar)",justificada:"#5f9d62",esquecido:"var(--madeira-clara)",compensada:"#8a7fb5",sem_escala:"var(--areia-esc)",feriado:"var(--areia-esc)"};
+const CLR={ok:"var(--verde-medio)",falta:"var(--bad)",pendencia:"var(--madeira)",atestado:"var(--azul-mar)",justificada:"#5f9d62",esquecido:"var(--madeira-clara)",compensada:"#8a7fb5",sem_escala:"var(--areia-esc)",feriado:"var(--areia-esc)",folga:"#e4ddcc"};
 function heatmap(R){
   const days=[];for(let d=R.start;d<=R.end;d=addDaysIso(d,1))days.push(d);
   if(days.length>62)return "";
@@ -205,7 +210,7 @@ function renderResult(R){
    <button class="stat ${tot("late")?"warn":""}" data-stat="atraso"><b>${tot("late")}</b><span>min. de atraso</span></button></div>
   ${(R.semCadastro||[]).length?`<div class="callout sand" style="margin:10px 0">Números do relógio <b>sem cadastro</b> (ficam fora do cálculo e do fechamento): ${R.semCadastro.map(x=>`nº ${x.uid}${x.nome?" ("+esc(x.nome)+")":""} — ${x.n} batida(s)`).join("; ")}. Se for alguém da casa, cadastre em Integrantes com esse número no relógio, ou ligue em Ponto → Cadastro e conferência → De-para.</div>`:""}
   ${(R.foraContrato||[]).length?`<div class="callout sand" style="margin:10px 0">Batidas <b>fora do contrato</b> (ficam fora das horas, faltas e banco de horas): ${R.foraContrato.map(x=>`${esc(x.nome)} — ${x.dias.map(d=>brDate(d).slice(0,5)).join(", ")} (${x.adm&&x.dias.some(d=>d<x.adm)?"admissão em "+brDate(x.adm):"desligamento em "+brDate(x.desl)})`).join("; ")}. Se a pessoa já trabalhava nesses dias, corrija a data de admissão na ficha.</div>`:""}
-  <div class="legend">${["ok","falta","pendencia","atestado","justificada","compensada","esquecido","sem_escala"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
+  <div class="legend">${["ok","falta","pendencia","atestado","justificada","compensada","esquecido","sem_escala","folga"].map(s=>`<span><i style="background:${CLR[s]}"></i>${STL[s]}</span>`).join("")}
    <span style="margin-left:auto;font-style:italic">Clique num card, num dia ou no nome para ver detalhes e resolver.</span></div>`+
   heatmap(R)+
   U.map(u=>{
@@ -213,7 +218,7 @@ function renderResult(R){
     return `<div class="card"><div class="uhead"><div class="avatar">${esc(initials(u.nome))}</div>
      <div class="grow"><button class="namebtn" data-oc="${u.uid}" title="Lançar atestado ou justificativa">${esc(u.nome)}</button>
       <button class="b sec sm" data-rn="${u.uid}" title="Editar nome" style="padding:3px 7px;margin-left:6px">${ic("user")}</button>
-      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}${u.ig&&u.ig.id&&!u.ig.admissao?` · <b style="color:var(--bad,#B3261E)" title="Sem a admissão, os dias antes de a pessoa entrar aparecem como falta">sem data de admissão</b>`:""}</div></div>
+      <div class="sub">ID ${u.uid} · <span class="depto ${deptoClass(u.depto)}">${esc(u.depto)}</span>${u.turno?` · turno ${esc(u.turno)}`:` · <i>sem turno definido</i>`}${u.ig&&u.ig.id&&!u.ig.admissao?` · <b style="color:var(--bad,#B3261E)" title="Sem a admissão, os dias antes de a pessoa entrar aparecem como falta">sem data de admissão</b>`:""}${(()=>{const m=u.ig&&u.ig.id?escalaMinSemana(igNaData(u.ig,R.end)):0;return m>44*60?` · <b style="color:var(--bad,#B3261E)" title="A soma do turno nos dias marcados passa de 44h por semana. O previsto e o banco de horas são calculados com esse valor: confira o turno e os dias da semana da escala.">escala de ${String(Math.round(m/6)/10).replace(".",",")}h semanais (acima de 44h)</b>`:""})()}</div></div>
      <button class="b sec sm" data-oc="${u.uid}">${ic("plus")} Lançar ocorrência</button>
      <button class="b sec sm" data-mk="${u.uid}" data-mday="${u.rows[0]?u.rows[0].day:R.start}" data-mpicker="1">${ic("clock")} Editar marcações</button>
      <button class="b sec sm" data-pln="${u.uid}">${ic("sheet")} Planilha</button>
@@ -319,3 +324,5 @@ function openMarcas(uid,day,opts){
   paint(day);
 }
 
+// dia de folga (sem escala e sem batida) na lista e na faixa de dias do ponto
+(function(){const st=document.createElement("style");st.textContent=".s-folga{background:#f1ebda;color:var(--mute)}.strip .d-folga{background:#f1ebda;color:var(--mute)}";document.head.appendChild(st)})();

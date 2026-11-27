@@ -33,12 +33,17 @@ function igNaData(ig,iso){
   const v=h.filter(x=>x.ate&&iso<=x.ate).sort((a,b)=>a.ate.localeCompare(b.ate))[0];
   if(!v)return ig;const o={...ig};ESC_CAMPOS.forEach(k=>o[k]=v[k]);return o;
 }
+// minutos por semana de uma escala de dias fixos (soma do turno em cada dia marcado); 0 nas outras escalas
+function escalaMinSemana(g){
+  if(!g||!g.turno||(g.escalaModo&&g.escalaModo!=="semana"))return 0;
+  const t=turnosList().find(x=>String(x.no)===String(g.turno));if(!t)return 0;
+  return(g.dias||[0,1,2,3,4]).reduce((s,w)=>{const r=shiftSummary((t.dias&&t.dias[w])||t.texto);return s+(r?r.min:0)},0);
+}
 function escalaNome(g){
   if(!g||!g.turno)return"Sem escala";
   if(eh1236(g))return"12x36";
   if(g.escalaModo==="ciclo")return`Ciclo ${g.cicloTrab||1}x${g.cicloFolga??1}`;
-  const t=turnosList().find(x=>String(x.no)===String(g.turno)),dias=(g.dias||[0,1,2,3,4]).slice().sort();
-  const min=t?dias.reduce((s,w)=>{const r=shiftSummary((t.dias&&t.dias[w])||t.texto);return s+(r?r.min:0)},0):0;
+  const dias=(g.dias||[0,1,2,3,4]).slice().sort(),min=escalaMinSemana(g);
   return(min?String(Math.round(min/6)/10).replace(".",",")+"h semanais":"Semanal")+" ("+dias.map(w=>WD_FULL[w].slice(0,3)).join(", ")+")";
 }
 // trechos do período com a mesma escala, para a folha de ponto mostrar as duas quando houve mudança

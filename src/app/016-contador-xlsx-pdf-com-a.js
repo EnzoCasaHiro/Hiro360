@@ -2,8 +2,8 @@
 const REQ=[["nomeCompleto","nome completo"],["cpf","CPF"],["admissao","admissão"],["cargo","cargo"],["pis","PIS/NIT"]];
 const miss=i=>REQ.filter(([k])=>!semPonto(i)||k==="nomeCompleto"||k==="cpf").filter(([k])=>!i[k]).map(([,l])=>l);
 const BR={verdeEsc:"FF1E5C2A",verdeMedio:"FF2E7D32",verdeClaroBg:"FFDCEBD3",areia:"FFF5EFE0",areiaEsc:"FFE8DFCC",madeiraClara:"FFC5A882",ink:"FF3A362C",branco:"FFFFFFFF",mute:"FF8A8577"};
-const STAT_BG={ok:"FFD6EDD8",falta:"FFE8DFCC",pendencia:"FFF0E6D3",atestado:"FFD6EAF8",justificada:"FFD6EDD8",esquecido:"FFC5A882",sem_escala:"FFE8DFCC",feriado:"FFE8DFCC"};
-const STAT_FG={ok:"FF2E7D32",falta:"FF6B3A2A",pendencia:"FF7D5A3C",atestado:"FF1B4F72",justificada:"FF1E5C2A",esquecido:"FF3B2A1A",sem_escala:"FF7A7468",feriado:"FF7A7468"};
+const STAT_BG={ok:"FFD6EDD8",falta:"FFE8DFCC",pendencia:"FFF0E6D3",atestado:"FFD6EAF8",justificada:"FFD6EDD8",esquecido:"FFC5A882",sem_escala:"FFE8DFCC",feriado:"FFE8DFCC",folga:"FFF5F1E6"};
+const STAT_FG={ok:"FF2E7D32",falta:"FF6B3A2A",pendencia:"FF7D5A3C",atestado:"FF1B4F72",justificada:"FF1E5C2A",esquecido:"FF3B2A1A",sem_escala:"FF7A7468",feriado:"FF7A7468",folga:"FF7A7468"};
 const WD3=["seg","ter","qua","qui","sex","sab","dom"];
 function pgContadorBase(){
   const e=empresa(),R=POINT.result;
@@ -71,6 +71,7 @@ function obsText(r){
   if(r.status==="pendencia"){const fl=flagsVisiveis(r).filter(f=>f!=="justificar");return "Pendência"+(fl.length?": "+fl.map(f=>FLAG_LABEL[f]||f).join(", "):"")}
   if(r.status==="sem_escala")return "Marcação fora da escala";
   if(r.status==="feriado")return "Feriado";
+  if(r.status==="folga")return "Folga"+(r.feriadoDia?" (feriado)":"");
   const extra=flagsVisiveis(r).filter(f=>f!=="tolerancia_art58"&&f!=="trabalhou_feriado").map(f=>FLAG_LABEL[f]||f);
   if(r.feriadoMin)extra.push(`Trabalhou no feriado: ${fmtHHMM(r.feriadoMin)} com adicional`);
   if(r.nightReal)extra.push(`Noturno: ${fmtHHMM(r.nightReal)} reais = ${fmtHHMM(r.nightFicta)} (hora de 52min30s)`);
@@ -223,6 +224,7 @@ const folhaTemMarcacao=u=>u.rows.some(r=>(r.marcas&&r.marcas.length)||(r.rawInte
 function folhaEtiqueta(r){
   if(r.feriadoMin>0||(r.flags||[]).includes("trabalhou_feriado"))return"Feriado trabalhado";
   if(r.status==="feriado")return"Feriado";
+  if(r.status==="folga")return"Folga";
   if(r.status==="atestado"||(r.oc&&r.oc.tipo==="atestado"))return"Atestado";
   if(r.status==="compensada"||(r.compensa&&r.compensa.length)||(r.oc&&r.oc.tipo==="banco_horas"))return"Compensação";
   if(r.status==="falta")return"Falta";
@@ -232,6 +234,7 @@ function folhaEtiqueta(r){
 function folhaObsCurta(obs,etq){
   let t=String(obs||"");
   if(etq==="Feriado")t=t.replace(/^Feriado/,"");
+  if(etq==="Folga")t=t.replace(/^Folga/,"");
   if(etq==="Falta")t=t.replace(/^Falta/,"");
   if(etq==="Atestado")t=t.replace(/^Atestado/,"");
   if(etq==="Feriado trabalhado")t=t.replace(/Trabalhou no feriado: /,"");
@@ -242,7 +245,7 @@ function folhaDados(u,R){
     return{day:r.day,dia:WD3[pyWeekday(r.day)],fds:pyWeekday(r.day)>=5,pares:xlParesDia(r),ajuste:xlAjuste(r),worked:r.workedMin||0,expected:r.expectedMin||0,saldo:r.saldo||0,status:r.status,obs,etq,texto:folhaObsCurta(obs,etq)}});
   return{rows,fb:folhaBanco(u,R),temMarcacao:folhaTemMarcacao(u),
     t:{worked:u.t.worked||0,expected:u.t.expected||0,saldo:u.t.saldo||0,mais:u.t.mais||0,menos:u.t.menos||0,
-       apurados:u.rows.length,comPonto:u.rows.filter(x=>x.workedMin>0).length,faltas:u.t.faltas||0,atestados:u.t.atestados||0}};
+       apurados:u.rows.filter(x=>x.status!=="folga").length,comPonto:u.rows.filter(x=>x.workedMin>0).length,faltas:u.t.faltas||0,atestados:u.t.atestados||0}};
 }
 // folha de ponto de uma pessoa: fórmulas visíveis, pronta para editar no Excel ou no Google Planilhas; mesclagem só fora da tabela de dias
 function buildPersonSheet(wb,e,ig,u,maxP){
@@ -278,7 +281,7 @@ function buildPersonSheet(wb,e,ig,u,maxP){
   // resumo: rótulo na coluna A, número na coluna "Previsto"
   r=tr+2;xcBloco(ws,r,nC,"Resumo do período");r++;
   const linhaFundo=(rw,fundo,font)=>{for(let c=1;c<=nC;c++)xcCel(ws.getCell(rw,c),fundo,font)};
-  [["Dias apurados",`COUNT(${faixa(1)})`,D.t.apurados],["Dias com registro de ponto",`COUNTIF(${faixa(wC)},">0")`,D.t.comPonto],
+  [["Dias apurados",`COUNT(${faixa(1)})-COUNTIF(${faixa(oC)},"Folga*")`,D.t.apurados],["Dias com registro de ponto",`COUNTIF(${faixa(wC)},">0")`,D.t.comPonto],
    ["Faltas",`COUNTIFS(${faixa(oC)},"Falta*",${faixa(wC)},0)`,D.t.faltas],["Atestados",`COUNTIF(${faixa(oC)},"Atestado*")`,D.t.atestados]].forEach(([k,f,v])=>{
     linhaFundo(r);ws.getCell(r,1).value=k;const c=ws.getCell(r,pC);c.value={formula:f,result:v};c.font=xcFonte({bold:true});c.alignment={horizontal:"right",vertical:"middle"};ws.getRow(r).height=19;r++});
   // banco de horas: minutos na coluna "Saldo", em horas na "Observação"
