@@ -104,12 +104,16 @@ function calcular(show){
     const uids=new Set([...P.punches.map(p=>p.userId),...Object.values(S.marcacoes).map(m=>+m.uid)]);
     Object.values(S.integrantes).forEach(i=>{if(i.uid!=null&&i.turno)uids.add(+i.uid)});
     const users=[],semCadastro=[],foraContrato=[];
+    // primeira batida de cada número do relógio: vale como início quando o cadastro não tem a data de admissão
+    const prim=new Map();Object.values(S.marcacoes).forEach(m=>{if(m.removida||!m.ts)return;const k=+m.uid,d=String(m.ts).slice(0,10);if(!prim.has(k)||d<prim.get(k))prim.set(k,d)});
     for(const uid of[...uids].sort((a,b)=>a-b)){
       const ig=integByUid(uid)||{};
       if(semPonto(ig))continue;
       // desligado antes do período não entra; número sem cadastro vira aviso, não cartão
       if(ig.id&&((ig.desligamento&&ig.desligamento<P.start)||(ig.situacao==="Desligado"&&!ig.desligamento)||(ig.admissao&&foraDoContrato({admissao:ig.admissao},P.end))))continue;
       if(!ig.id){const n=marcasOf(uid,P.start,P.end).length;if(n)semCadastro.push({uid,n,nome:(P.punches.find(p=>p.userId===uid)||{}).uname||""});continue}
+      // sem admissão no cadastro: conta a partir da primeira batida; sem batida nenhuma, nenhum dia conta (não há como saber desde quando a pessoa trabalha)
+      const admInferida=ig.admissao?"":(prim.get(uid)||""),igC=ig.admissao?ig:{...ig,admissao:admInferida||"9999-12-31"};
       if(ig.turno&&!shifts.get(+ig.turno))throw new Error(`${nomeInteg(ig)}: o turno ${ig.turno} não existe. Ajuste na aba Turnos.`);
       const schedule=new Map();
       for(const d of span){
@@ -123,12 +127,12 @@ function calcular(show){
       const res=pairPunches(pun,schedule,cfg,holidays,P.end<hojeIso()?P.end:addDaysIso(hojeIso(),-1));
       // dia com previsto digitado à mão mas sem escala nem batida: entra no cálculo (pode virar falta)
       if(ig.id){const lim=P.end<hojeIso()?P.end:addDaysIso(hojeIso(),-1),tem=new Set(res.journeys.map(j=>j.day));
-        Object.keys(((S.config["prevm_"+ig.id]||{}).dias)||{}).forEach(d=>{if(d>=P.start&&d<=lim&&!tem.has(d)&&!foraDoContrato(ig,d))res.journeys.push({day:d,status:"sem_escala",shiftNo:null,intervals:[],workedMin:0,expectedMin:0,lateMin:0,earlyLeaveMin:0,extraMin:0,feriadoMin:0,turnoNoturno:false,endsOn:d,flags:[]})});
+        Object.keys(((S.config["prevm_"+ig.id]||{}).dias)||{}).forEach(d=>{if(d>=P.start&&d<=lim&&!tem.has(d)&&!foraDoContrato(igC,d))res.journeys.push({day:d,status:"sem_escala",shiftNo:null,intervals:[],workedMin:0,expectedMin:0,lateMin:0,earlyLeaveMin:0,extraMin:0,feriadoMin:0,turnoNoturno:false,endsOn:d,flags:[]})});
         res.journeys.sort((a,b)=>a.day.localeCompare(b.day))}
       const nome=ig.id?nomeInteg(ig):((P.punches.find(p=>p.userId===uid)||{}).uname||String(uid));
       const ocs=Object.values(S.ocorr).filter(o=>ig.id&&o.uid===ig.id);
-      {const fd=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&foraDoContrato(ig,j.day)&&(j.workedMin>0||j.intervals.length||(j.marcas&&j.marcas.length)));if(fd.length)foraContrato.push({uid,nome:nomeInteg(ig),dias:fd.map(j=>j.day),adm:ig.admissao||"",desl:ig.desligamento||""})}
-      const rows=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&!foraDoContrato(ig,j.day)).map(j=>{
+      {const fd=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&foraDoContrato(igC,j.day)&&(j.workedMin>0||j.intervals.length||(j.marcas&&j.marcas.length)));if(fd.length)foraContrato.push({uid,nome:nomeInteg(ig),dias:fd.map(j=>j.day),adm:ig.admissao||"",desl:ig.desligamento||""})}
+      const rows=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&!foraDoContrato(igC,j.day)).map(j=>{
         const r={day:j.day,wd:WD[pyWeekday(j.day)],status:j.status,shift:j.shiftNo,
           intervals:j.intervals.map(([a,b])=>hm(a)+"–"+hm(b)+(isoDate(b)!==isoDate(a)?" (+1)":"")),
           rawIntervals:j.intervals,marcas:j.marcas||null,
@@ -163,9 +167,9 @@ function calcular(show){
       const confDias=new Set(rows.filter(r=>r.status===FALTA&&r.flags.includes("falta_confirmada")).map(r=>r.day));
       // "dobrou horário": o dia trabalhado fora da escala é dobra; as horas continuam indo para o banco
       const dobrou=d=>ocs.some(o=>o.tipo==="dobra"&&o.de<=d&&d<=o.ate);
-      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!foraDoContrato(ig,p.day)&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&(compDias.has(p.day)||dobrou(p.day))));
+      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!foraDoContrato(igC,p.day)&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&(compDias.has(p.day)||dobrou(p.day))));
       const sum=k=>rows.reduce((s,r)=>s+r[k],0),cnt=s=>rows.filter(r=>r.status===s).length;
-      users.push({uid,ig,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
+      users.push({uid,ig,admInferida,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
         t:{worked:sum("workedMin"),expected:sum("expectedMin"),late:sum("late"),early:sum("early"),extra:sum("extra"),
            saldo:sum("saldo"),mais:rows.reduce((s,r)=>s+Math.max(0,r.saldo),0),menos:rows.reduce((s,r)=>s+Math.min(0,r.saldo),0),nightReal:sum("nightReal"),nightFicta:sum("nightFicta"),
            escalados:rows.filter(r=>r.expectedMin>0).length,trab:rows.filter(r=>r.workedMin>0).length,

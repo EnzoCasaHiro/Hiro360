@@ -897,12 +897,16 @@ function calcular(show){
     const uids=new Set([...P.punches.map(p=>p.userId),...Object.values(S.marcacoes).map(m=>+m.uid)]);
     Object.values(S.integrantes).forEach(i=>{if(i.uid!=null&&i.turno)uids.add(+i.uid)});
     const users=[],semCadastro=[],foraContrato=[];
+    // primeira batida de cada número do relógio: vale como início quando o cadastro não tem a data de admissão
+    const prim=new Map();Object.values(S.marcacoes).forEach(m=>{if(m.removida||!m.ts)return;const k=+m.uid,d=String(m.ts).slice(0,10);if(!prim.has(k)||d<prim.get(k))prim.set(k,d)});
     for(const uid of[...uids].sort((a,b)=>a-b)){
       const ig=integByUid(uid)||{};
       if(semPonto(ig))continue;
       // desligado antes do período não entra; número sem cadastro vira aviso, não cartão
       if(ig.id&&((ig.desligamento&&ig.desligamento<P.start)||(ig.situacao==="Desligado"&&!ig.desligamento)||(ig.admissao&&foraDoContrato({admissao:ig.admissao},P.end))))continue;
       if(!ig.id){const n=marcasOf(uid,P.start,P.end).length;if(n)semCadastro.push({uid,n,nome:(P.punches.find(p=>p.userId===uid)||{}).uname||""});continue}
+      // sem admissão no cadastro: conta a partir da primeira batida; sem batida nenhuma, nenhum dia conta (não há como saber desde quando a pessoa trabalha)
+      const admInferida=ig.admissao?"":(prim.get(uid)||""),igC=ig.admissao?ig:{...ig,admissao:admInferida||"9999-12-31"};
       if(ig.turno&&!shifts.get(+ig.turno))throw new Error(`${nomeInteg(ig)}: o turno ${ig.turno} não existe. Ajuste na aba Turnos.`);
       const schedule=new Map();
       for(const d of span){
@@ -916,12 +920,12 @@ function calcular(show){
       const res=pairPunches(pun,schedule,cfg,holidays,P.end<hojeIso()?P.end:addDaysIso(hojeIso(),-1));
       // dia com previsto digitado à mão mas sem escala nem batida: entra no cálculo (pode virar falta)
       if(ig.id){const lim=P.end<hojeIso()?P.end:addDaysIso(hojeIso(),-1),tem=new Set(res.journeys.map(j=>j.day));
-        Object.keys(((S.config["prevm_"+ig.id]||{}).dias)||{}).forEach(d=>{if(d>=P.start&&d<=lim&&!tem.has(d)&&!foraDoContrato(ig,d))res.journeys.push({day:d,status:"sem_escala",shiftNo:null,intervals:[],workedMin:0,expectedMin:0,lateMin:0,earlyLeaveMin:0,extraMin:0,feriadoMin:0,turnoNoturno:false,endsOn:d,flags:[]})});
+        Object.keys(((S.config["prevm_"+ig.id]||{}).dias)||{}).forEach(d=>{if(d>=P.start&&d<=lim&&!tem.has(d)&&!foraDoContrato(igC,d))res.journeys.push({day:d,status:"sem_escala",shiftNo:null,intervals:[],workedMin:0,expectedMin:0,lateMin:0,earlyLeaveMin:0,extraMin:0,feriadoMin:0,turnoNoturno:false,endsOn:d,flags:[]})});
         res.journeys.sort((a,b)=>a.day.localeCompare(b.day))}
       const nome=ig.id?nomeInteg(ig):((P.punches.find(p=>p.userId===uid)||{}).uname||String(uid));
       const ocs=Object.values(S.ocorr).filter(o=>ig.id&&o.uid===ig.id);
-      {const fd=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&foraDoContrato(ig,j.day)&&(j.workedMin>0||j.intervals.length||(j.marcas&&j.marcas.length)));if(fd.length)foraContrato.push({uid,nome:nomeInteg(ig),dias:fd.map(j=>j.day),adm:ig.admissao||"",desl:ig.desligamento||""})}
-      const rows=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&!foraDoContrato(ig,j.day)).map(j=>{
+      {const fd=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&foraDoContrato(igC,j.day)&&(j.workedMin>0||j.intervals.length||(j.marcas&&j.marcas.length)));if(fd.length)foraContrato.push({uid,nome:nomeInteg(ig),dias:fd.map(j=>j.day),adm:ig.admissao||"",desl:ig.desligamento||""})}
+      const rows=res.journeys.filter(j=>j.day>=P.start&&j.day<=P.end&&!foraDoContrato(igC,j.day)).map(j=>{
         const r={day:j.day,wd:WD[pyWeekday(j.day)],status:j.status,shift:j.shiftNo,
           intervals:j.intervals.map(([a,b])=>hm(a)+"–"+hm(b)+(isoDate(b)!==isoDate(a)?" (+1)":"")),
           rawIntervals:j.intervals,marcas:j.marcas||null,
@@ -956,9 +960,9 @@ function calcular(show){
       const confDias=new Set(rows.filter(r=>r.status===FALTA&&r.flags.includes("falta_confirmada")).map(r=>r.day));
       // "dobrou horário": o dia trabalhado fora da escala é dobra; as horas continuam indo para o banco
       const dobrou=d=>ocs.some(o=>o.tipo==="dobra"&&o.de<=d&&d<=o.ate);
-      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!foraDoContrato(ig,p.day)&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&(compDias.has(p.day)||dobrou(p.day))));
+      const pend=res.pendencies.filter(p=>p.day>=P.start&&p.day<=P.end&&!foraDoContrato(igC,p.day)&&!okDays.has(p.day)&&!(p.kind==="falta"&&confDias.has(p.day))&&!(p.kind==="marcacao_sem_escala"&&(compDias.has(p.day)||dobrou(p.day))));
       const sum=k=>rows.reduce((s,r)=>s+r[k],0),cnt=s=>rows.filter(r=>r.status===s).length;
-      users.push({uid,ig,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
+      users.push({uid,ig,admInferida,nome,depto:ig.depto||"Outro",turno:ig.turno||"",rows,pendencies:pend,ocs,
         t:{worked:sum("workedMin"),expected:sum("expectedMin"),late:sum("late"),early:sum("early"),extra:sum("extra"),
            saldo:sum("saldo"),mais:rows.reduce((s,r)=>s+Math.max(0,r.saldo),0),menos:rows.reduce((s,r)=>s+Math.min(0,r.saldo),0),nightReal:sum("nightReal"),nightFicta:sum("nightFicta"),
            escalados:rows.filter(r=>r.expectedMin>0).length,trab:rows.filter(r=>r.workedMin>0).length,
@@ -15593,7 +15597,7 @@ function ppdPessoaHtml(D,u,lista){
     ${prox?`<button type="button" class="b sec sm" data-ppdsel="${prox.uid}" style="flex:none" title="${esc(prox.nome)}">Próximo ▶</button>`:""}</div>
    <h2 style="margin:8px 0 2px">${esc(u.nome)}</h2>
    <p class="sub" style="margin:0 0 6px">${esc(ig.cargo||"—")} · nº ${esc(u.uid)} no relógio · ${ig.admissao?`admissão ${esc(brDate(String(ig.admissao).slice(0,10))||ig.admissao)} · `:""}${refRotulo(D.ym)}</p>
-   ${ig.id&&!ig.admissao?`<div class="callout sand" style="margin:8px 0"><b>Sem data de admissão no cadastro.</b> Sem ela, os dias antes de a pessoa entrar na casa aparecem como falta. Preencha a admissão e as pendências desses dias somem sozinhas. ${ed?`<button type="button" class="b sm" data-ppdadm="${esc(ig.id)}" style="flex:none;margin-left:6px">Abrir o cadastro</button>`:""}</div>`:""}
+   ${ig.id&&!ig.admissao?`<div class="callout sand" style="margin:8px 0"><b>Sem data de admissão no cadastro.</b> ${u.admInferida?`Enquanto isso, o ponto, o banco de horas e a folha contam a partir da primeira batida no relógio (${esc(brDate(u.admInferida))}).`:"Como a pessoa ainda não tem nenhuma batida no relógio, nenhum dia está sendo contado."} Preencha a admissão para ficar certo. ${ed?`<button type="button" class="b sm" data-ppdadm="${esc(ig.id)}" style="flex:none;margin-left:6px">Abrir o cadastro</button>`:""}</div>`:""}
    ${(()=>{const e=ppd1236(ig,u.uid,D);return e?`<div class="callout sand" style="margin:8px 0"><b>Escala errada:</b> o turno é 12x36, mas ${e.modo==="semana"?`a escala está em “dias fixos da semana”: ${esc(escalasTexto(ig,D.ini,D.fim))}`:`a escala cadastrada (${esc(typeof xfoLabel==="function"?xfoLabel(ig):escalasTexto(ig,D.ini,D.fim))}) não bate com os dias em que a pessoa fez plantão: ${e.errados} plantão(ões) caíram em dia que a escala diz que é folga${e.modo==="par"||e.modo==="impar"?" (dias pares/ímpares se desencontram depois de todo dia 31)":""}`}. Por isso aparecem faltas e “bateu ponto em dia de folga” que não existiram. ${e.inicio?`Pelas batidas, os plantões começam em ${brDate(e.inicio)} e seguem dia sim, dia não (${e.n} plantões${e.outros?`, ${e.outros} fora desse padrão`:""}).`:"Não deu para descobrir pelas batidas em que dias são os plantões."} ${ed?(e.inicio?`<div class="row" style="gap:6px;margin-top:6px;flex-wrap:wrap"><button type="button" class="b sm" data-ppd1236="${ig.id}" data-ini="${e.inicio}" style="flex:none">Mudar para 12x36 alternado a partir de ${brDate(e.inicio).slice(0,5)}</button><button type="button" class="b sec sm" data-ppdescala="1" style="flex:none">Arrumar em Escalas</button></div>`:`<button type="button" class="b sm" data-ppdescala="1" style="flex:none;margin-top:6px">Arrumar em Escalas</button>`):""}</div>`:""})()}
    ${cadRelogio(ig)?`<div class="callout sand" style="margin:8px 0">Este cadastro foi <b>criado sozinho pelo relógio</b> (só com o nome “${esc(ig.nome||"")}”, sem escala), por isso as batidas aparecem como dia de folga. Se é alguém que já está em Integrantes, junte os dois cadastros. ${ed?`<button type="button" class="b sm" data-ppdjunta="${ig.id}" style="flex:none;margin-top:6px">Juntar com o cadastro da pessoa</button>`:""}</div>`:""}
    ${ppdPasso(1,!pend.length,`Resolver as pendências ${pend.length?`<span style="color:var(--bad)">(${pend.length})</span>`:""}`,
@@ -15640,7 +15644,7 @@ function ppdHtml(){
   return topo+`<div class="card"><h2>Integrantes</h2>
    <div class="row" style="flex-wrap:wrap;gap:6px;margin-bottom:10px">${chip("","Todos",D.U.length)}${Object.keys(PPD_SIT).filter(k=>sit[k]).map(k=>chip(k,PPD_SIT[k][0],sit[k])).join("")}</div>
    ${lista.length?`<div class="wrap"><table><thead><tr><th>Integrante</th><th style="text-align:center">Pendências</th><th>Folha</th><th></th></tr></thead><tbody>
-   ${lista.map(u=>{const s=ppdSituacao(D,u),env=ppdEnvio(D.ym,u.uid);return `<tr><td><button type="button" class="lnk" data-ppdsel="${u.uid}" style="font-weight:600">${esc(u.nome)}</button><div class="sub">${esc((u.ig&&u.ig.cargo)||"")}</div></td>
+   ${lista.map(u=>{const s=ppdSituacao(D,u),env=ppdEnvio(D.ym,u.uid);return `<tr><td><button type="button" class="lnk" data-ppdsel="${u.uid}" style="font-weight:600">${esc(u.nome)}</button><div class="sub">${esc((u.ig&&u.ig.cargo)||"")}${u.ig&&u.ig.id&&!u.ig.admissao?` · <b style="color:var(--bad)">sem data de admissão</b>`:""}</div></td>
      <td style="text-align:center">${u.pendencies.length?`<b style="color:var(--bad)">${u.pendencies.length}</b>`:`<span style="color:var(--verde-medio)">✓</span>`}</td>
      <td><span style="color:${PPD_SIT[s][1]};font-weight:600">${PPD_SIT[s][0]}</span>${env?`<div class="sub">em ${brDate(env.em.slice(0,10))}</div>`:""}</td>
      <td style="text-align:right"><button type="button" class="b ${s==="enviada"?"sec ":""}sm" data-ppdsel="${u.uid}" style="flex:none">${s==="enviada"?"Ver":"Arrumar"} ▸</button></td></tr>`}).join("")}

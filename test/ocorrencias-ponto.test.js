@@ -110,3 +110,23 @@ test('admissão gravada como dd/mm/aaaa também vale: dia antes da admissão nã
   assert.deepStrictEqual([...u.rows.map(r => r.day)], ['2026-11-10', '2026-11-11']);
   assert.ok(!u.pendencies.some(p => p.day === '2026-11-09'));
 });
+
+test('sem data de admissão: conta só a partir da primeira batida da pessoa (antes não há falta nem pendência)', () => {
+  const semAdm = { ...ana, admissao: '' };
+  const m = { x0: { id: 'x0', uid: 8, ts: '2026-10-01T08:00:00' }, a: marca('a', '2026-11-11T08:00:00'), b: marca('b', '2026-11-11T12:00:00') };
+  const S = { integrantes: { ana: semAdm }, marcacoes: m, ocorr: {}, config: { geral: { turnos: [turno] } } };
+  const u = calcula(S, '2026-11-09', '2026-11-11'); // primeira batida da Ana em 11/11
+  assert.deepStrictEqual([...u.rows.map(r => r.day)], ['2026-11-11']);
+  assert.strictEqual(u.t.faltas, 0);
+  assert.strictEqual(u.pendencies.length, 0);
+  assert.strictEqual(u.admInferida, '2026-11-11');
+});
+
+test('sem data de admissão e sem nenhuma batida: aparece, mas sem dias, falta nem pendência', () => {
+  const S = { integrantes: { ana: { ...ana, admissao: '' } }, marcacoes: { x0: { id: 'x0', uid: 8, ts: '2026-10-01T08:00:00' } }, ocorr: {}, config: { geral: { turnos: [turno] } } };
+  const u = calcula(S, '2026-11-09', '2026-11-11');
+  assert.strictEqual(u.uid, 7);
+  assert.strictEqual(u.rows.length, 0);
+  assert.strictEqual(u.pendencies.length, 0);
+  assert.strictEqual(u.t.saldo, 0);
+});
